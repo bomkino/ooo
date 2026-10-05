@@ -1,0 +1,56 @@
+# Builds and tests OOO on an Apple silicon runner for every pull request and
+# every change to main, renders a still, a contact sheet and a short draft
+# video with the headless lab, and packages the unsigned app as a disk image.
+name: build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Show the toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          system_profiler SPDisplaysDataType | sed -n '1,20p' || true
+      - name: Build
+        run: swift build -c release
+      - name: Test the camera's maths and the director
+        run: swift test
+      - name: Compile every shader
+        run: swift run -c release ooo-lab shaders
+      - name: Render a still, a contact sheet and a draft video
+        run: |
+          mkdir -p renders
+          swift run -c release ooo-lab still --t 6.6 --out renders/still.png
+          swift run -c release ooo-lab still --t 13.4 --out renders/still-note.png
+          swift run -c release ooo-lab sheet --out renders/sheet.png
+          swift run -c release ooo-lab sheet --format landscape --out renders/sheet-landscape.png
+          swift run -c release ooo-lab render --quality draft --scale 0.5 --out renders/draft.mp4
+          swift run -c release ooo-lab analyze | tee renders/analyze.txt
+          swift run -c release ooo-lab path --out renders/path.csv
+      - name: Package the app
+        run: bash scripts/build-app.sh release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OOO-app
+          path: dist/OOO.dmg
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: renders
+          path: renders/
+          if-no-files-found: ignore
