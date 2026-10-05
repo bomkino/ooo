@@ -340,9 +340,7 @@ public final class OOOSession {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = Result { () throws -> [SlideDetail] in
                 if let cached { return cached }
-                let source = try SlideSource(ref: ref, media: media)
-                guard let image = source.renderWhole(side: 3200) else { throw RenderError.io("Could not draw the slide.") }
-                return try SlideAnalysis.details(of: image)
+                return try SlideAnalysis.read(SlideSource(ref: ref, media: media))
             }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {

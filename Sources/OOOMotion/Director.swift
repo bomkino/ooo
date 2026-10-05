@@ -103,12 +103,19 @@ public enum Director {
             return DetailBlock(bounds: blk.bounds, text: blk.texts.joined(separator: " "), lineHeight: mean,
                                lines: blk.texts.count, role: .text)
         }
-        // Figures the text does not already account for.
-        for fig in details where fig.kind == .figure {
-            let f = fig.frame.bounds
-            let area = max((f.z - f.x) * (f.w - f.y), 1e-6)
-            let covered = out.reduce(Float(0)) { acc, blk in acc + overlap(f, blk.bounds) } / area
-            if covered < 0.5 && area > 0.004 {
+        // Figures the text does not already account for. A "figure" that
+        // fills most of the slide is the slide itself, which the overview
+        // already shows; of overlapping figures the tightest wins.
+        var figures: [SIMD4<Float>] = []
+        let candidates = details.filter { $0.kind == .figure }.map(\.frame.bounds)
+            .sorted { area($0) < area($1) }
+        for f in candidates {
+            let a = max(area(f), 1e-6)
+            guard a > 0.004, a < 0.35 else { continue }
+            let covered = out.reduce(Float(0)) { acc, blk in acc + overlap(f, blk.bounds) } / a
+            let repeated = figures.contains { overlap(f, $0) > 0.5 * min(a, area($0)) }
+            if covered < 0.5 && !repeated {
+                figures.append(f)
                 out.append(DetailBlock(bounds: f, text: "", lineHeight: 0, lines: 0, role: .figure))
             }
         }
@@ -132,8 +139,44 @@ public enum Director {
         return out
     }
 
+    /// Adds the small lines that close-up reads of the slide found to what the
+    /// whole-slide read found. Close-ups see small print the whole slide is
+    /// too coarse for; a line read twice, or cut in two where close-ups meet,
+    /// becomes one line with the longer reading.
+    public static func merge(_ whole: [SlideDetail], closeUps: [SlideDetail], smallerThan maxHeight: Float = 0.022) -> [SlideDetail] {
+        var out = whole
+        for c in closeUps where c.kind == .text && c.frame.size.y < maxHeight
+            && !c.text.trimmingCharacters(in: .whitespaces).isEmpty {
+            let cb = c.frame.bounds
+            let same = out.indices.first { i in
+                let k = out[i]
+                guard k.kind == .text else { return false }
+                let kb = k.frame.bounds
+                let ratio = c.frame.size.y / max(k.frame.size.y, 1e-6)
+                let vertical = max(0, min(cb.w, kb.w) - max(cb.y, kb.y))
+                let horizontal = min(cb.z, kb.z) - max(cb.x, kb.x)
+                return ratio > 0.6 && ratio < 1.6 && horizontal > 0
+                    && vertical > 0.5 * min(c.frame.size.y, k.frame.size.y)
+            }
+            if let i = same {
+                let kb = out[i].frame.bounds
+                let u = SIMD4(min(cb.x, kb.x), min(cb.y, kb.y), max(cb.z, kb.z), max(cb.w, kb.w))
+                out[i].frame = ShotFrame(center: Vec2((u.x + u.z) / 2, (u.y + u.w) / 2), size: Vec2(u.z - u.x, u.w - u.y))
+                if c.text.count > out[i].text.count { out[i].text = c.text }
+                out[i].confidence = max(out[i].confidence, c.confidence)
+            } else {
+                out.append(c)
+            }
+        }
+        return out
+    }
+
     static func overlap(_ a: SIMD4<Float>, _ b: SIMD4<Float>) -> Float {
         max(0, min(a.z, b.z) - max(a.x, b.x)) * max(0, min(a.w, b.w) - max(a.y, b.y))
+    }
+
+    static func area(_ b: SIMD4<Float>) -> Float {
+        max(0, b.z - b.x) * max(0, b.w - b.y)
     }
 
     // MARK: Choosing and ordering

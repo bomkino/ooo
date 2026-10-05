@@ -133,9 +133,9 @@ case "render":
 
 case "analyze":
     do {
-        let source = try SlideSource(ref: project.slide, media: media)
-        guard let image = source.renderWhole(side: 3200) else { fail("could not draw the slide") }
-        let details = try SlideAnalysis.details(of: image)
+        let started = Date()
+        let details = try SlideAnalysis.read(SlideSource(ref: project.slide, media: media))
+        print(String(format: "read the slide in %.2f s", Date().timeIntervalSince(started)))
         for d in details {
             print(d.kind.rawValue, String(format: "%.3f %.3f %.3f %.3f", d.frame.minU, d.frame.minV, d.frame.maxU, d.frame.maxV), d.text)
         }

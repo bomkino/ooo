@@ -38,6 +38,36 @@ final class DirectorTests: XCTestCase {
         XCTAssertEqual(paragraph?.lines, 2)
     }
 
+    func testSlideSizedAndRepeatedFiguresAreIgnored() {
+        var found = details
+        found.append(SlideDetail(frame: ShotFrame(center: Vec2(0.455, 0.45), size: Vec2(0.91, 0.86)), kind: .figure))
+        found.append(SlideDetail(frame: ShotFrame(center: Vec2(0.76, 0.36), size: Vec2(0.34, 0.40)), kind: .figure))
+        let figures = Director.blocks(found).filter { $0.role == .figure }
+        XCTAssertEqual(figures.count, 1, "\(figures.map(\.bounds))")
+        XCTAssertLessThan(Director.area(figures[0].bounds), 0.2, "the tightest figure wins")
+    }
+
+    func testCloseUpsAddSmallPrintAndMendCutLines() {
+        func line(_ text: String, _ u0: Float, _ v0: Float, _ u1: Float, _ v1: Float) -> SlideDetail {
+            SlideDetail(frame: ShotFrame(center: Vec2((u0 + u1) / 2, (v0 + v1) / 2), size: Vec2(u1 - u0, v1 - v0)), text: text)
+        }
+        let whole = [line("Every pixel,", 0.07, 0.21, 0.37, 0.29), line("pitch.dog", 0.075, 0.93, 0.115, 0.948)]
+        let closeUps = [
+            line("pitch.dog", 0.0752, 0.9302, 0.1149, 0.9478),            // read again
+            line("If you can read this,", 0.80, 0.912, 0.86, 0.917),     // new small print
+            line("you looked clo", 0.80, 0.918, 0.84, 0.923),            // cut where close-ups meet
+            line("ooked closer than anyone.", 0.82, 0.918, 0.88, 0.923),
+            line("Every pixel,", 0.07, 0.21, 0.37, 0.29),                  // big type: the whole read has it
+        ]
+        let merged = Director.merge(whole, closeUps: closeUps)
+        XCTAssertEqual(merged.count, 4, "\(merged.map(\.text))")
+        let mended = merged.first { $0.text.contains("closer than anyone") }
+        XCTAssertEqual(mended?.frame.minU ?? 0, 0.80, accuracy: 1e-4)
+        XCTAssertEqual(mended?.frame.maxU ?? 0, 0.88, accuracy: 1e-4)
+        let roles = Director.blocks(merged + details.filter { $0.kind == .figure })
+        XCTAssertTrue(roles.contains { $0.role == .smallPrint && $0.text.contains("read this") })
+    }
+
     func testTourStartsWithHeadlineAndEndsOnSmallPrint() {
         let shots = Director.shots(DirectorInput(details: details, slideAspect: A, canvasAspect: C, start: 2.1, maxShots: 5))
         XCTAssertGreaterThanOrEqual(shots.count, 3)
