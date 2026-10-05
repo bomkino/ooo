@@ -29,7 +29,7 @@ The motion is the point, so it is built carefully.
 - **Speed limits.** A move timed for you never outruns 2.6 e-folds of scale a second at its peak, and every interval keeps part of its time still, so each detail is seen, not just passed.
 - **Sharp at any zoom.** The whole slide lives in one texture; when the camera needs more, the part it sees is drawn again from the slide's vectors at the resolution that frame needs, snapped to a half-octave ladder so neighbouring frames share it.
 - **A real lens.** Depth of field follows the framed point and deepens as the camera goes in, so a close-up becomes a macro shot. Motion blur is a 180° film shutter, averaged from many moments a frame, and never smears across a cut.
-- **A director that reads.** Vision finds the text and what draws the eye; the director groups lines into blocks, gives each a role and plans the tour. With a voiceover, each shot lands 150 ms before the words that name it.
+- **A director that reads.** Vision reads the text, then reads the slide again in close-ups so the 4-point footnote is found too; the ink that is not text shows where the figures are. The director groups lines into blocks, gives each a role and plans the tour. With a voiceover, each shot lands 150 ms before the words that name it.
 
 Everything runs on your Mac. Nothing is uploaded.
 

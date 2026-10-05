@@ -155,8 +155,10 @@ public enum Director {
                 let ratio = c.frame.size.y / max(k.frame.size.y, 1e-6)
                 let vertical = max(0, min(cb.w, kb.w) - max(cb.y, kb.y))
                 let horizontal = min(cb.z, kb.z) - max(cb.x, kb.x)
-                return ratio > 0.6 && ratio < 1.6 && horizontal > 0
+                let sameLine = ratio > 0.6 && ratio < 1.6 && horizontal > 0
                     && vertical > 0.5 * min(c.frame.size.y, k.frame.size.y)
+                // Short words and single letters get looser boxes each read.
+                return sameLine || overlap(cb, kb) > 0.3 * min(area(cb), area(kb))
             }
             if let i = same {
                 let kb = out[i].frame.bounds
@@ -193,10 +195,12 @@ public enum Director {
             }
         }
         let limit = max(1, maxShots)
-        var chosen = Array(blocks.sorted { score($0) > score($1) }.prefix(limit))
+        // The smallest print, when there is some, always gets the last shot:
+        // it is the detail nobody else would have noticed.
+        let small = Array(blocks.filter { $0.role == .smallPrint }.prefix(limit > 1 ? 1 : 0))
+        var chosen = Array(blocks.filter { $0.role != .smallPrint }.sorted { score($0) > score($1) }
+            .prefix(limit - small.count))
         // Reading order: rows top to bottom, then left to right; small print last.
-        let small = chosen.filter { $0.role == .smallPrint }
-        chosen.removeAll { $0.role == .smallPrint }
         chosen.sort { a, b in
             let rowA = (a.center.y * 4).rounded(.down), rowB = (b.center.y * 4).rounded(.down)
             if a.role == .headline { return b.role != .headline || a.center.y < b.center.y }

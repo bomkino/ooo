@@ -115,3 +115,38 @@ final class DirectorTests: XCTestCase {
         XCTAssertLessThan(out[1].time, out[2].time - 0.89)
     }
 }
+
+final class FigureFinderTests: XCTestCase {
+    /// A cream slide with a headline, a paragraph and a chart on the right.
+    func testFindsTheChartAndNotTheText() {
+        let w = 640, h = 360
+        var luma = [Float](repeating: 0.95, count: w * h)
+        func fill(_ x0: Int, _ y0: Int, _ x1: Int, _ y1: Int, _ v: Float) {
+            for y in y0..<y1 { for x in x0..<x1 { luma[y * w + x] = v } }
+        }
+        // Text: speckled strokes inside its line boxes.
+        var text: [SIMD4<Float>] = []
+        for (row, (x0, x1, y0, y1)) in [(40, 260, 60, 90), (40, 280, 150, 158), (40, 270, 162, 170)].enumerated() {
+            for x in stride(from: x0, to: x1, by: 3 + row % 2) { fill(x, y0, x + 1, y1, 0.2) }
+            text.append(SIMD4(Float(x0) / Float(w), Float(y0) / Float(h), Float(x1) / Float(w), Float(y1) / Float(h)))
+        }
+        // The chart: an axis, grid lines and a rising curve.
+        fill(380, 220, 600, 222, 0.5)
+        for y in [80, 120, 160, 200] { fill(380, y, 600, y + 1, 0.8) }
+        for x in 380..<600 {
+            let y = 200 - Int(pow(Float(x - 380) / 220, 2.5) * 120)
+            fill(x, y, x + 1, y + 3, 0.55)
+        }
+        // A speck and a hairline rule are not figures.
+        fill(300, 70, 304, 74, 0.3)
+        fill(40, 330, 600, 331, 0.7)
+
+        let found = FigureFinder.figures(luma: luma, width: w, height: h, text: text)
+        XCTAssertEqual(found.count, 1, "\(found)")
+        let b = found[0]
+        XCTAssertEqual(b.x, 380 / 640, accuracy: 0.03)
+        XCTAssertEqual(b.z, 600 / 640, accuracy: 0.03)
+        XCTAssertEqual(b.y, 80 / 360, accuracy: 0.04)
+        XCTAssertEqual(b.w, 222 / 360, accuracy: 0.04)
+    }
+}
