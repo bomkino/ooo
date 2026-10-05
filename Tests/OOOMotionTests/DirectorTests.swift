@@ -17,12 +17,13 @@ final class DirectorTests: XCTestCase {
             line("on purpose.", 0.07, 0.32, 0.36, 0.40),
             line("We spent a week on one chart, so the moment it turned would", 0.075, 0.455, 0.47, 0.482),
             line("read in a second. This is what that week looks like up close.", 0.075, 0.488, 0.47, 0.515),
-            line("+38%", 0.66, 0.24, 0.72, 0.27),
+            line("+38%", 0.744, 0.202, 0.797, 0.238),
             line("1 slide", 0.075, 0.73, 0.16, 0.8),
             line("118 hours", 0.23, 0.73, 0.33, 0.8),
             line("pitch.dog Obsess Over One 04 / 12", 0.075, 0.93, 0.25, 0.95),
             line("you looked closer than anyone.", 0.886, 0.93, 0.925, 0.936),
-            SlideDetail(frame: ShotFrame(center: Vec2(0.75, 0.35), size: Vec2(0.36, 0.42)), kind: .figure),
+            // The chart, as the slide's ink shows it.
+            SlideDetail(frame: ShotFrame(center: Vec2(0.7435, 0.367), size: Vec2(0.363, 0.378)), kind: .figure),
         ]
     }
 
@@ -81,11 +82,23 @@ final class DirectorTests: XCTestCase {
         }
     }
 
+    func testTheChartComesBeforeTheNumberInIt() {
+        let picked = Director.tour(Director.blocks(details), maxShots: 6)
+        let labels = picked.map { $0.role == .figure ? "figure" : $0.text }
+        XCTAssertEqual(picked.first?.role, .headline, "\(labels)")
+        XCTAssertEqual(picked.last?.role, .smallPrint, "\(labels)")
+        let figure = picked.firstIndex { $0.role == .figure }
+        let number = picked.firstIndex { $0.text.contains("38") }
+        XCTAssertNotNil(figure, "\(labels)")
+        XCTAssertNotNil(number, "\(labels)")
+        if let figure, let number { XCTAssertEqual(number, figure + 1, "\(labels)") }
+    }
+
     func testVoiceTimesTheShots() {
         let words = ["So", "every", "pixel", "here", "matters", "look", "at", "that", "thirty-eight", "percent", "jump",
                      "it", "took", "118", "hours", "and", "if", "you", "looked", "closer"]
             .enumerated().map { SpokenWord(text: $0.element, start: 3 + Double($0.offset) * 0.6, end: 3.4 + Double($0.offset) * 0.6) }
-        let shots = Director.shots(DirectorInput(details: details, words: words, slideAspect: A, canvasAspect: C, start: 2.1, maxShots: 5))
+        let shots = Director.shots(DirectorInput(details: details, words: words, slideAspect: A, canvasAspect: C, start: 2.1))
         let headline = shots.first { $0.label?.contains("Every") ?? false }
         XCTAssertEqual(headline?.time ?? 0, 3 + 0.6 - 0.15, accuracy: 0.01, "lands just before 'every'")
         let hours = shots.first { $0.label?.contains("118") ?? false }

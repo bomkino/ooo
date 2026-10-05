@@ -54,7 +54,7 @@ public struct DirectorInput: Sendable {
     public var maxShots: Int
 
     public init(details: [SlideDetail], words: [SpokenWord]? = nil, slideAspect: Float, canvasAspect: Float,
-                start: Double, spacing: Double = 2.9, maxShots: Int = 5) {
+                start: Double, spacing: Double = 2.9, maxShots: Int = 6) {
         self.details = details
         self.words = words
         self.slideAspect = slideAspect
@@ -125,7 +125,15 @@ public enum Director {
         if let top = texts.max(by: { out[$0].lineHeight < out[$1].lineHeight }), out[top].lineHeight > 0.035 {
             out[top].role = .headline
         }
-        let median = texts.map { out[$0].lineHeight }.sorted().dropFirst(texts.count / 2).first ?? 0
+        // Type size is judged against the body of the slide; a chart's axis
+        // labels would make every number in it look big.
+        let figs = out.filter { $0.role == .figure }.map(\.bounds)
+        let body = texts.filter { i in
+            let c = out[i].center
+            return !figs.contains { c.x > $0.x && c.x < $0.z && c.y > $0.y && c.y < $0.w }
+        }
+        let sizes = (body.isEmpty ? texts : body).map { out[$0].lineHeight }.sorted()
+        let median = sizes.dropFirst(sizes.count / 2).first ?? 0
         for i in texts where out[i].role == .text {
             let digits = out[i].text.unicodeScalars.filter { CharacterSet.decimalDigits.contains($0) }.count
             if digits > 0 && out[i].lineHeight >= median * 1.15 && out[i].text.count < 60 {
@@ -185,11 +193,21 @@ public enum Director {
 
     /// The blocks worth a shot, in the order the camera visits them.
     public static func tour(_ blocks: [DetailBlock], maxShots: Int) -> [DetailBlock] {
+        let figures = blocks.filter { $0.role == .figure }
+        /// The figure a block sits in, if any.
+        func host(_ b: DetailBlock) -> DetailBlock? {
+            guard b.role != .figure else { return nil }
+            return figures.first { f in
+                b.center.x > f.bounds.x && b.center.x < f.bounds.z && b.center.y > f.bounds.y && b.center.y < f.bounds.w
+            }
+        }
         func score(_ b: DetailBlock) -> Float {
             switch b.role {
             case .headline: return 10
-            case .numbers: return 6 + b.lineHeight * 20
-            case .figure: return 5 + (b.size.x * b.size.y) * 8
+            // A number in a chart is usually the point of the chart.
+            case .numbers: return 6 + b.lineHeight * 20 + (host(b) == nil ? 0 : 1)
+            // A large figure is often what the slide is about.
+            case .figure: return 6 + (b.size.x * b.size.y) * 12
             case .smallPrint: return 4.5
             case .text: return 2 + b.lineHeight * 30 + min(Float(b.lines), 4) * 0.3
             }
@@ -200,13 +218,23 @@ public enum Director {
         let small = Array(blocks.filter { $0.role == .smallPrint }.prefix(limit > 1 ? 1 : 0))
         var chosen = Array(blocks.filter { $0.role != .smallPrint }.sorted { score($0) > score($1) }
             .prefix(limit - small.count))
-        // Reading order: rows top to bottom, then left to right; small print last.
+        // Reading order: the headline, then rows top to bottom and left to
+        // right; a detail inside a figure comes straight after the figure, so
+        // the camera shows the whole before going closer. Small print last.
+        let shown = chosen.filter { $0.role == .figure }.map(\.bounds)
+        func key(_ b: DetailBlock) -> (Float, Float, Float) {
+            let anchor = host(b).flatMap { f in shown.contains(f.bounds) ? f : nil } ?? b
+            let row = (anchor.center.y * 4).rounded(.down)
+            return (row, anchor.center.x, anchor.role == .figure && b.role != .figure ? 1 : 0)
+        }
         chosen.sort { a, b in
-            let rowA = (a.center.y * 4).rounded(.down), rowB = (b.center.y * 4).rounded(.down)
             if a.role == .headline { return b.role != .headline || a.center.y < b.center.y }
             if b.role == .headline { return false }
-            if rowA != rowB { return rowA < rowB }
-            return a.center.x < b.center.x
+            let ka = key(a), kb = key(b)
+            if ka.0 != kb.0 { return ka.0 < kb.0 }
+            if ka.1 != kb.1 { return ka.1 < kb.1 }
+            if ka.2 != kb.2 { return ka.2 < kb.2 }
+            return a.center.y < b.center.y
         }
         return chosen + small
     }
