@@ -44,7 +44,7 @@ public enum InspectorTab: String, CaseIterable, Identifiable {
 
 /// One GPU renderer for every window.
 public enum OOOShared {
-    nonisolated(unsafe) public static let stage: SlideStage? = try? SlideStage()
+    public static let stage: SlideStage? = try? SlideStage()
 }
 
 /// The slide on the GPU, with everything drawn from it.
@@ -581,12 +581,13 @@ public final class OOOSession {
     /// Moves the recording along the video; its words move with it.
     public func setVoiceOffset(_ offset: Double, live isLive: Bool) {
         let change: (inout OOOProject) -> Void = { p in
-            guard let old = p.voice?.offset else { return }
-            let d = offset - old
-            p.voice?.offset = offset
-            p.voice?.words = p.voice?.words?.map {
+            guard var voice = p.voice else { return }
+            let d = offset - voice.offset
+            voice.offset = offset
+            voice.words = voice.words?.map {
                 SpokenWord(text: $0.text, start: $0.start + d, end: $0.end + d, confidence: $0.confidence)
             }
+            p.voice = voice
         }
         if isLive { live(change) } else { update("Move Voiceover", change) }
     }
