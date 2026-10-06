@@ -326,6 +326,38 @@ public final class OOOSession {
         autoDirect()
     }
 
+    /// Takes the slide on the clipboard: a PDF or picture copied in Finder,
+    /// or a slide copied straight from Keynote, Figma or Preview (vectors
+    /// first, when the app put a PDF of it there).
+    public func pasteSlide() {
+        let pb = NSPasteboard.general
+        if let urls = pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+           let url = urls.first(where: { u in
+               let type = UTType(filenameExtension: u.pathExtension)
+               return Self.slideTypes.contains { type?.conforms(to: $0) ?? false }
+           }) {
+            importSlide(url)
+            return
+        }
+        let kinds: [(NSPasteboard.PasteboardType, String)] = [(.pdf, "pdf"), (.png, "png"), (.tiff, "tiff")]
+        for (type, ext) in kinds {
+            guard let data = pb.data(forType: type) else { continue }
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+            let url = folder.appendingPathComponent("Pasted slide.\(ext)")
+            do {
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                try data.write(to: url)
+            } catch {
+                message = "Couldn't paste the slide: \(error.localizedDescription)"
+                return
+            }
+            importSlide(url)
+            try? FileManager.default.removeItem(at: folder)
+            return
+        }
+        message = "There's no slide on the clipboard. Copy a slide in Keynote, Figma or Preview, or a PDF or picture in Finder, then paste it here."
+    }
+
     /// Shows another page of the slide's PDF.
     public func showPage(_ page: Int) {
         guard project.slide.kind == .pdf, let file = project.slide.file else { return }

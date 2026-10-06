@@ -42,6 +42,27 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(p.overview.yaw, -5, "an opening set by hand stays")
     }
 
+    func testTheOpeningTitleClearsForTheTourAndReturnsForThePullBack() throws {
+        var p = OOOProject.sample
+        p.ending = .pullBack
+        p.title = OpeningTitle(text: "One slide, obsessed over.")
+        let c = p.choreography()
+        let beats = c.beats
+        XCTAssertGreaterThan(beats.count, 2)
+        XCTAssertEqual(OpeningTitleArt.presence(c, at: 0).alpha, 0)
+        XCTAssertEqual(OpeningTitleArt.presence(c, at: beats[0].land + 1).alpha, 1, accuracy: 1e-3)
+        XCTAssertEqual(OpeningTitleArt.presence(c, at: beats[1].depart + 0.6).alpha, 0, accuracy: 1e-3)
+        XCTAssertEqual(OpeningTitleArt.presence(c, at: (beats[1].land + beats[1].leave) / 2).alpha, 0, accuracy: 1e-3)
+        XCTAssertEqual(OpeningTitleArt.presence(c, at: c.duration).alpha, 1, accuracy: 1e-3)
+        // In a Reel it sits in the clear band above the slide, below the profile.
+        let opening = try XCTUnwrap(beats.first?.pose)
+        let band = OpeningTitleArt.band(opening: opening, slideAspect: p.slideAspect, canvasAspect: p.canvasAspect, safe: .reel)
+        XCTAssertGreaterThanOrEqual(band.top, SafeArea.reel.top)
+        XCTAssertGreaterThan(band.bottom - band.top, 0.07)
+        XCTAssertLessThan(band.bottom, 0.45)
+        XCTAssertNotNil(OpeningTitleArt.draw(p.title!, width: 540, height: 960, band: band, lightInk: true))
+    }
+
     func testTravelMeasuresWhatMovesOnTheCanvas() {
         var a = StageFrame()
         a.cards = [CardPose(media: 0, occurrence: 0, position: .zero, rotation: .zero, size: SIMD2(16.0 / 9, 1))]

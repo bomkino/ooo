@@ -312,10 +312,24 @@ struct OverviewInspector: View {
                 }
             }
             Hairline()
+            InspectorSection("Title") {
+                LiveField(session: session, placeholder: "Words over the opening", text: titleText(\.text), undo: "Title")
+                LiveField(session: session, placeholder: "A short line above them (optional)", text: titleText(\.kicker), undo: "Title")
+                if !(p.title?.isEmpty ?? true) {
+                    ChoiceRow(ReelTitle.Face.allCases.map { ($0, $0.title) }, selection: Binding(
+                        get: { session.project.title?.face ?? .modern },
+                        set: { face in session.update("Title Type") { $0.title?.face = face } }))
+                }
+                Text("Set in the space above the slide. It rises in as the slide lands, clears as the camera goes in, and comes back for a Pull Back.")
+                    .textStyle(.caption).foregroundStyle(.secondary)
+            }
+            Hairline()
             InspectorSection("Opening framing") {
-                Dial(session: session, label: "Turn", value: session.bind(\.overview.yaw), range: -25...25, defaultValue: -9, format: degreesLabel)
-                Dial(session: session, label: "Tilt", value: session.bind(\.overview.pitch), range: -20...20, defaultValue: 7, format: degreesLabel)
-                Dial(session: session, label: "Room", value: overviewRoom, range: 0...0.6, defaultValue: 0.12, format: percent)
+                // Defaults follow the slide's shape in the canvas: a wide slide in a tall frame turns further.
+                let d = Shot.overview(slideAspect: p.slideAspect, canvasAspect: p.canvasAspect)
+                Dial(session: session, label: "Turn", value: session.bind(\.overview.yaw), range: -45...45, defaultValue: d.yaw, format: degreesLabel)
+                Dial(session: session, label: "Tilt", value: session.bind(\.overview.pitch), range: -20...20, defaultValue: d.pitch, format: degreesLabel)
+                Dial(session: session, label: "Room", value: overviewRoom, range: 0...0.6, defaultValue: d.frame.size.y - 1, format: percent)
                 Dial(session: session, label: "Breathe", value: session.bind(\.overview.breathe), defaultValue: 0.45)
             }
             Hairline()
@@ -348,6 +362,18 @@ struct OverviewInspector: View {
                 }
             }
         }
+    }
+
+    /// One line of the opening title, edited live.
+    private func titleText(_ key: WritableKeyPath<OpeningTitle, String>) -> Binding<String> {
+        Binding(get: { session.project.title?[keyPath: key] ?? "" },
+                set: { v in
+                    session.live { p in
+                        var t = p.title ?? OpeningTitle()
+                        t[keyPath: key] = v
+                        p.title = t
+                    }
+                })
     }
 
     /// The margin around the whole slide in the opening framing.

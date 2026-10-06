@@ -20,13 +20,15 @@ import StageKit
 //                                           draw a test slide: 2576 × 1080 or 1920 × 1080
 //   ooo-lab openings --out grid.png         the opening at five angles (across) and
 //                                           three floors (down: none, soft, mirror)
+//   ooo-lab titles --out grid.png           the opening title in four faces, and in time
 //   ooo-lab blurcheck [--quality good]      adaptive motion blur against full samples:
 //                                           samples taken, GPU time, PSNR
 //   ooo-lab render --full-blur ...          every frame at the quality's full samples
 //
 // Every command takes --project <file.ooo> (default: the sample), or
 // --slide <file> (a PDF or picture, read and directed as the app would on a
-// drop), --format reel|portrait|square|landscape and --floor none|soft|mirror.
+// drop), --format reel|portrait|square|landscape, --floor none|soft|mirror and
+// --title "words" [--kicker "line above"] [--face modern|grotesk|editorial|poster].
 
 let args = CommandLine.arguments
 func value(_ name: String) -> String? {
@@ -54,6 +56,14 @@ if let id = value("--format") {
     project.format = f
     project.adaptOverview(fromSlideAspect: A, canvasAspect: C)
 }
+if let text = value("--title") {
+    var t = OpeningTitle(text: text, kicker: value("--kicker") ?? "")
+    if let f = value("--face") {
+        guard let face = ReelTitle.Face(rawValue: f) else { fail("unknown face \(f)") }
+        t.face = face
+    }
+    project.title = t
+}
 if let f = value("--floor") {
     guard let floor = FloorKind(rawValue: f) else { fail("unknown floor \(f)") }
     project.floor = floor
@@ -71,9 +81,10 @@ if let path = value("--slide") {
         fail("could not copy \(path): \(error)")
     }
     ref.file = file
-    let (format, floor) = (project.format, project.floor)
+    let (format, floor, title) = (project.format, project.floor, project.title)
     project = OOOProject(slide: ref, format: format)
     project.floor = floor
+    project.title = title
     media = dir
     do {
         let details = try SlideAnalysis.read(SlideSource(ref: ref, media: dir))
@@ -240,6 +251,45 @@ case "openings":
         fail("openings failed: \(error)")
     }
 
+case "titles":
+    // The opening title in each face (top row), and in time (bottom row:
+    // rising in, held, clearing as the camera sets off, back for the Pull Back).
+    let base = loadScene()
+    let out = URL(fileURLWithPath: value("--out") ?? "titles.png")
+    let cw = project.format.width / 3, ch = project.format.height / 3
+    var words = project.title ?? OpeningTitle(text: "One slide, obsessed over.", kicker: "pitch.dog")
+    if words.isEmpty { words = OpeningTitle(text: "One slide, obsessed over.", kicker: "pitch.dog") }
+    do {
+        let stage = try SlideStage()
+        guard let ctx = CGContext(data: nil, width: cw * 4, height: ch * 2, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { fail("no context") }
+        for (c, face) in ReelTitle.Face.allCases.enumerated() {
+            var p = project
+            p.title = words
+            p.title?.face = face
+            let scene = SlideScene(project: p, base: base.base, details: base.details)
+            let rest = (scene.choreography.beats.first?.land ?? 2) + 1.0
+            let img = try stage.still(scene, at: rest, width: cw, height: ch, samples: 4)
+            ctx.draw(img, in: CGRect(x: c * cw, y: ch, width: cw, height: ch))
+        }
+        var p = project
+        p.title = words
+        let scene = SlideScene(project: p, base: base.base, details: base.details)
+        let beats = scene.choreography.beats
+        let land = beats.first?.land ?? 2
+        let leave = beats.count > 1 ? beats[1].depart + 0.2 : land + 2
+        let back = (beats.count > 2 && beats.last?.isOverview == true) ? (beats.last?.land ?? scene.duration) + 0.3 : scene.duration - 0.2
+        for (c, t) in [land - 0.2, land + 1.0, leave, back].enumerated() {
+            let img = try stage.still(scene, at: t, width: cw, height: ch, samples: 4)
+            ctx.draw(img, in: CGRect(x: c * cw, y: 0, width: cw, height: ch))
+        }
+        try ImageOutput.writePNG(ctx.makeImage()!, to: out)
+        print("titles \(out.path): faces \(ReelTitle.Face.allCases.map(\.rawValue)) across the top; rising, held, clearing, back below")
+    } catch {
+        fail("titles failed: \(error)")
+    }
+
 case "blurcheck":
     // Adaptive motion blur against every frame at full samples: how many
     // samples each frame took, how long the GPU spent, and how far apart the
@@ -327,7 +377,7 @@ case "path":
 default:
     print("""
     ooo-lab — headless renders and checks for OOO
-      shaders | still | sheet | render | analyze | path | landings | openings | blurcheck | fixture
+      shaders | still | sheet | render | analyze | path | landings | openings | titles | blurcheck | fixture
       --project file.ooo | --slide file.pdf|png  --format reel|portrait|square|landscape  --floor none|soft|mirror  --out path
     """)
 }

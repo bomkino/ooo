@@ -148,6 +148,26 @@ public enum FloorKind: String, Codable, CaseIterable, Sendable, Identifiable {
     }
 }
 
+/// Words over the opening, set in the band a tall frame leaves above the
+/// slide. They rise in as the slide lands, clear as the camera goes in, and
+/// come back for a Pull Back. Off until someone types them.
+public struct OpeningTitle: Codable, Hashable, Sendable {
+    public var text: String
+    /// A short line above the title, such as a company or a date.
+    public var kicker: String
+    public var face: ReelTitle.Face
+
+    public init(text: String = "", kicker: String = "", face: ReelTitle.Face = .modern) {
+        self.text = text
+        self.kicker = kicker
+        self.face = face
+    }
+
+    public var isEmpty: Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && kicker.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
 /// One OOO document: a slide, the moves over it, and how it all looks.
 public struct OOOProject: Codable, Hashable, Sendable {
     public var version: Int = 1
@@ -168,6 +188,8 @@ public struct OOOProject: Codable, Hashable, Sendable {
     public var seed: UInt32 = 1
     /// What the slide stands on; nil (documents from before floors) is `defaultFloor`.
     public var floor: FloorKind?
+    /// Words over the opening; nil or empty for none.
+    public var title: OpeningTitle?
 
     public init(slide: SlideRef, overview: Shot? = nil, shots: [Shot] = [], arrive: Arrive = Arrive(kind: .rise),
                 ending: Ending = .pullBack, style: MotionStyle = MotionStyle(), look: StageLook = OOOProject.defaultLook,

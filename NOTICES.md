@@ -9,6 +9,7 @@
 - The near plane adapts to the camera's distance, so extreme close-ups keep their depth precision.
 - `CardPose.softEdge` fades a card's edges (a detail lifted off a slide blends into it), `CardPose.reflects` keeps an overlaid detail out of the mirror floor, and `StageFrame.reflectionFade` and `reflectionBlur` make a soft floor. A soft-edged card casts the shadow of its solid middle.
 - `StageFrame.travel(to:width:height:)` measures how far anything in view moves between two frames, in pixels, so motion blur takes only the samples a frame needs.
+- `TitleCompositor` is public, with an `encode` that takes the title's opacity and rise directly, for a scene that times its own title.
 
 Parts of the editor (`Sources/OOOStudio`: the theme, type, controls, live stage, export sheet and document) are adapted from Drift's `StudioKit`, as marked in each file.
 

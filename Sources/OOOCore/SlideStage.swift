@@ -17,11 +17,33 @@ public struct SlideScene: @unchecked Sendable {
     /// Sharper copies of the parts the camera goes close to.
     public let details: DetailCache?
 
+    /// The words over the opening, when there are some.
+    public let title: TitleOverlay?
+
     public init(project: OOOProject, base: MTLTexture, details: DetailCache?, choreography: Choreography? = nil) {
         self.project = project
         self.base = base
         self.details = details
-        self.choreography = choreography ?? project.choreography()
+        let c = choreography ?? project.choreography()
+        self.choreography = c
+        if let words = project.title, !words.isEmpty, let opening = c.beats.first?.pose {
+            let A = project.slideAspect, safe = project.format.safeArea
+            let light = project.backdrop.palette.meanLightness < 0.55
+            var h = Hasher()
+            h.combine(words)
+            h.combine(light)
+            h.combine(project.overview.yaw)
+            h.combine(project.overview.pitch)
+            h.combine(project.overview.frame.size.y)
+            h.combine(A)
+            title = TitleOverlay(key: h.finalize(), timing: .opening, scrim: 0) { w, hgt in
+                let C = Float(w) / Float(max(hgt, 1))
+                let band = OpeningTitleArt.band(opening: opening, slideAspect: A, canvasAspect: C, safe: safe)
+                return OpeningTitleArt.draw(words, width: w, height: hgt, band: band, lightInk: light)
+            }
+        } else {
+            title = nil
+        }
     }
 
     public var duration: Double { choreography.duration }
@@ -152,11 +174,15 @@ public struct SlideScene: @unchecked Sendable {
                 slide.spotDim = 0.42 * amount
                 slide.spotFeather = max(0.45 * side, 0.03) / unit
             case .lift:
-                let r = Self.padded(focus.bounds, by: 0.18)
-                slide.spot = r
+                // The piece that rises carries a wide margin it fades out
+                // across, and the slide only dims beyond that margin, so its
+                // edge never shows as a step in brightness.
+                let m = max(min(focus.size.x, focus.size.y), 0.02)
+                let r = Self.padded(focus.bounds, by: 0.5)
+                slide.spot = Self.padded(focus.bounds, by: 1.15)
                 slide.spotDim = 0.2 * amount
-                slide.spotFeather = max(0.35 * side, 0.02) / unit
-                lifted = Self.cutOut(r, slideAspect: A, amount: amount, patch: patch, light: light)
+                slide.spotFeather = max(0.9 * m, 0.02) / unit
+                lifted = Self.cutOut(r, slideAspect: A, amount: amount, patch: patch, light: light, fade: 0.45 * m)
             case .none:
                 break
             }
@@ -191,7 +217,8 @@ public struct SlideScene: @unchecked Sendable {
 
     /// A detail lifted off the slide as a die-cut piece, its shadow falling on
     /// the slide below. It shows its region of whichever texture holds it best.
-    static func cutOut(_ r: SIMD4<Float>, slideAspect A: Float, amount: Float, patch: DetailCache.Patch?, light: Float) -> CardPose {
+    static func cutOut(_ r: SIMD4<Float>, slideAspect A: Float, amount: Float, patch: DetailCache.Patch?, light: Float,
+                       fade: Float) -> CardPose {
         let ru = max(r.z - r.x, 1e-4), rv = max(r.w - r.y, 1e-4)
         let lift = amount * (0.012 + 0.16 * rv)
         let grow = 1 + 0.018 * amount
@@ -213,7 +240,7 @@ public struct SlideScene: @unchecked Sendable {
         // It fades into the slide at its edges, so what rises is the detail,
         // not a rectangle cut through whatever surrounds it.
         c.corner = 0.25
-        c.softEdge = 0.22 * min(A * ru, rv) * grow
+        c.softEdge = fade * grow
         c.edgeScale = 0
         c.reflects = false
         c.shadow = amount * 0.75
@@ -228,9 +255,11 @@ public struct SlideScene: @unchecked Sendable {
 /// Renders OOO frames for the live stage and for export.
 public final class SlideStage: @unchecked Sendable {
     public let renderer: StageRenderer
+    private let titles: TitleCompositor
 
     public init(renderer: StageRenderer? = nil) throws {
         self.renderer = try renderer ?? StageRenderer()
+        titles = try TitleCompositor()
     }
 
     /// Most pixels between neighbouring shutter samples: closer than this,
@@ -286,6 +315,10 @@ public final class SlideStage: @unchecked Sendable {
             }
         }
         try renderer.encode(cb, output: output, request: request, textures: textures, frameAt: frameAt)
+        if let title = scene.title {
+            let p = OpeningTitleArt.presence(scene.choreography, at: t)
+            try titles.encode(cb, title, alpha: p.alpha * scene.presence(at: t), drop: p.drop, output: output)
+        }
         return request.samples
     }
 
