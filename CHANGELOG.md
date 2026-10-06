@@ -18,6 +18,10 @@ OOO 1.0: a slide you corrected keeps its tour, every drag has a key, and the cam
 - Hold `\` to see the slide exactly as supplied (the Original surface), and let go to see your look.
 - With Reduce Motion on, the editor doesn't start playing by itself and Direct for Me's glow doesn't pulse. The films you export move as they always do.
 
+**Fixed**
+- **The whole editor fits a laptop's screen.** One line of help in the inspector made the editor at least 1177 points tall, so on a laptop the timeline sat below the bottom of the screen and the slide map under the toolbar. It now fits a 1024 × 768 screen, and CI fails any screenshot where it doesn't.
+- **A number corrected where it stood** keeps its shot through Replace Slide, and the shot takes the new number ("$412k" becomes "$431k").
+
 **Since 0.2.0, also** (the details are under 0.3.0)
 - **Black type stays black**: on the wide test slide a headline lands at most 7 levels above the slide as supplied, down from 18.
 - **A larger wide opening**: a wide slide stands 29% of a reel's height, up from 24%.

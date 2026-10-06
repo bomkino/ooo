@@ -76,7 +76,8 @@ jobs:
             [ -n "$FEED_BUILD" ] && [ "$FEED_BUILD" -lt "$BUILD" ] \
               || { echo "::error::The carried feed names build '$FEED_BUILD', not one below $BUILD"; exit 1; }
             URL="$(grep -o 'url="[^"]*"' release/appcast.xml | head -1 | cut -d'"' -f2)"
-            curl -fsSIL -o /dev/null "$URL" || { echo "::error::The carried feed's download ($URL) doesn't answer"; exit 1; }
+            # A ranged GET: GitHub's release downloads refuse HEAD after the redirect.
+            curl -fsSL -r 0-99 -o /dev/null "$URL" || { echo "::error::The carried feed's download ($URL) doesn't answer"; exit 1; }
             echo "Carrying over $LATEST's feed: build $FEED_BUILD, $URL"
           fi
           # The release notes, in the shape of Drift's, Galileo's and Backdrop's:
