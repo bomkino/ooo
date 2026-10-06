@@ -450,13 +450,26 @@ public enum Director {
         }
         // Running text is only worth a shot if it can be read: a paragraph
         // that has to be shown whole in a narrow frame comes out too small.
-        let picked = tour(blocks(input.details), maxShots: input.maxShots) { b in
+        let chosen = tour(blocks(input.details), maxShots: input.maxShots) { b in
             guard b.role == .text else { return true }
             let f = frame(b)
             return b.lineHeight / (f.frame.size.y / input.safe.size.y) >= 0.022
         }
-        guard !picked.isEmpty else { return [] }
-        let framings = picked.map(frame)
+        guard !chosen.isEmpty else { return [] }
+        // Where the sharp limit or a readable size puts two details in nearly
+        // the same view, the second would only nudge the camera: the first
+        // shot already shows it, so it gets no shot of its own.
+        var kept: [(block: DetailBlock, framing: (frame: ShotFrame, sweep: Vec2?))] = []
+        for b in chosen {
+            let f = frame(b)
+            let shown = kept.contains { k in
+                k.framing.sweep == nil && f.sweep == nil && overlap(f.frame, k.framing.frame) > 0.7
+                    && inside(b.bounds, k.framing.frame.bounds)
+            }
+            if !shown { kept.append((b, f)) }
+        }
+        let picked = kept.map(\.block)
+        let framings = kept.map(\.framing)
         // A glide along a line goes at an easy reading pace when no voice sets it.
         let reading: [Double] = zip(picked, framings).map { b, f in
             f.sweep == nil ? 0 : min(max(Double(b.text.split(separator: " ").count) * 0.32, 1.3), 3.4)
@@ -519,6 +532,18 @@ public enum Director {
             previous = sweep == nil ? pose : CameraPose(sweepEndOf: shot, slideAspect: A, canvasAspect: C, safe: input.safe)
         }
         return shots
+    }
+
+    /// How much two framings share: their overlap over their union.
+    static func overlap(_ a: ShotFrame, _ b: ShotFrame) -> Float {
+        let p = a.bounds, q = b.bounds
+        let w = max(min(p.z, q.z) - max(p.x, q.x), 0), h = max(min(p.w, q.w) - max(p.y, q.y), 0)
+        let union = a.size.x * a.size.y + b.size.x * b.size.y - w * h
+        return union > 0 ? w * h / union : 0
+    }
+
+    static func inside(_ r: SIMD4<Float>, _ outer: SIMD4<Float>) -> Bool {
+        r.x >= outer.x && r.y >= outer.y && r.z <= outer.z && r.w <= outer.w
     }
 
     // MARK: Timing

@@ -193,6 +193,47 @@ final class DirectorTests: XCTestCase {
         XCTAssertFalse(names.contains { $0.hasPrefix("Series A") }, "a running footer is the deck's, not the slide's: \(names)")
     }
 
+    /// The standard market slide (1920 × 1080): numbers stacked in rings.
+    var standard: [SlideDetail] {
+        func line(_ text: String, _ u0: Float, _ v0: Float, _ u1: Float, _ v1: Float) -> SlideDetail {
+            SlideDetail(frame: ShotFrame(center: Vec2((u0 + u1) / 2, (v0 + v1) / 2), size: Vec2(u1 - u0, v1 - v0)), text: text)
+        }
+        return [
+            line("03 MARKET", 0.062, 0.106, 0.132, 0.122),
+            line("A $4.2B market", 0.060, 0.171, 0.378, 0.246), line("nobody designs for.", 0.055, 0.253, 0.395, 0.349),
+            line("Every startup pitches. Almost none can afford a designer for", 0.064, 0.380, 0.419, 0.406),
+            line("every update. We sell the one-slide update to the 1.1 million", 0.061, 0.413, 0.420, 0.442),
+            line("seed and Series A teams who send one every month.", 0.062, 0.446, 0.379, 0.477),
+            line("$4.2B", 0.712, 0.235, 0.776, 0.274), line("design spend, US and EU", 0.695, 0.282, 0.794, 0.300),
+            line("$860M", 0.711, 0.351, 0.778, 0.382), line("teams that pitch monthly", 0.696, 0.393, 0.792, 0.411),
+            line("$95M", 0.719, 0.499, 0.769, 0.527), line("ours in three years", 0.708, 0.537, 0.781, 0.556),
+            line("TRUSTED BY", 0.061, 0.747, 0.124, 0.762), line("Northwind", 0.062, 0.790, 0.154, 0.820),
+            line("Halcyon", 0.185, 0.793, 0.241, 0.827), line("Brightline", 0.273, 0.793, 0.342, 0.824),
+            line("Estimates: pitch.dog analysis of 2025 design-tool spend in the US and EU. TAM is the total addressable market; SAM what we can serve; SOM what we can win in three years.",
+                 0.061, 0.925, 0.554, 0.941),
+            line("03", 0.926, 0.925, 0.938, 0.938),
+            SlideDetail(frame: ShotFrame(center: Vec2(0.7435, 0.522), size: Vec2(0.363, 0.644)), kind: .figure),
+        ]
+    }
+
+    func testDetailsInOneViewGetOneShot() {
+        // A 1080 px picture in a reel: the sharp limit keeps the rings' numbers
+        // in nearly the same close-up, so only the first of them gets a shot.
+        let A: Float = 16.0 / 9, C: Float = 9.0 / 16
+        let shots = Director.shots(DirectorInput(details: standard, slideAspect: A, canvasAspect: C, start: 2.1, safe: .reel,
+                                                 minViewHeight: 1920.0 / 2160))
+        let names = shots.map { $0.label ?? "" }
+        for (i, a) in shots.enumerated() {
+            for b in shots[(i + 1)...] where a.sweep == nil && b.sweep == nil {
+                XCTAssertLessThan(Director.overlap(a.frame, b.frame), 0.7, "\(names)")
+            }
+        }
+        XCTAssertEqual(shots.filter { $0.label?.hasPrefix("$") ?? false }.count, 1, "\(names)")
+        // A vector slide can go close enough to give each its own.
+        let close = Director.shots(DirectorInput(details: standard, slideAspect: A, canvasAspect: C, start: 2.1, safe: .reel))
+        XCTAssertGreaterThan(close.filter { $0.label?.hasPrefix("$") ?? false }.count, 1, "\(close.map { $0.label ?? "" })")
+    }
+
     func testCloseUpsStayOnTheSlide() {
         let A: Float = 2576.0 / 1080, C: Float = 9.0 / 16
         let shots = Director.shots(DirectorInput(details: wide, slideAspect: A, canvasAspect: C, start: 2.1, safe: .reel,
