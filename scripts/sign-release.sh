@@ -1,7 +1,9 @@
 #!/bin/bash
-# Turns on the in-app update to a release CI has already published: signs its
-# ZIP with pitch.dog's key and puts the signed appcast.xml on it. Nothing is
-# rebuilt. Run on the release Mac, from this repository on main:
+# Turns on the in-app update to a release: signs its ZIP with pitch.dog's key
+# and writes the signed appcast.xml. Nothing is rebuilt. The release workflow
+# runs it on every release (--dir, before publishing) and for "Sign" (a
+# release already out), with the key from its secret; it also runs on a Mac
+# that holds the key, from this repository on main:
 #
 #   bash scripts/sign-release.sh v1.0.1 [--only]
 #
@@ -10,7 +12,7 @@
 #   3. signs the ZIP (generate_appcast --ed-key-file) into appcast.xml, with
 #      this version's section of CHANGELOG.md for the update window
 #   4. checks the signature with the public key inside the app, as Sparkle will
-#   5. uploads appcast.xml to the release, replacing the one CI carried over
+#   5. uploads appcast.xml to the release, replacing the one it has
 #   6. confirms releases/latest/download/appcast.xml now names this version
 #   7. with --only, then deletes every other release, so this one is the only
 #      version on the releases page (their tags stay). Nothing reads them once
@@ -26,7 +28,7 @@
 #   DOWNLOAD_URL  where the ZIP is served (default: the GitHub release; --dir needs it)
 #
 # The key is only ever read by generate_appcast, from its file. Never commit
-# it, paste it anywhere or put it in a GitHub secret (docs/UPDATES.md).
+# it, paste it anywhere or print it (docs/UPDATES.md).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 REPO="bomkino/ooo"
@@ -38,7 +40,7 @@ fail() { echo "sign-release: $*" >&2; exit 1; }
 case "${1:-}" in
   --dir) LOCAL="${2:?--dir needs a folder}"; TAG="" ;;
   v[0-9]*.[0-9]*.[0-9]*) LOCAL=""; TAG="$1" ;;
-  *) sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
 ONLY=""
 for a in "$@"; do [ "$a" = --only ] && ONLY=1; done
@@ -86,12 +88,18 @@ cp "$SRC/$ZIP" "$T/cast/"
 awk -v v="## $VERSION" 'index($0, v) == 1 { on = 1; next } /^## / { on = 0 } on' CHANGELOG.md > "$T/cast/${ZIP%.zip}.md"
 [ -s "$T/cast/${ZIP%.zip}.md" ] || rm "$T/cast/${ZIP%.zip}.md"
 "$SPARKLE_BIN/generate_appcast" --ed-key-file "$SPARKLE_KEY" --download-url-prefix "$DOWNLOAD_URL" \
-  --link "https://github.com/$REPO/releases" --embed-release-notes --maximum-versions 1 -o "$T/appcast.xml" "$T/cast" >/dev/null
+  --link "https://github.com/$REPO/releases" --embed-release-notes --maximum-versions 1 -o "$T/appcast.xml" "$T/cast" \
+  > "$T/generate.log" || { cat "$T/generate.log"; fail "generate_appcast failed"; }
 xmllint --noout "$T/appcast.xml"
 grep -Eq "shortVersionString(>|=\")$VERSION[<\"]" "$T/appcast.xml" || fail "the appcast doesn't name $VERSION"
 grep -q "url=\"$DOWNLOAD_URL$ZIP\"" "$T/appcast.xml" || fail "the appcast doesn't point at $DOWNLOAD_URL$ZIP"
-SIG="$(grep -o 'sparkle:edSignature="[^"]*"' "$T/appcast.xml" | head -1 | cut -d'"' -f2)"
-[ -n "$SIG" ] || fail "the appcast carries no signature"
+SIG="$(sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p' "$T/appcast.xml" | head -1)"
+# Sparkle signs only with the key whose public half is in the app; with any
+# other key it warns and leaves the appcast unsigned.
+if [ -z "$SIG" ]; then
+  grep -i "warning\|error" "$T/generate.log" || true
+  fail "the app wouldn't accept this appcast: Sparkle left it unsigned. Is SPARKLE_KEY the key whose public half is $PUBLIC?"
+fi
 
 echo "== 4. Checking the signature with the key inside the app"
 cat > "$T/verify.swift" <<'SWIFT'
