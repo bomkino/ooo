@@ -24,7 +24,6 @@ swift run -c release ooo-lab still --t 6.6 --out still.png # one frame
 swift run -c release ooo-lab sheet --out sheet.png         # twelve frames across the video
 swift run -c release ooo-lab render --quality draft --scale 0.5 --out draft.mp4
 swift run -c release ooo-lab analyze                       # what the director reads and plans
-swift run -c release ooo-lab readcheck                     # the one-pass read against whole-and-close-ups
 swift run -c release ooo-lab plan                          # the tour as it stands
 swift run -c release ooo-lab landings --out dir            # a still at the opening and at every landing
 swift run -c release ooo-lab stills --out dir              # what Save Stills writes
@@ -36,6 +35,8 @@ swift run -c release ooo-lab motioncheck                   # each move's speed a
 swift run -c release ooo-lab blurcheck --quality good      # adaptive motion blur against full sampling
 swift run -c release ooo-lab inkcheck                      # how dark the type lands at every hold, against the slide
 swift run -c release ooo-lab loopcheck --ending leave      # the step from the last frame back to the first
+swift run -c release ooo-lab bench                         # export and preview timings (p50, p95, p99), with the machine
+swift run -c release ooo-lab colorcheck                    # how the slide's colour survives the encoder
 swift run -c release ooo-lab path --out path.csv           # the camera's path, sampled at 120 Hz
 swift run -c release ooo-lab fixture --kind wide --out wide.png # a 2576 × 1080 test slide (also standard, wide-revised)
 ```

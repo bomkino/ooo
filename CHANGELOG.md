@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.0.0 — 6 October 2026
+
+OOO 1.0: a slide you corrected keeps its tour, every drag has a key, and the camera takes its time.
+
+**Keep the tour**
+- **Replace Slide (⇧⌘I).** Swap in a corrected slide and keep the camera work: each framing follows its words to where they are now, and a shot named after its words takes the new ones. Framings about nothing that moved stay where they were.
+- **Framings remember who made them.** Change the canvas and the framings Direct for Me planned are framed again for it; the ones you set stay where you put them.
+- **A slide is read once.** Its reading is kept in the document, so directing it again, or changing the canvas, never reads it again.
+
+**For the post**
+- **Save Stills (⇧⌘E)**: the opening and every landing as full-size pictures in a folder, for a carousel, exactly as the export draws them.
+
+**Every drag has a key**
+- Esc cancels a drag halfway. Double-click any value in the inspector to type it. A run of arrow presses is one undo.
+- ⌥⌘ arrows move the selected framing, ⌥⌘= and ⌥⌘− take it closer and wider, and ⌥⌘[ and ⌥⌘] land it a tenth of a second earlier or later.
+- Hold `\` to see the slide exactly as supplied (the Original surface), and let go to see your look.
+- With Reduce Motion on, the editor doesn't start playing by itself and Direct for Me's glow doesn't pulse. The films you export move as they always do.
+
+**Since 0.2.0, also** (the details are under 0.3.0)
+- **Black type stays black**: on the wide test slide a headline lands at most 7 levels above the slide as supplied, down from 18.
+- **A larger wide opening**: a wide slide stands 29% of a reel's height, up from 24%.
+- **Motion that never rushes**: every move gets the time its distance and turn need, holds follow how much there is to read, and with a voice a move it leaves no time for becomes a cut on the word.
+- **The room**: every backdrop's own dials and Shuffle, and From Slide, a room in the slide's own colours.
+- **Weave**, a new arrival, and **Develop** rebuilt to come up like a print. The kicker can be set as typed.
+
+**Made and checked**
+- Releases are published from CI, and their updates signed on pitch.dog's release Mac (`scripts/sign-release.sh`); CI runs the same scripts end to end with a throwaway key before every release.
+- `ooo-lab bench` and `ooo-lab colorcheck` measure export and preview times (with the machine) and how colour survives the encoder, in every CI run.
+- The README is rewritten; building and the headless checks are in `docs/DEVELOPING.md`.
+
 ## 0.3.0 — 6 October 2026 (not released on its own)
 
 A milestone on the way to 1.0: the fixes the 0.2.0 audit found, motion that never rushes, and the room and arrivals.

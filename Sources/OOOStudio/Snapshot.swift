@@ -152,12 +152,28 @@ public enum OOOSnapshot {
         }
     }
 
+    /// How the window and its views are sized, in the log, for when a
+    /// screenshot looks cut off.
+    private static func describeLayout(_ window: NSWindow) {
+        func s(_ r: NSRect) -> String { String(format: "%.0f,%.0f %.0f×%.0f", r.minX, r.minY, r.width, r.height) }
+        func s(_ z: NSSize) -> String { String(format: "%.0f×%.0f", z.width, z.height) }
+        let screen = window.screen ?? NSScreen.main
+        print("layout: window \(s(window.frame)), content layout \(s(window.contentLayoutRect)), min \(s(window.minSize)),"
+              + " content min \(s(window.contentMinSize)), screen \(s(screen?.frame ?? .zero)), visible \(s(screen?.visibleFrame ?? .zero))")
+        func walk(_ view: NSView, _ depth: Int) {
+            print("layout: " + String(repeating: "  ", count: depth) + "\(type(of: view)) \(s(view.frame)) fitting \(s(view.fittingSize))")
+            if depth < 5 { view.subviews.forEach { walk($0, depth + 1) } }
+        }
+        if let content = window.contentView { walk(content, 0) }
+    }
+
     private static func capture(_ session: OOOSession) {
         guard let window = NSApp.windows.first(where: { $0.isVisible && !$0.isSheet && $0.contentView != nil && $0.frame.width > 400 })
         else {
             print("snapshot: no window")
             exit(1)
         }
+        describeLayout(window)
         // A Mac that would ask about screen capture waits for an answer no
         // one gives: after a few seconds the views are drawn instead.
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
