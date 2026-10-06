@@ -22,7 +22,7 @@ One card in your hand through several slides, marks drawn by hand, a scratch tak
 - The stage shows where you'll be, a quiet outline that comes up as the stage rises. It is never exported.
 
 **Fixed**
-- A dark slide no longer goes grey under Gloss while the camera moves: the softbox holds back over dark artwork, as it does on Satin.
+- A dark slide no longer goes grey under Gloss as the camera comes in: the sheen holds back over dark artwork, as it does on Satin.
 
 **Made and checked**
 - `ooo-lab changes`, `ooo-lab marks` and `ooo-lab lifts` draw every turn, melt, mark and rise in CI, and `motioncheck` measures how fast the picture changes through them.
