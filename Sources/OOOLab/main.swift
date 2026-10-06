@@ -376,7 +376,9 @@ case "inkcheck":
         for y in Int(box.minY * CGFloat(ih))..<Int(box.maxY * CGFloat(ih)) {
             for x in Int(box.minX * CGFloat(iw))..<Int(box.maxX * CGFloat(iw)) {
                 let i = (y * iw + x) * 4
-                out.append(UInt8(min(255, (0.2126 * Double(px[i]) + 0.7152 * Double(px[i + 1]) + 0.0722 * Double(px[i + 2])).rounded())))
+                let r = Double(px[i]), g = Double(px[i + 1]), b = Double(px[i + 2])
+                let l: Double = 0.2126 * r + 0.7152 * g + 0.0722 * b
+                out.append(UInt8(min(255.0, l.rounded())))
             }
         }
         return out.sorted()
