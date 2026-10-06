@@ -387,7 +387,11 @@ fragment float4 card_fragment(CardVOut in [[stage_in]], bool facing [[front_faci
             float spec = pow(max(dot(N, H), 0.0), 30.0) * 0.16;
             float3 R = reflect(-V, N);
             float softbox = smoothstep(0.55, 0.9, R.y) * smoothstep(-0.2, 0.25, R.z) * 0.10;
-            rgb += spec + softbox + fres * 0.08;
+            // Dark artwork keeps its depth, as on Satin: the softbox is held
+            // back where the print is dark, or a dark slide would go grey each
+            // time the camera moves. The glint stays.
+            float keep = mix(0.3, 1.0, smoothstep(0.02, 0.4, dot(unlit, float3(0.2126, 0.7152, 0.0722))));
+            rgb += spec + keep * (softbox + fres * 0.08);
         } else if (surface == 3) {
             // Foil: a thin film over the print. Its colour comes from light
             // interfering in a film a few hundred nanometres thick, so it shifts

@@ -21,6 +21,9 @@ One card in your hand through several slides, marks drawn by hand, a scratch tak
 - **Room for you** lifts the slide, its moves and its title into the top of the frame and leaves the bottom clear for your talking head, to lay over in Edits or Premiere. Choose **Whole Video**, or add stretches on the new lane under the camera's, where you talk: the stage rises and settles smoothly, and whatever the camera is doing carries on through it, every framing solved again for the space above you.
 - The stage shows where you'll be, a quiet outline that comes up as the stage rises. It is never exported.
 
+**Fixed**
+- A dark slide no longer goes grey under Gloss while the camera moves: the softbox holds back over dark artwork, as it does on Satin.
+
 **Made and checked**
 - `ooo-lab changes`, `ooo-lab marks` and `ooo-lab lifts` draw every turn, melt, mark and rise in CI, and `motioncheck` measures how fast the picture changes through them.
 - Slide loading and the card shader come from Drift 2.5, so a slide is drawn sooner and its close-ups cost less.

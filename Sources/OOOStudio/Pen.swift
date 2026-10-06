@@ -220,6 +220,8 @@ struct PenPalette: View {
                 .buttonStyle(PrimaryButtonStyle())
                 .help("Put the pen away and watch what you drew")
         }
+        // Whole even over a narrow stage, where it may reach past the card.
+        .fixedSize()
         .padding(.leading, 8)
         .padding(.trailing, 5)
         .padding(.vertical, 5)
