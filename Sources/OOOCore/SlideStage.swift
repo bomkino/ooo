@@ -225,7 +225,7 @@ public struct SlideScene: @unchecked Sendable {
                 // across, and the slide only dims beyond that margin, so its
                 // edge never shows as a step in brightness.
                 let m = max(min(focus.size.x, focus.size.y), 0.02)
-                let r = Self.padded(focus.bounds, by: 0.5)
+                let r = Self.padded(focus.bounds, by: 0.7)
                 slide.spot = Self.padded(focus.bounds, by: 1.15)
                 slide.spotDim = 0.2 * amount
                 slide.spotFeather = max(0.9 * m, 0.02) / unit

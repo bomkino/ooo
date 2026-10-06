@@ -7,36 +7,49 @@ import Vision
 /// Reads a slide the way a viewer would: its text, line by line, and the
 /// parts that draw the eye. Runs on this Mac.
 public enum SlideAnalysis {
-    /// Reads the whole slide, then reads it again in close-ups for the small
+    /// Reads the whole slide, and reads it again in close-ups for the small
     /// print the whole slide is too coarse to show: the 4-point footnote is
-    /// often the detail most worth a look. Figures come from the slide's ink.
+    /// often the detail most worth a look. The reads run side by side.
+    /// Figures come from the slide's ink.
     public static func read(_ source: SlideSource, side: Int = 3200) throws -> [SlideDetail] {
-        guard let whole = source.renderWhole(side: side) else { throw RenderError.io("Could not draw the slide.") }
-        var found = try lines(in: whole)
         // A picture has no more detail to give than its (sharpened) pixels;
         // read twice its size, its small print comes out of the blur.
-        if source.densityLimit.map({ $0 > Float(whole.height) * 1.25 }) ?? true {
-            let tiles: [SIMD4<Float>] = [(0, 0), (1, 0), (0, 1), (1, 1)].map { c, r in
-                let u0: Float = c == 0 ? 0 : 0.44, v0: Float = r == 0 ? 0 : 0.44
-                return SIMD4(u0, v0, u0 + 0.56, v0 + 0.56)
-            }
-            var closeUps = [[SlideDetail]](repeating: [], count: tiles.count)
-            let lock = NSLock()
-            DispatchQueue.concurrentPerform(iterations: tiles.count) { i in
-                let r = tiles[i]
-                let h = max(1, Int((Float(side) * (r.w - r.y) / ((r.z - r.x) * source.aspect)).rounded()))
-                guard let image = source.render(region: r, width: side, height: h),
-                      let read = try? lines(in: image) else { return }
-                let mapped = read.map { d -> SlideDetail in
-                    var d = d
-                    d.frame = ShotFrame(center: Vec2(r.x + d.frame.center.x * (r.z - r.x), r.y + d.frame.center.y * (r.w - r.y)),
-                                        size: Vec2(d.frame.size.x * (r.z - r.x), d.frame.size.y * (r.w - r.y)))
-                    return d
+        let drawnHeight = source.aspect >= 1 ? Float(side) / source.aspect : Float(side)
+        let wholeHeight = min(drawnHeight, source.densityLimit ?? drawnHeight)
+        let closeUps = source.densityLimit.map { $0 > wholeHeight * 1.25 } ?? true
+        let tiles: [SIMD4<Float>] = closeUps ? [(0, 0), (1, 0), (0, 1), (1, 1)].map { c, r in
+            let u0: Float = c == 0 ? 0 : 0.44, v0: Float = r == 0 ? 0 : 0.44
+            return SIMD4(u0, v0, u0 + 0.56, v0 + 0.56)
+        } : []
+        var whole: CGImage?
+        var wholeRead: Result<[SlideDetail], Error> = .success([])
+        var tileReads = [[SlideDetail]](repeating: [], count: tiles.count)
+        let lock = NSLock()
+        DispatchQueue.concurrentPerform(iterations: tiles.count + 1) { i in
+            if i == 0 {
+                let image = source.renderWhole(side: side)
+                let read = Result { () throws -> [SlideDetail] in
+                    guard let image else { throw RenderError.io("Could not draw the slide.") }
+                    return try lines(in: image)
                 }
-                lock.lock(); closeUps[i] = mapped; lock.unlock()
+                lock.lock(); whole = image; wholeRead = read; lock.unlock()
+                return
             }
-            found = Director.merge(found, closeUps: closeUps.flatMap { $0 })
+            let r = tiles[i - 1]
+            let h = max(1, Int((Float(side) * (r.w - r.y) / ((r.z - r.x) * source.aspect)).rounded()))
+            guard let image = source.render(region: r, width: side, height: h),
+                  let read = try? lines(in: image) else { return }
+            let mapped = read.map { d -> SlideDetail in
+                var d = d
+                d.frame = ShotFrame(center: Vec2(r.x + d.frame.center.x * (r.z - r.x), r.y + d.frame.center.y * (r.w - r.y)),
+                                    size: Vec2(d.frame.size.x * (r.z - r.x), d.frame.size.y * (r.w - r.y)))
+                return d
+            }
+            lock.lock(); tileReads[i - 1] = mapped; lock.unlock()
         }
+        guard let whole else { throw RenderError.io("Could not draw the slide.") }
+        var found = try wholeRead.get()
+        if !tiles.isEmpty { found = Director.merge(found, closeUps: tileReads.flatMap { $0 }) }
         return found + figures(in: whole, text: found.map(\.frame.bounds))
     }
 

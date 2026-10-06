@@ -18,7 +18,7 @@ import StageKit
 //   ooo-lab landings --out dir              a still at the opening and at every landing
 //   ooo-lab fixture --kind wide|standard --out f.png|f.pdf [--scale 2]
 //                                           draw a test slide: 2576 × 1080 or 1920 × 1080
-//   ooo-lab openings --out grid.png         the opening at five angles (across) and
+//   ooo-lab openings --out grid.png         the opening at five turns, 28° to 52° (across), and
 //                                           three floors (down: none, soft, mirror)
 //   ooo-lab titles --out grid.png           the opening title in four faces, and in time
 //   ooo-lab blurcheck [--quality good]      adaptive motion blur against full samples:
@@ -238,7 +238,7 @@ case "openings":
     // The opening as the slide comes to rest, at five angles and three floors.
     let base = loadScene()
     let out = URL(fileURLWithPath: value("--out") ?? "openings.png")
-    let yaws: [Float] = [-9, -20, -28, -34, -40]
+    let yaws: [Float] = [-28, -34, -40, -46, -52]
     let floors: [FloorKind] = [.none, .soft, .mirror]
     let cw = project.format.width / 3, ch = project.format.height / 3
     do {

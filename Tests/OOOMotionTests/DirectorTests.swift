@@ -234,21 +234,32 @@ final class DirectorTests: XCTestCase {
         XCTAssertGreaterThan(close.filter { $0.label?.hasPrefix("$") ?? false }.count, 1, "\(close.map { $0.label ?? "" })")
     }
 
-    func testCloseUpsStayOnTheSlide() {
+    func testCloseUpsKeepTheirDetailInTheMiddle() {
         let A: Float = 2576.0 / 1080, C: Float = 9.0 / 16
         let shots = Director.shots(DirectorInput(details: wide, slideAspect: A, canvasAspect: C, start: 2.1, safe: .reel,
                                                  minViewHeight: 1920.0 / 2160))
         XCTAssertFalse(shots.isEmpty)
         for s in shots {
             let f = s.frame
+            // Each detail sits in the middle 60% of its framing (read-alongs across it).
+            if let focus = s.focus {
+                XCTAssertLessThanOrEqual(abs(focus.center.y - f.center.y), 0.2 * f.size.y + 1e-4, s.label ?? "")
+                if s.sweep == nil { XCTAssertLessThanOrEqual(abs(focus.center.x - f.center.x), 0.2 * f.size.x + 1e-4, s.label ?? "") }
+            }
+            // The view stays on the slide unless that would push its detail to the edge:
+            // then it shows no more past the slide's edge than it must.
             if f.size.x < 1 {
-                XCTAssertGreaterThanOrEqual(f.minU, -1e-4, s.label ?? "")
-                XCTAssertLessThanOrEqual(f.maxU + (s.sweep?.x ?? 0), 1 + 1e-4, s.label ?? "")
+                XCTAssertGreaterThanOrEqual(f.minU, -0.3 * f.size.x - 1e-4, s.label ?? "")
+                XCTAssertLessThanOrEqual(f.maxU + (s.sweep?.x ?? 0), 1 + 0.3 * f.size.x + 1e-4, s.label ?? "")
             }
             if f.size.y < 1 {
-                XCTAssertGreaterThanOrEqual(f.minV, -1e-4, s.label ?? "")
-                XCTAssertLessThanOrEqual(f.maxV, 1 + 1e-4, s.label ?? "")
+                XCTAssertGreaterThanOrEqual(f.minV, -0.3 * f.size.y - 1e-4, s.label ?? "")
+                XCTAssertLessThanOrEqual(f.maxV, 1 + 0.3 * f.size.y + 1e-4, s.label ?? "")
             }
+        }
+        // The small print by the slide's foot no longer lands at the bottom of the frame.
+        if let small = shots.first(where: { $0.label == "The small print" }), let focus = small.focus {
+            XCTAssertLessThan((focus.center.y - small.frame.minV) / small.frame.size.y, 0.71)
         }
         // One lift at a time.
         for (a, b) in zip(shots, shots.dropFirst()) where a.emphasis == .lift {

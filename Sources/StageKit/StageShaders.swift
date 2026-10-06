@@ -202,6 +202,13 @@ inline float sdCard(float2 p, float2 halfSize, float r) {
     return len + min(max(q.x, q.y), 0.0) - r;
 }
 
+// Distance to the outline a soft-edged card fades across: rounder than its
+// own by the width of the fade, so the fade's inner edge keeps the card's
+// round corners instead of closing to a box.
+inline float softDistance(float2 local, float2 ps, constant CardU &c) {
+    return sdCard(local, ps * 0.5, min(c.sizeCorner.z + c.soft.x, 0.5 * min(ps.x, ps.y)));
+}
+
 inline float sliceDistance(float2 uv, constant CardU &c, thread float2 &parentUV) {
     float2 ps = parentSize(c);
     parentUV = mix(c.crop.xy, c.crop.zw, uv);
@@ -258,7 +265,7 @@ fragment float4 card_fragment(CardVOut in [[stage_in]], bool facing [[front_faci
     coc += c.fx.y;
     float feather = pxWorld * (0.85 + coc * 0.9);
     float mask = 1.0 - smoothstep(-feather, feather, d);
-    if (c.soft.x > 0.0) mask *= smoothstep(0.0, c.soft.x, -d);
+    if (c.soft.x > 0.0) mask *= smoothstep(0.0, c.soft.x, -softDistance(local, ps, c));
     float rim = bandRim(in.uv, c);
     if (c.band.y > 0.0) {
         float core = c.band.x;
@@ -459,7 +466,7 @@ fragment float4 shadow_fragment(ShadowVOut in [[stage_in]],
     // middle, as soft as a good part of its size, so it reads as depth under
     // the detail rather than the outline of a box.
     if (c.soft.x > 0.0) {
-        d += c.soft.x * 1.0;
+        d = max(softDistance(in.local + centre, ps, c), max(b.x, b.y)) + c.soft.x;
         sigma = max(sigma, max(c.soft.x * 1.1, min(w, h) * 0.4));
     }
     float outside = max(d, 0.0);

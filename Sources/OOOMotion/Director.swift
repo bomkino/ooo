@@ -382,6 +382,10 @@ public enum Director {
         }
     }
 
+    /// How far a detail may sit from the middle of its framing, as a share of
+    /// the framing's size: it stays within the middle 60%.
+    static let offCentre: Float = 0.2
+
     /// A framing that reads the block on the canvas: its text at a size that
     /// reads, with room around it. A single line too long to show whole at
     /// that size is read along: the framing starts on the line's beginning
@@ -425,14 +429,20 @@ public enum Director {
                 H = max(H, height(across: wide))
             }
         }
-        // Keep the view on the slide where it fits: a detail by an edge sits
-        // off centre rather than leave a stretch of empty backdrop in the frame.
+        // Keep the view on the slide where it fits, so a detail by an edge sits
+        // a little off centre rather than leave a stretch of empty room in the
+        // frame; but never so far off centre that it ends up at the frame's
+        // edge, where a phone's interface sits and the eye doesn't go. Past
+        // that, the view shows the slide's edge and the floor beyond it.
         let size = Vec2(H * C * room.x / A, H * room.y)
         func onSlide(_ c: Float, _ s: Float) -> Float { s >= 1 ? 0.5 : min(max(c, s / 2), 1 - s / 2) }
-        let start = Vec2(onSlide(center.x, size.x), onSlide(center.y, size.y))
+        func near(_ c: Float, _ focus: Float, _ s: Float) -> Float { min(max(c, focus - Self.offCentre * s), focus + Self.offCentre * s) }
+        var start = Vec2(onSlide(center.x, size.x), near(onSlide(center.y, size.y), b.center.y, size.y))
         if let s = sweep {
             let end = onSlide(center.x + s.x, size.x)
             sweep = end - start.x > 0.004 ? Vec2(end - start.x, 0) : nil
+        } else {
+            start.x = near(start.x, b.center.x, size.x)
         }
         return (ShotFrame(center: start, size: size), sweep)
     }

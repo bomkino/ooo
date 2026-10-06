@@ -96,8 +96,10 @@ public final class OOOSession {
         didSet { if showExport { clock.playing = false } }
     }
     public var message: String?
-    /// What OOO is busy with, in words.
-    public private(set) var busy: String?
+    /// What OOO is busy with, in words: the latest job still running.
+    public var busy: String? { jobs.last?.label }
+    private var jobs: [(id: Int, label: String)] = []
+    private var lastJob = 0
     /// The slide drawn small, for the map and the timeline.
     public private(set) var slidePreview: CGImage?
     /// The voiceover's peaks, recording time.
@@ -264,19 +266,31 @@ public final class OOOSession {
 
     public var hasSlide: Bool { slideBase != nil }
 
+    /// Shows `label` until the job it names ends; jobs can overlap.
+    private func begin(_ label: String) -> Int {
+        lastJob += 1
+        jobs.append((lastJob, label))
+        return lastJob
+    }
+
+    private func end(_ job: Int) {
+        jobs.removeAll { $0.id == job }
+    }
+
     func loadSlide() {
         let ref = project.slide
         if let b = slideBase, b.ref == ref { return }
         let media = document.media.directory
         slideToken += 1
         let token = slideToken
-        busy = "Drawing the slide"
+        let job = begin("Drawing the slide")
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = Result { try SlideBase(ref: ref, media: media) }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    guard let self, token == self.slideToken else { return }
-                    self.busy = nil
+                    guard let self else { return }
+                    self.end(job)
+                    guard token == self.slideToken else { return }
                     switch result {
                     case .success(let base): self.install(base)
                     case .failure(let error): self.message = "Couldn't draw the slide: \(readable(error))"
@@ -404,7 +418,7 @@ public final class OOOSession {
         let media = document.media.directory
         // Only this slide's own reading will do: a new slide or page is read afresh.
         let cached = details?.ref == ref ? details?.found : nil
-        busy = "Reading the slide"
+        let job = begin("Reading the slide")
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = Result { () throws -> [SlideDetail] in
                 if let cached { return cached }
@@ -412,8 +426,9 @@ public final class OOOSession {
             }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    guard let self, self.project.slide == ref else { return }
-                    self.busy = nil
+                    guard let self else { return }
+                    self.end(job)
+                    guard self.project.slide == ref else { return }
                     // A new slide waits for its tour to arrive; it arrives now either way.
                     let fresh = self.pendingDrop != nil
                     switch result {
@@ -589,7 +604,7 @@ public final class OOOSession {
 
     public func importVoice(_ url: URL) {
         let store = document.media
-        busy = "Reading the recording"
+        let job = begin("Reading the recording")
         let name = url.deletingPathExtension().lastPathComponent
         let scoped = url.startAccessingSecurityScopedResource()
         let file: String
@@ -597,7 +612,7 @@ public final class OOOSession {
             file = try store.importFile(url)
         } catch {
             if scoped { url.stopAccessingSecurityScopedResource() }
-            busy = nil
+            end(job)
             message = "Couldn't copy the recording: \(error.localizedDescription)"
             return
         }
@@ -607,7 +622,7 @@ public final class OOOSession {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard let self else { return }
-                    self.busy = nil
+                    self.end(job)
                     switch result {
                     case .success(let track):
                         self.voiceTrack = track
@@ -660,12 +675,12 @@ public final class OOOSession {
         guard let v = project.voice else { return }
         let url = document.media.url(for: v.file)
         let file = v.file
-        busy = "Listening to the voiceover"
+        let job = begin("Listening to the voiceover")
         Task { [weak self] in
             do {
                 let words = try await Transcriber.words(in: url)
                 guard let self else { return }
-                self.busy = nil
+                self.end(job)
                 guard let current = self.project.voice, current.file == file else { return }
                 let offset = current.offset
                 self.update("Transcribe") { p in
@@ -676,7 +691,7 @@ public final class OOOSession {
                 }
                 self.cutToVoice()
             } catch {
-                self?.busy = nil
+                self?.end(job)
                 self?.message = readable(error)
             }
         }

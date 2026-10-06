@@ -163,26 +163,35 @@ public struct Shot: Codable, Hashable, Sendable, Identifiable {
     /// than its canvas (a wide slide in a Reel) is turned further: seen at an
     /// angle it stands taller in the frame, and the frame gains depth where
     /// a flat view would leave a thin strip in a field of backdrop.
-    public static func overview(slideAspect: Float = 16.0 / 9.0, canvasAspect: Float = 16.0 / 9.0) -> Shot {
-        let angle = overviewAngle(slideAspect: slideAspect, canvasAspect: canvasAspect)
+    public static func overview(slideAspect: Float = 16.0 / 9.0, canvasAspect: Float = 16.0 / 9.0, legacy: Bool = false) -> Shot {
+        let angle = overviewAngle(slideAspect: slideAspect, canvasAspect: canvasAspect, legacy: legacy)
         return Shot(time: 0, frame: .whole(margin: angle.margin), yaw: angle.yaw, pitch: angle.pitch, roll: 0, lens: 28,
                     aperture: 0.3, move: .glide, ease: .glide, breathe: 0.45, label: "The whole slide")
     }
 
     /// The opening's angle (degrees) and margin for a slide on a canvas.
-    public static func overviewAngle(slideAspect A: Float, canvasAspect C: Float) -> (yaw: Float, pitch: Float, margin: Float) {
+    /// `legacy` gives 0.2's, so its documents' openings still follow the canvas.
+    public static func overviewAngle(slideAspect A: Float, canvasAspect C: Float,
+                                     legacy: Bool = false) -> (yaw: Float, pitch: Float, margin: Float) {
         // How much wider the slide is than the canvas: 1 or less fits as is;
         // a 2.39:1 slide in 9:16 is 4.2.
         let gap = A / max(C, 0.05)
         let k = smoothstep((gap - 1.4) / 2.2)
-        return (lerp(-9, -34, k), lerp(7, 9, k), lerp(0.12, 0.06, k))
+        if legacy { return (lerp(-9, -34, k), lerp(7, 9, k), lerp(0.12, 0.06, k)) }
+        return (lerp(-9, Self.wideOpeningYaw, k), lerp(7, 9, k), lerp(0.12, 0.03, k))
     }
+
+    /// How far the opening turns a slide much wider than its canvas: a 2.39:1
+    /// slide in a reel stands 28% of the frame's height at its middle (24% at 0.2's 34°).
+    public static let wideOpeningYaw: Float = -44
 
     /// True when the shot is the default opening for some slide and canvas,
     /// so it may follow the canvas when that changes.
     public func isDefaultOverview(slideAspect: Float, canvasAspect: Float) -> Bool {
-        let d = Shot.overview(slideAspect: slideAspect, canvasAspect: canvasAspect)
-        return abs(yaw - d.yaw) < 0.01 && abs(pitch - d.pitch) < 0.01 && abs(roll) < 0.01 && frame == d.frame && lens == d.lens
+        [false, true].contains { legacy in
+            let d = Shot.overview(slideAspect: slideAspect, canvasAspect: canvasAspect, legacy: legacy)
+            return abs(yaw - d.yaw) < 0.01 && abs(pitch - d.pitch) < 0.01 && abs(roll) < 0.01 && frame == d.frame && lens == d.lens
+        }
     }
 }
 
