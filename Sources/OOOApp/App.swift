@@ -9,7 +9,8 @@ struct ObsessOverOne: App {
 
     init() {
         OOOLaunch.configure()
-        _updates = StateObject(wrappedValue: AppUpdates(start: true))
+        // Snapshot runs never look for updates.
+        _updates = StateObject(wrappedValue: AppUpdates(start: !OOOSnapshot.isRequested))
     }
 
     var body: some Scene {

@@ -435,7 +435,7 @@ public final class StageRenderer {
             window: c.window,
             spot: c.spot,
             spotP: SIMD4(c.spotDim, c.spotFeather, c.shadowGround == nil ? 0 : 1, c.shadowGround ?? 0),
-            soft: SIMD4(c.softEdge, c.surfaceAmount, 0, 0))
+            soft: SIMD4(c.softEdge, c.surfaceAmount, c.develop, 0))
     }
 }
 

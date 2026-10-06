@@ -156,11 +156,25 @@ public struct OpeningTitle: Codable, Hashable, Sendable {
     /// A short line above the title, such as a company or a date.
     public var kicker: String
     public var face: ReelTitle.Face
+    /// Sets the kicker in capitals (the default), or as typed.
+    public var kickerCaps: Bool
 
-    public init(text: String = "", kicker: String = "", face: ReelTitle.Face = .modern) {
+    public init(text: String = "", kicker: String = "", face: ReelTitle.Face = .modern, kickerCaps: Bool = true) {
         self.text = text
         self.kicker = kicker
         self.face = face
+        self.kickerCaps = kickerCaps
+    }
+
+    enum CodingKeys: String, CodingKey { case text, kicker, face, kickerCaps }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        text = try c.decode(String.self, forKey: .text)
+        kicker = try c.decode(String.self, forKey: .kicker)
+        face = try c.decode(ReelTitle.Face.self, forKey: .face)
+        // 0.2 documents have no choice saved: their kickers were capitals.
+        kickerCaps = try c.decodeIfPresent(Bool.self, forKey: .kickerCaps) ?? true
     }
 
     public var isEmpty: Bool {
@@ -269,24 +283,34 @@ public struct OOOProject: Codable, Hashable, Sendable {
     /// What Direct for Me plans from: the slide's reading, the voice, the canvas.
     public func directorInput(_ details: [SlideDetail]) -> DirectorInput {
         DirectorInput(details: details, words: voice?.words, slideAspect: slideAspect, canvasAspect: canvasAspect,
-                      start: tourStart, safe: format.safeArea, minViewHeight: sharpViewHeight, overview: overview)
+                      start: tourStart, safe: format.safeArea, minViewHeight: sharpViewHeight, overview: overview, style: style)
     }
 
     /// How long the whole slide holds under an opening title before the tour
-    /// sets off, so the words can be read.
-    public static let titleHold = 2.0
+    /// sets off: long enough to read its words, title and kicker together.
+    public var titleHold: Double {
+        guard let title, !title.isEmpty else { return 0 }
+        let words = (title.text + " " + title.kicker).split(whereSeparator: \.isWhitespace).count
+        return min(max(0.7 + 0.26 * Double(words), 1.2), 2.6)
+    }
 
     /// When the tour may set off: as the slide lands, or once its title has been read.
-    public var tourStart: Double { arrive.end + ((title?.isEmpty ?? true) ? 0 : Self.titleHold) }
+    public var tourStart: Double { arrive.end + titleHold }
 
     /// Gives a new opening title time to be read: without a voice to keep
     /// time with, the whole tour moves later until the first move sets off
-    /// after it. Moves nothing when there is already room.
+    /// once the title has been read. Moves nothing when there is already room.
     public mutating func makeRoomForTitle() {
-        guard voice == nil, !(title?.isEmpty ?? true), let first = shots.map(\.time).min() else { return }
-        let shift = tourStart + Director.firstLanding - first
-        guard shift > 0.05 else { return }
-        for i in shots.indices { shots[i].time += shift }
+        guard voice == nil, !(title?.isEmpty ?? true), !shots.isEmpty else { return }
+        // The first move takes longer once it has more room, so this settles
+        // in a step or two.
+        for _ in 0..<3 {
+            let beats = choreography().beats
+            guard beats.count > 1 else { return }
+            let shift = tourStart - beats[1].depart
+            guard shift > 0.05 else { return }
+            for i in shots.indices { shots[i].time += shift }
+        }
     }
 
     /// Follows a new slide or canvas shape with the opening, unless someone

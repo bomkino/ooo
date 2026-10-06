@@ -63,7 +63,7 @@ public enum OpeningTitleArt {
         var size = min(H * 0.052, W * 0.085, bandHeight * 0.62)
         var block: (kicker: NSAttributedString?, kickerSize: CGSize, title: NSAttributedString?, titleSize: CGSize, gap: CGFloat)
         repeat {
-            let k = kicker.isEmpty ? nil : setting(kicker, kicker: true, face: title.face, size: size, ink: ink)
+            let k = kicker.isEmpty ? nil : setting(kicker, kicker: true, caps: title.kickerCaps, face: title.face, size: size, ink: ink)
             let t = text.isEmpty ? nil : setting(text, kicker: false, face: title.face, size: size, ink: ink)
             let ks = k.map { measure($0, width: maxWidth) } ?? .zero
             let ts = t.map { measure($0, width: maxWidth) } ?? .zero
@@ -113,7 +113,7 @@ public enum OpeningTitleArt {
         }
     }
 
-    static func setting(_ s: String, kicker: Bool, face: ReelTitle.Face, size: CGFloat, ink: CGColor) -> NSAttributedString {
+    static func setting(_ s: String, kicker: Bool, caps: Bool = true, face: ReelTitle.Face, size: CGFloat, ink: CGColor) -> NSAttributedString {
         let f = font(face, kicker: kicker, size: size)
         let points = CTFontGetSize(f)
         var align = CTTextAlignment.center
@@ -129,12 +129,13 @@ public enum OpeningTitleArt {
         let color = kicker ? ink.copy(alpha: 0.62) ?? ink : ink
         let tracking: CGFloat
         switch (kicker, face) {
-        case (true, _): tracking = points * 0.16
+        // Capitals are spaced out; a kicker as typed only a little.
+        case (true, _): tracking = points * (caps ? 0.16 : 0.03)
         case (false, .modern), (false, .grotesk): tracking = -points * 0.015
         case (false, .poster): tracking = points * 0.01
         case (false, .editorial): tracking = 0
         }
-        let shown = kicker || face == .poster ? s.uppercased() : s
+        let shown = (kicker && caps) || (!kicker && face == .poster) ? s.uppercased() : s
         var attributes: [NSAttributedString.Key: Any] = [
             NSAttributedString.Key(kCTFontAttributeName as String): f,
             NSAttributedString.Key(kCTForegroundColorAttributeName as String): color,

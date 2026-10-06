@@ -64,10 +64,12 @@ public struct DirectorInput: Sendable {
     public var minViewHeight: Float?
     /// The opening framing the tour starts from.
     public var overview: Shot?
+    /// How the camera moves, which sets how long each move takes.
+    public var style: MotionStyle
 
     public init(details: [SlideDetail], words: [SpokenWord]? = nil, slideAspect: Float, canvasAspect: Float,
                 start: Double, spacing: Double = 2.9, maxShots: Int = 6, safe: SafeArea = .none,
-                minViewHeight: Float? = nil, overview: Shot? = nil) {
+                minViewHeight: Float? = nil, overview: Shot? = nil, style: MotionStyle = MotionStyle()) {
         self.details = details
         self.words = words
         self.slideAspect = slideAspect
@@ -78,6 +80,7 @@ public struct DirectorInput: Sendable {
         self.safe = safe
         self.minViewHeight = minViewHeight
         self.overview = overview
+        self.style = style
     }
 }
 
@@ -382,6 +385,10 @@ public enum Director {
         }
     }
 
+    /// How far a detail may sit from the middle of its framing, as a share of
+    /// the framing's size: it stays within the middle 60%.
+    static let offCentre: Float = 0.2
+
     /// A framing that reads the block on the canvas: its text at a size that
     /// reads, with room around it. A single line too long to show whole at
     /// that size is read along: the framing starts on the line's beginning
@@ -425,14 +432,20 @@ public enum Director {
                 H = max(H, height(across: wide))
             }
         }
-        // Keep the view on the slide where it fits: a detail by an edge sits
-        // off centre rather than leave a stretch of empty backdrop in the frame.
+        // Keep the view on the slide where it fits, so a detail by an edge sits
+        // a little off centre rather than leave a stretch of empty room in the
+        // frame; but never so far off centre that it ends up at the frame's
+        // edge, where a phone's interface sits and the eye doesn't go. Past
+        // that, the view shows the slide's edge and the floor beyond it.
         let size = Vec2(H * C * room.x / A, H * room.y)
         func onSlide(_ c: Float, _ s: Float) -> Float { s >= 1 ? 0.5 : min(max(c, s / 2), 1 - s / 2) }
-        let start = Vec2(onSlide(center.x, size.x), onSlide(center.y, size.y))
+        func near(_ c: Float, _ focus: Float, _ s: Float) -> Float { min(max(c, focus - Self.offCentre * s), focus + Self.offCentre * s) }
+        var start = Vec2(onSlide(center.x, size.x), near(onSlide(center.y, size.y), b.center.y, size.y))
         if let s = sweep {
             let end = onSlide(center.x + s.x, size.x)
             sweep = end - start.x > 0.004 ? Vec2(end - start.x, 0) : nil
+        } else {
+            start.x = near(start.x, b.center.x, size.x)
         }
         return (ShotFrame(center: start, size: size), sweep)
     }
@@ -477,8 +490,13 @@ public enum Director {
         let slots = schedule(picked, words: input.words, start: input.start, spacing: input.spacing, dwell: reading)
         let visits = picked.indices.compactMap { i in slots[i].map { (i, $0) } }.sorted { $0.1.time < $1.1.time }
 
+        let voiced = !(input.words?.isEmpty ?? true)
+        let point = Self.point(picked)
         var shots: [Shot] = []
         var previous = opening
+        var lastLanding = input.start
+        // Without a voice: the least time from the last landing to the next.
+        var least = firstLanding
         for (n, (i, slot)) in visits.enumerated() {
             let b = picked[i]
             let (frame, sweep) = framings[i]
@@ -501,21 +519,9 @@ public enum Director {
                             move: .glide, ease: .glide, breathe: sweep == nil ? 0.55 : 0.25, emphasis: .none, label: label(for: b),
                             cue: b.role == .figure ? nil : b.text, sweep: sweep, sweepTime: sweepTime,
                             focus: ShotFrame(center: b.center, size: b.size))
-            let pose = CameraPose(shot: shot, slideAspect: A, canvasAspect: C, safe: input.safe)
-            let w = C.squareRoot()
-            let path = ZoomPath(from: previous.target, w0: previous.height * w, to: pose.target, w1: pose.height * w, rho: 1.5)
-            let apart = (pose.target - previous.target).length / max(min(previous.height, pose.height), 1e-3)
-            if n > 0 && apart < 0.6 {
-                shot.move = .push
-                shot.ease = .swift
-            } else if n > 0 && n % 2 == 1 && path.length > 1.2 && sweep == nil {
-                shot.move = .arc
-                shot.ease = .breathe
-            }
             switch b.role {
             case .numbers:
-                // One lift at a time: a second in a row reads as a tic.
-                shot.emphasis = sweep == nil && shots.last?.emphasis != .lift ? .lift : .none
+                shot.emphasis = sweep == nil ? .lift : .none
             case .figure:
                 shot.emphasis = .spotlight
                 shot.aperture = 0.55
@@ -528,10 +534,92 @@ public enum Director {
             case .headline, .text:
                 break
             }
+            var pose = CameraPose(shot: shot, slideAspect: A, canvasAspect: C, safe: input.safe)
+            let w = C.squareRoot()
+            let path = ZoomPath(from: previous.target, w0: previous.height * w, to: pose.target, w1: pose.height * w, rho: 1.5)
+            let apart = (pose.target - previous.target).length / max(min(previous.height, pose.height), 1e-3)
+            // The small print always lingers into place.
+            let lingers = b.role == .smallPrint
+            if n > 0 && apart < 0.6 {
+                shot.move = .push
+                if !lingers { shot.ease = .swift }
+            } else if n > 0 && n % 2 == 1 && path.length > 1.2 && sweep == nil {
+                shot.move = .arc
+                if !lingers { shot.ease = .breathe }
+            }
+            func shortest() -> Double {
+                Choreography.shortestTravel(from: previous, to: pose, ease: shot.ease, move: shot.move, style: input.style, canvasAspect: C)
+            }
+            if voiced {
+                // The landing keeps to the word. When the voice leaves too
+                // little time for the move, a long flight cuts to it on the
+                // word, and an arc or a turn gives way first, rather than rush.
+                let interval = shot.time - lastLanding
+                let room = interval - max(Choreography.minimumHold, min(0.32 * interval, 1.0))
+                if shortest() > room, shot.move == .arc {
+                    shot.move = .glide
+                    if !lingers { shot.ease = .glide }
+                }
+                if shortest() > room, path.length > 1.2 || n == 0 {
+                    shot.move = .cut
+                } else if shortest() > room {
+                    let k = Float(max(room, 0.1) / shortest())
+                    shot.yaw = degrees(previous.yaw) + (shot.yaw - degrees(previous.yaw)) * k
+                    shot.pitch = degrees(previous.pitch) + (shot.pitch - degrees(previous.pitch)) * k
+                    pose = CameraPose(shot: shot, slideAspect: A, canvasAspect: C, safe: input.safe)
+                    if shortest() > room * 1.2 { shot.move = .cut }
+                }
+            } else {
+                // Without one, the tour keeps its own time: each detail holds
+                // for what it has to say, and every move has the time it needs.
+                let natural = Choreography.autoTravel(from: previous, to: pose, ease: shot.ease, move: shot.move,
+                                                      style: input.style, canvasAspect: C)
+                shot.time = lastLanding + max(least, Self.interval(forTravel: natural))
+            }
+            lastLanding = shot.time
+            // A glide along a line takes its own reading time.
+            least = min(max(input.spacing + (sweep == nil ? dwell(b, isPoint: i == point) : i == point ? 0.8 : 0), 2.2), 4.8)
+                + reading[i] * 0.8
             shots.append(shot)
             previous = sweep == nil ? pose : CameraPose(sweepEndOf: shot, slideAspect: A, canvasAspect: C, safe: input.safe)
         }
+        // One emphasis peaks, on the slide's point when it has one, and at
+        // most one more comes in, well apart from it: more reads as a tic.
+        let emphasised = shots.indices.filter { shots[$0].emphasis != .none }
+        let pointShot = visits.firstIndex { $0.0 == point }
+        if let peak = emphasised.first(where: { $0 == pointShot }) ?? emphasised.first {
+            let second = emphasised.first { abs($0 - peak) >= 2 }
+            for n in emphasised where n != peak && n != second { shots[n].emphasis = .none }
+        }
         return shots
+    }
+
+    /// The slide's point, which holds longest: its biggest number, else its
+    /// figure, else its headline.
+    static func point(_ blocks: [DetailBlock]) -> Int? {
+        let numbers = blocks.indices.filter { blocks[$0].role == .numbers }
+        if let i = numbers.max(by: { blocks[$0].lineHeight < blocks[$1].lineHeight }) { return i }
+        return blocks.firstIndex { $0.role == .figure } ?? blocks.firstIndex { $0.role == .headline }
+    }
+
+    /// How much longer than the even spacing a block holds without a voice:
+    /// as long as it takes to read, with the slide's point held longest.
+    static func dwell(_ b: DetailBlock, isPoint: Bool) -> Double {
+        var d: Double
+        switch b.role {
+        case .numbers: d = 0.35 * Double(b.items)
+        case .figure: d = 0.6
+        case .smallPrint: d = Choreography.readingTime(b.text) + 0.5
+        case .headline: d = Choreography.readingTime(b.text) + 0.3
+        case .text: d = Choreography.readingTime(b.text) - 0.4
+        }
+        return d + (isPoint ? 0.8 : 0)
+    }
+
+    /// The least time between two landings that leaves a move of `travel`
+    /// its full length, after the hold the camera keeps (see `Choreography`).
+    static func interval(forTravel travel: Double) -> Double {
+        travel < 2.125 ? travel / 0.68 : travel + 1.0
     }
 
     /// How much two framings share: their overlap over their union.
@@ -597,7 +685,12 @@ public enum Director {
                 weight[t] = (counts[t] == 1 ? 1 : 0.35) + (isNumber ? 0.3 : 0) + (t.count >= 6 ? 0.15 : 0)
             }
             let window = min(max(set.count + 3, 4), 14)
-            for j in spoken.indices where weight[spoken[j].token] != nil {
+            // A block is named where a word only it has is said, taking in
+            // its words said just before: "revenue grew" names the headline,
+            // not the row of numbers that also says "revenue". A block with
+            // no words of its own is named wherever its words are said.
+            let own = set.contains { counts[$0] == 1 }
+            for j in spoken.indices where weight[spoken[j].token] != nil && (!own || counts[spoken[j].token] == 1) {
                 var seen = Set<String>(), score: Float = 0, end = j
                 for k in j..<min(j + window, spoken.count) {
                     let t = spoken[k].token
@@ -607,7 +700,14 @@ public enum Director {
                         end = k
                     }
                 }
-                if score >= 0.6 { mentions.append(Mention(block: b, at: j, end: end, score: score)) }
+                var at = j
+                while at > max(j - 2, 0) {
+                    let t = spoken[at - 1].token
+                    guard weight[t] != nil, !seen.contains(t) else { break }
+                    seen.insert(t)
+                    at -= 1
+                }
+                if score >= 0.6 { mentions.append(Mention(block: b, at: at, end: end, score: score)) }
             }
         }
         // Strongest mentions first; each block once, never two landings too close.

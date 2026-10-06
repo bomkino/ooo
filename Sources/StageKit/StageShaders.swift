@@ -32,7 +32,7 @@ struct CardU {
     float4 window;      // the region of the whole media this texture holds: u0, v0, u1, v1
     float4 spot;        // spotlight region in the whole card's uv: u0, v0, u1, v1
     float4 spotP;       // spotlight dim (+ outside, − inside), feather, own shadow ground (1), its z
-    float4 soft;        // x: width (world) over which the card's edges fade out; 0 = crisp
+    float4 soft;        // x: width (world) over which the card's edges fade out; 0 = crisp, y: surface amount, z: develop
 };
 
 // 1 inside a card's spotlight region, 0 outside, with a soft edge.
@@ -202,6 +202,13 @@ inline float sdCard(float2 p, float2 halfSize, float r) {
     return len + min(max(q.x, q.y), 0.0) - r;
 }
 
+// Distance to the outline a soft-edged card fades across: rounder than its
+// own by the width of the fade, so the fade's inner edge keeps the card's
+// round corners instead of closing to a box.
+inline float softDistance(float2 local, float2 ps, constant CardU &c) {
+    return sdCard(local, ps * 0.5, min(c.sizeCorner.z + c.soft.x, 0.5 * min(ps.x, ps.y)));
+}
+
 inline float sliceDistance(float2 uv, constant CardU &c, thread float2 &parentUV) {
     float2 ps = parentSize(c);
     parentUV = mix(c.crop.xy, c.crop.zw, uv);
@@ -258,7 +265,7 @@ fragment float4 card_fragment(CardVOut in [[stage_in]], bool facing [[front_faci
     coc += c.fx.y;
     float feather = pxWorld * (0.85 + coc * 0.9);
     float mask = 1.0 - smoothstep(-feather, feather, d);
-    if (c.soft.x > 0.0) mask *= smoothstep(0.0, c.soft.x, -d);
+    if (c.soft.x > 0.0) mask *= smoothstep(0.0, c.soft.x, -softDistance(local, ps, c));
     float rim = bandRim(in.uv, c);
     if (c.band.y > 0.0) {
         float core = c.band.x;
@@ -306,6 +313,13 @@ fragment float4 card_fragment(CardVOut in [[stage_in]], bool facing [[front_faci
     int surface = int(c.fx.w + 0.5);
     float3 rgb = m.a > 1e-5 ? m.rgb / m.a : float3(0.0);
     float alpha = m.a;
+    if (front && c.soft.z > 0.0) {
+        // A print in the developer: blank paper, then the darks come up
+        // first and the palest tones last.
+        float density = 1.0 - sqrt(clamp(dot(rgb, float3(0.2126, 0.7152, 0.0722)), 0.0, 1.0));
+        float th = c.soft.z * 1.2 - 0.2;
+        rgb = mix(float3(0.86, 0.84, 0.80), rgb, smoothstep(th, th + 0.2, density));
+    }
 
     float3 N = normalize(in.normal);
     float3 V = normalize(f.eye.xyz - in.worldPos);
@@ -377,8 +391,10 @@ fragment float4 card_fragment(CardVOut in [[stage_in]], bool facing [[front_faci
             rgb += keep * (0.09 * band + 0.75 * float3(1.0, 0.97, 0.94) * charlie * vis * NL);
         }
         // While a slide is read, its surface steps back and the media shows
-        // as it is: a sheen added over black type would turn it grey.
-        rgb = mix(unlit, rgb, c.soft.y);
+        // as it is: a sheen added over black type would turn it grey. What is
+        // left of it stays off the ink, where any light added reads as grey.
+        float ink = 1.0 - smoothstep(0.03, 0.4, dot(unlit, float3(0.2126, 0.7152, 0.0722)));
+        rgb = mix(unlit, rgb, c.soft.y * mix(1.0, c.soft.y, ink));
         // Edge catch light: a hairline along the rim facing the light.
         float edge = (1.0 - smoothstep(0.0, pxWorld * 2.2, abs(d + pxWorld * 1.2)));
         float facing = clamp(dot(normalize(float3(local, 0.0)), float3(L.xy, 0.0)) * 0.5 + 0.5, 0.0, 1.0);
@@ -400,8 +416,10 @@ fragment float4 card_fragment(CardVOut in [[stage_in]], bool facing [[front_faci
     rgb *= 1.0 + c.fx.x;
     float a = alpha * mask * c.sizeCorner.w * c.color.a;
     if (c.mirror.x > 0.5) {
-        float below = max(c.mirror.y - in.worldPos.y, 0.0);
-        a *= c.mirror.z * exp(-below * c.mirror.w);
+        // Only what stands above the floor is mirrored in it: a card coming
+        // up from beneath (Glide, Rise) leaves no upside-down ghost above it.
+        float below = c.mirror.y - in.worldPos.y;
+        a *= c.mirror.z * exp(-max(below, 0.0) * c.mirror.w) * saturate(below * 400.0 + 0.5);
     }
     return float4(rgb * a, a);
 }
@@ -459,7 +477,7 @@ fragment float4 shadow_fragment(ShadowVOut in [[stage_in]],
     // middle, as soft as a good part of its size, so it reads as depth under
     // the detail rather than the outline of a box.
     if (c.soft.x > 0.0) {
-        d += c.soft.x * 1.0;
+        d = max(softDistance(in.local + centre, ps, c), max(b.x, b.y)) + c.soft.x;
         sigma = max(sigma, max(c.soft.x * 1.1, min(w, h) * 0.4));
     }
     float outside = max(d, 0.0);

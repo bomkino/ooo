@@ -18,22 +18,26 @@ import StageKit
 //   ooo-lab landings --out dir              a still at the opening and at every landing
 //   ooo-lab fixture --kind wide|standard --out f.png|f.pdf [--scale 2]
 //                                           draw a test slide: 2576 × 1080 or 1920 × 1080
-//   ooo-lab openings --out grid.png         the opening at five angles (across) and
+//   ooo-lab openings --out grid.png         the opening at five turns, 28° to 52° (across), and
 //                                           three floors (down: none, soft, mirror)
 //   ooo-lab titles --out grid.png           the opening title in four faces, and in time
+//   ooo-lab backdrops --out grid.png        every look behind the opening, as itself and From Slide
+//   ooo-lab arrivals --out grid.png         each arrival at five moments of its entrance
 //   ooo-lab blurcheck [--quality good]      adaptive motion blur against full samples:
 //                                           samples taken, GPU time, PSNR
 //   ooo-lab render --full-blur ...          every frame at the quality's full samples
-//   ooo-lab inkcheck                        at every landing, how dark the type and how
-//                                           light the paper come out against the slide
+//   ooo-lab inkcheck                        at every landing, how dark the type comes out
+//                                           against the same pixels drawn as supplied
+//   ooo-lab motioncheck [--strict]          each move's peak speed and turn, each emphasis,
+//                                           any jump (--strict: exit 2 on a problem)
 //   ooo-lab loopcheck [--ending leave]      the step from the last frame back to the
 //                                           first against the steps either side of it
 //
 // Every command takes --project <file.ooo> (default: the sample), or
 // --slide <file> (a PDF or picture, read and directed as the app would on a
 // drop), --format reel|portrait|square|landscape, --floor none|soft|mirror,
-// --ending hold|pullBack|fade|leave and --title "words" [--kicker "line above"]
-// [--face modern|grotesk|editorial|poster].
+// --ending hold|pullBack|fade|leave, --arrive rise|unfold|drop|develop|turn|glide|weave|none and --title "words" [--kicker "line above"
+// [--kicker-as-typed]] [--face modern|grotesk|editorial|poster].
 
 let args = CommandLine.arguments
 func value(_ name: String) -> String? {
@@ -61,8 +65,12 @@ if let id = value("--format") {
     project.format = f
     project.adaptOverview(fromSlideAspect: A, canvasAspect: C)
 }
+if let a = value("--arrive") {
+    guard let kind = ArriveKind(rawValue: a) else { fail("unknown arrival \(a)") }
+    project.arrive = Arrive(kind: kind)
+}
 if let text = value("--title") {
-    var t = OpeningTitle(text: text, kicker: value("--kicker") ?? "")
+    var t = OpeningTitle(text: text, kicker: value("--kicker") ?? "", kickerCaps: !args.contains("--kicker-as-typed"))
     if let f = value("--face") {
         guard let face = ReelTitle.Face(rawValue: f) else { fail("unknown face \(f)") }
         t.face = face
@@ -91,8 +99,9 @@ if let path = value("--slide") {
         fail("could not copy \(path): \(error)")
     }
     ref.file = file
-    let (format, floor, title, ending) = (project.format, project.floor, project.title, project.ending)
+    let (format, floor, title, ending, arrive) = (project.format, project.floor, project.title, project.ending, project.arrive)
     project = OOOProject(slide: ref, format: format)
+    project.arrive = arrive
     project.floor = floor
     project.title = title
     project.ending = ending
@@ -236,7 +245,7 @@ case "openings":
     // The opening as the slide comes to rest, at five angles and three floors.
     let base = loadScene()
     let out = URL(fileURLWithPath: value("--out") ?? "openings.png")
-    let yaws: [Float] = [-9, -20, -28, -34, -40]
+    let yaws: [Float] = [-28, -34, -40, -46, -52]
     let floors: [FloorKind] = [.none, .soft, .mirror]
     let cw = project.format.width / 3, ch = project.format.height / 3
     do {
@@ -260,6 +269,73 @@ case "openings":
         print("openings \(out.path): yaw \(yaws) across, floors \(floors.map(\.rawValue)) down")
     } catch {
         fail("openings failed: \(error)")
+    }
+
+case "backdrops":
+    // Every look behind the opening as it comes to rest, in pairs: its own
+    // palette, then From Slide (the room in the slide's colours).
+    let base = loadScene()
+    let out = URL(fileURLWithPath: value("--out") ?? "backdrops.png")
+    let looks = BackdropCatalog.styles
+    let colours = (try? SlideSource(ref: project.slide, media: media))?.renderWhole(side: 512)
+        .flatMap { Palette.extract(from: [$0], id: "slide", name: "Slide") }
+    let pairs = 3
+    let cw = project.format.width / 4, ch = project.format.height / 4
+    let rows = (looks.count + pairs - 1) / pairs
+    do {
+        let stage = try SlideStage()
+        guard let ctx = CGContext(data: nil, width: cw * pairs * 2, height: ch * rows, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { fail("no context") }
+        for (i, look) in looks.enumerated() {
+            for side in 0..<2 {
+                var p = project
+                p.backdrop = look.defaults
+                if side == 1, let colours { p.backdrop.palette = colours.atLightness(of: look.defaults.palette) }
+                p.shots = []
+                p.length = p.arrive.end + 3
+                let scene = SlideScene(project: p, base: base.base, details: base.details)
+                let img = try stage.still(scene, at: p.arrive.end + 1.2, width: cw, height: ch, samples: 4)
+                let (r, c) = (i / pairs, (i % pairs) * 2 + side)
+                ctx.draw(img, in: CGRect(x: c * cw, y: (rows - 1 - r) * ch, width: cw, height: ch))
+            }
+        }
+        try ImageOutput.writePNG(ctx.makeImage()!, to: out)
+        print("backdrops \(out.path): \(looks.map(\.name)) in reading order, each as itself then From Slide")
+    } catch {
+        fail("backdrops failed: \(error)")
+    }
+
+case "arrivals":
+    // Each arrival (down) at five moments of its entrance (across), the last
+    // just after it has come to rest.
+    let base = loadScene()
+    let out = URL(fileURLWithPath: value("--out") ?? "arrivals.png")
+    let kinds = ArriveKind.allCases.filter { $0 != .none }
+    let moments = [0.15, 0.35, 0.55, 0.75, 1.0]
+    let cw = project.format.width / 4, ch = project.format.height / 4
+    do {
+        let stage = try SlideStage()
+        guard let ctx = CGContext(data: nil, width: cw * moments.count, height: ch * kinds.count, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { fail("no context") }
+        for (r, kind) in kinds.enumerated() {
+            var p = project
+            p.arrive = Arrive(kind: kind)
+            p.title = nil
+            p.shots = []
+            p.length = p.arrive.end + 3
+            let scene = SlideScene(project: p, base: base.base, details: base.details)
+            for (c, m) in moments.enumerated() {
+                let t = m < 1 ? p.arrive.duration * m : p.arrive.end + 0.3
+                let img = try stage.still(scene, at: t, width: cw, height: ch, samples: 6)
+                ctx.draw(img, in: CGRect(x: c * cw, y: (kinds.count - 1 - r) * ch, width: cw, height: ch))
+            }
+        }
+        try ImageOutput.writePNG(ctx.makeImage()!, to: out)
+        print("arrivals \(out.path): \(kinds.map(\.title)) down, at \(moments.dropLast().map { "\(Int($0 * 100))%" }) and at rest across")
+    } catch {
+        fail("arrivals failed: \(error)")
     }
 
 case "titles":
@@ -360,53 +436,110 @@ case "blurcheck":
     }
 
 case "inkcheck":
-    // The slide must read as it is: at every landing, the darkest ink and the
-    // lightest paper inside the frame's clear area (1st and 99th percentiles
-    // of luma, 0…255) against the same measure of the slide itself.
+    // The slide must read as it is. At every landing the frame is drawn twice:
+    // as the video draws it, and as supplied (the Original surface, no
+    // bloom, grain or vignette, on a pale room so nothing but ink is dark).
+    // The ink is the darkest pixels of the as-supplied frame inside the
+    // canvas's clear area; the check compares the same pixels in both.
     let scene = loadScene()
+    var plain = project
+    plain.look.surface = .original
+    plain.look.finish.bloom = 0
+    plain.look.finish.grain = 0
+    plain.look.finish.vignette = 0
+    plain.backdrop = BackdropCatalog.style("solid").defaults
+    plain.backdrop.palette = Palettes.named("Gallery")
+    plain.floor = FloorKind.none
+    let reference: SlideScene
+    do {
+        reference = try SlideLoader.scene(for: plain, media: media)
+    } catch {
+        fail("could not load the slide: \(error)")
+    }
     let w = project.format.width, h = project.format.height
-    func luma(_ img: CGImage, box: CGRect) -> [UInt8] {
+    func lumas(_ img: CGImage) -> [UInt8] {
         let iw = img.width, ih = img.height
         var px = [UInt8](repeating: 0, count: iw * ih * 4)
         guard let ctx = CGContext(data: &px, width: iw, height: ih, bitsPerComponent: 8, bytesPerRow: iw * 4,
                                   space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                   bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return [] }
         ctx.draw(img, in: CGRect(x: 0, y: 0, width: iw, height: ih))
-        var out: [UInt8] = []
-        for y in Int(box.minY * CGFloat(ih))..<Int(box.maxY * CGFloat(ih)) {
-            for x in Int(box.minX * CGFloat(iw))..<Int(box.maxX * CGFloat(iw)) {
-                let i = (y * iw + x) * 4
-                let r = Double(px[i]), g = Double(px[i + 1]), b = Double(px[i + 2])
-                let l: Double = 0.2126 * r + 0.7152 * g + 0.0722 * b
-                out.append(UInt8(min(255.0, l.rounded())))
-            }
+        var out = [UInt8](repeating: 0, count: iw * ih)
+        for i in 0..<(iw * ih) {
+            let r = Double(px[4 * i]), g = Double(px[4 * i + 1]), b = Double(px[4 * i + 2])
+            let l: Double = 0.2126 * r + 0.7152 * g + 0.0722 * b
+            out[i] = UInt8(min(255.0, l.rounded()))
         }
-        return out.sorted()
+        return out
     }
-    func percentile(_ v: [UInt8], _ p: Double) -> Int { v.isEmpty ? 0 : Int(v[min(v.count - 1, Int(Double(v.count) * p))]) }
+    func median(_ v: [UInt8]) -> Int { v.isEmpty ? 0 : Int(v.sorted()[v.count / 2]) }
+    let safe = project.format.safeArea
+    let x0 = Int(Float(w) * safe.left), x1 = Int(Float(w) * (1 - safe.right))
+    let y0 = Int(Float(h) * safe.top), y1 = Int(Float(h) * (1 - safe.bottom))
     do {
-        guard let whole = try SlideSource(ref: project.slide, media: media).renderWhole() else { fail("could not draw the slide") }
-        let source = luma(whole, box: CGRect(x: 0, y: 0, width: 1, height: 1))
-        let (inkSource, paperSource) = (percentile(source, 0.01), percentile(source, 0.99))
-        print("source ink \(inkSource) paper \(paperSource)")
-        let safe = project.format.safeArea
-        let box = CGRect(x: CGFloat(safe.left), y: CGFloat(safe.top), width: CGFloat(1 - safe.left - safe.right),
-                         height: CGFloat(1 - safe.top - safe.bottom))
         let stage = try SlideStage()
-        var worst = 0
+        var worst = 0, worstName = ""
+        var worstAt = (t: 0.0, pixels: [Int](), supplied: 0)
         for (i, beat) in scene.choreography.beats.enumerated() where !beat.isOverview {
             let t = min(beat.land + min(0.7, beat.hold * 0.45), scene.duration - 0.02)
-            let img = try stage.still(scene, at: t, width: w, height: h, samples: 1)
-            let v = luma(img, box: box)
-            let (ink, paper) = (percentile(v, 0.01), percentile(v, 0.99))
-            worst = max(worst, ink - inkSource)
-            print(String(format: "shot-%02d t %.2f  ink %3d (%+d)  paper %3d (%+d)  surface %.2f", i, t, ink, ink - inkSource,
-                         paper, paper - paperSource, scene.surfaceAmount(at: t)))
+            let seen = lumas(try stage.still(scene, at: t, width: w, height: h, samples: 1))
+            let supplied = lumas(try stage.still(reference, at: t, width: w, height: h, samples: 1))
+            var box: [UInt8] = []
+            for y in y0..<y1 { for x in x0..<x1 { box.append(supplied[y * w + x]) } }
+            box.sort()
+            let darkest = Int(box.isEmpty ? 255 : box[box.count / 100])
+            var inkSeen: [UInt8] = [], inkSupplied: [UInt8] = [], pixels: [Int] = []
+            if darkest < 90 {
+                for y in y0..<y1 {
+                    for x in x0..<x1 where Int(supplied[y * w + x]) <= darkest + 8 {
+                        inkSupplied.append(supplied[y * w + x])
+                        inkSeen.append(seen[y * w + x])
+                        pixels.append(y * w + x)
+                    }
+                }
+            }
+            let name = String(format: "shot-%02d", i)
+            guard inkSeen.count >= 200 else {
+                print(String(format: "%@ t %.2f  no dark ink in view", name, t))
+                continue
+            }
+            let (a, b) = (median(inkSeen), median(inkSupplied))
+            if a - b > worst {
+                worst = a - b
+                worstName = name
+                worstAt = (t, pixels, b)
+            }
+            print(String(format: "%@ t %.2f  ink %3d as seen, %3d as supplied (%+d) over %d px  surface %.2f", name, t, a, b, a - b,
+                         inkSeen.count, scene.surfaceAmount(at: t)))
         }
-        print("inkcheck: ink at most \(worst) above the slide's own")
+        if worst > 0 {
+            // Where the lift comes from: the worst landing again, one part of the finish left out at a time.
+            let parts: [(String, (inout OOOProject) -> Void)] = [
+                ("without bloom", { $0.look.finish.bloom = 0 }),
+                ("with the Original surface", { $0.look.surface = .original }),
+                ("without grain or vignette", { $0.look.finish.grain = 0; $0.look.finish.vignette = 0 }),
+                ("in a plain room", { $0.backdrop = plain.backdrop; $0.floor = FloorKind.none }),
+            ]
+            print("\(worstName), one part left out at a time:")
+            for (label, leaveOut) in parts {
+                var p = project
+                leaveOut(&p)
+                let v = lumas(try stage.still(try SlideLoader.scene(for: p, media: media), at: worstAt.t, width: w, height: h, samples: 1))
+                let m = median(worstAt.pixels.map { v[$0] })
+                print(String(format: "  %@: ink %3d (%+d)", label, m, m - worstAt.supplied))
+            }
+        }
+        print("inkcheck: ink lands at most \(worst) above the slide as supplied" + (worstName.isEmpty ? "" : " (\(worstName))"))
     } catch {
         fail("inkcheck failed: \(error)")
     }
+
+case "motioncheck":
+    // How fast each move flies and turns at its peak, whether each emphasis
+    // comes all the way in, and whether the picture ever jumps.
+    let check = MotionCheck(project.choreography())
+    print(check.summary)
+    if args.contains("--strict"), !check.problems.isEmpty { exit(2) }
 
 case "loopcheck":
     // A platform plays a reel on repeat: the step from the last frame back to
@@ -478,7 +611,8 @@ case "path":
 default:
     print("""
     ooo-lab — headless renders and checks for OOO
-      shaders | still | sheet | render | analyze | path | landings | openings | titles | blurcheck | fixture
+      shaders | still | sheet | render | analyze | path | landings | openings | titles | blurcheck | inkcheck
+      motioncheck | loopcheck | fixture
       --project file.ooo | --slide file.pdf|png  --format reel|portrait|square|landscape  --floor none|soft|mirror  --out path
     """)
 }

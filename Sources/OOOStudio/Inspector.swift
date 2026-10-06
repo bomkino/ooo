@@ -275,6 +275,7 @@ extension ArriveKind {
         case .develop: return "camera.aperture"
         case .turn: return "arrow.triangle.2.circlepath"
         case .glide: return "wind"
+        case .weave: return "line.3.horizontal"
         case .none: return "circle.slash"
         }
     }
@@ -319,6 +320,12 @@ struct OverviewInspector: View {
                     ChoiceRow(ReelTitle.Face.allCases.map { ($0, $0.title) }, selection: Binding(
                         get: { session.project.title?.face ?? .modern },
                         set: { face in session.update("Title Type") { $0.title?.face = face } }))
+                }
+                if !(p.title?.kicker.trimmingCharacters(in: .whitespaces).isEmpty ?? true) {
+                    ChoiceRow([(true, "CAPS"), (false, "As typed")], selection: Binding(
+                        get: { session.project.title?.kickerCaps ?? true },
+                        set: { caps in session.update("Kicker Case") { $0.title?.kickerCaps = caps } }))
+                        .accessibilityLabel("Kicker case")
                 }
                 Text("Set in the space above the slide. It rises in as the slide lands, clears as the camera goes in, and comes back for a Pull Back.")
                     .textStyle(.caption).foregroundStyle(.secondary)
@@ -485,13 +492,33 @@ struct LookInspector: View {
                 .buttonStyle(.borderless)
                 .fixedSize()
             }) {
-                Text(p.backdrop.styleInfo.summary).textStyle(.caption).foregroundStyle(.secondary)
-                PalettePicker(selected: p.backdrop.palette.id) { pal in
+                let look = p.backdrop.styleInfo
+                Text(look.summary).textStyle(.caption).foregroundStyle(.secondary)
+                PalettePicker(selected: p.backdrop.palette.id, palettes: session.slidePalette.map { [$0] + Palettes.all } ?? Palettes.all) { pal in
                     session.update("Palette") { $0.backdrop.palette = pal }
                 }
-                Dial(session: session, label: "Motion", value: session.bind(\.backdrop.motion), defaultValue: 0.25)
+                // Each look names its own dials; one it has no use for is left out.
+                let dials: [(String?, WritableKeyPath<OOOProject, Float>, Float)] = [
+                    (look.labels.scale, \.backdrop.scale, look.defaults.scale),
+                    (look.labels.motion, \.backdrop.motion, look.defaults.motion),
+                    (look.labels.detail, \.backdrop.detail, look.defaults.detail),
+                    (look.labels.softness, \.backdrop.softness, look.defaults.softness),
+                    (look.labels.accent, \.backdrop.accent, look.defaults.accent),
+                ]
+                ForEach(Array(dials.enumerated()), id: \.offset) { _, dial in
+                    if let label = dial.0 {
+                        Dial(session: session, label: label, value: session.bind(dial.1), defaultValue: dial.2)
+                    }
+                }
                 Dial(session: session, label: "Brightness", value: session.bind(\.backdrop.brightness), range: 0.2...1.6,
                      defaultValue: 1)
+                Button {
+                    session.update("Shuffle Backdrop") { $0.backdrop.seed = UInt32.random(in: 1...999_999) }
+                } label: {
+                    Label("Shuffle", systemImage: "shuffle")
+                }
+                .buttonStyle(QuietButtonStyle())
+                .help("A new arrangement of the same look. Every export of it comes out the same.")
             }
         }
     }

@@ -13,7 +13,7 @@
 - `CardPose.surfaceAmount` lets a card's surface light (tooth, sheen, foil, satin) step back, so its media shows as it is. The backdrop adds no alpha to the scene, which leaves the scene's alpha as the cards' coverage, and `FinishFrame.bloomOnSubject` uses it to keep bloom off the cards' faces.
 - Depth of field measures depth along the view, so focus lies on a plane.
 
-Parts of the editor (`Sources/OOOStudio`: the theme, type, controls, live stage, export sheet and document) are adapted from Drift's `StudioKit`, as marked in each file.
+Parts of the editor (`Sources/OOOStudio`: the theme, type, controls, live stage, export sheet and document) are adapted from Drift's `StudioKit`, and its headless screenshots (`Snapshot.swift`) from Backdrop's, as marked in each file.
 
 ## Sparkle
 

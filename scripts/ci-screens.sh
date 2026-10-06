@@ -1,0 +1,60 @@
+#!/bin/bash
+# Screenshots of the real editor, for review: the built OOO.app opened
+# headlessly (see OOOSnapshot in Sources/OOOStudio/Snapshot.swift) on the
+# sample slide and on the test slides, dark and light, on each inspector tab,
+# with a shot selected, a title, the safe areas and the export sheet.
+#
+#   bash scripts/ci-screens.sh [out-dir] [fixtures-dir]
+#
+# Run after `bash scripts/build-app.sh` and scripts/ci-renders.sh (which
+# draws the test slides). Prints one line per screenshot; exits non-zero if
+# any failed.
+set -uo pipefail
+
+cd "$(dirname "$0")/.."
+OUT="${1:-renders/screens}"
+FIX="${2:-renders/fixtures}"
+APP="dist/OOO.app/Contents/MacOS/OOO"
+[ -x "$APP" ] || { echo "build dist/OOO.app first"; exit 1; }
+mkdir -p "$OUT"
+WIDE="$FIX/wide-2576x1080.png"
+STANDARD="$FIX/standard-1920x1080.png"
+failures=0
+
+shot() {
+  local name="$1"; shift
+  "$APP" --snapshot "$OUT/$name.png" "$@" > "$OUT/$name.log" 2>&1 &
+  local pid=$!
+  # The app gives up by itself after two minutes; this is the backstop.
+  ( sleep 150; kill -9 "$pid" 2>/dev/null ) &
+  local watchdog=$!
+  wait "$pid"
+  local rc=$?
+  kill "$watchdog" 2>/dev/null
+  wait "$watchdog" 2>/dev/null
+  if [ "$rc" -eq 0 ] && [ -s "$OUT/$name.png" ]; then
+    grep -h '^snapshot' "$OUT/$name.log" | sed "s|^snapshot $OUT/|  |"
+  else
+    echo "  $name.png FAILED (exit $rc)"
+    tail -5 "$OUT/$name.log" | sed 's/^/    /'
+    failures=$((failures + 1))
+  fi
+}
+
+echo "== The editor"
+shot editor-dark --shot 2
+shot editor-light --scheme light --shot 2
+shot arriving --time 1.0
+shot look --tab look --size 1440x1500
+shot look-light --scheme light --tab look --size 1440x1500
+shot voice --tab voice
+shot export --show-export
+shot landscape --format landscape --shot 1
+echo "== Test slides"
+shot wide-opening --slide "$WIDE" --time 2.4
+shot wide-shot --slide "$WIDE" --shot 3 --size 1440x1500
+shot wide-safe-areas --slide "$WIDE" --shot 2 --safe-areas
+shot standard-title --slide "$STANDARD" --title 'A $4.2B market nobody designs for.' --kicker 'pitch.dog' --time 2.6 --size 1440x1500
+
+echo "screens: $failures failed"
+exit $((failures > 0 ? 1 : 0))
