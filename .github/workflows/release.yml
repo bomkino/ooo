@@ -46,6 +46,8 @@ jobs:
         run: |
           VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" dist/OOO.app/Contents/Info.plist)"
           BUILD="$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" dist/OOO.app/Contents/Info.plist)"
+          KEY="$(/usr/libexec/PlistBuddy -c "Print :SUPublicEDKey" dist/OOO.app/Contents/Info.plist)"
+          [ "$KEY" = "P43E8I+FgVyAW3QkS4J9bnDRRhAnsS4y3dT2WDce1lQ=" ] || { echo "::error::OOO.app doesn't trust pitch.dog's update key"; exit 1; }
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           OUT=release; DMG="OOO-$VERSION-macOS-arm64.dmg"; ZIP="OOO-$VERSION-macOS-arm64.zip"
           mkdir -p "$OUT" stage
@@ -89,5 +91,9 @@ jobs:
         run: |
           gh release create "v$VERSION" release/* --target "$GITHUB_SHA" --latest \
             --title "OOO $VERSION · Apple silicon Mac" --notes-file notes.md
-          sleep 5
-          curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/appcast.xml" | grep shortVersionString
+          # The feed every copy reads now points at this release.
+          for _ in $(seq 12); do
+            curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/appcast.xml" | grep "<sparkle:shortVersionString>$VERSION<" && exit 0
+            sleep 5
+          done
+          echo "::error::releases/latest/download/appcast.xml doesn't serve $VERSION"; exit 1
