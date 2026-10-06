@@ -47,7 +47,13 @@ inline float meltMask(float2 wp, constant CardU &c) {
     float n = snoise3(float3(q * 0.55, 1.7)) + 0.5 * snoise3(float3(q * 1.4, 4.3));
     float d = length(q) + 0.45 * n;
     float r = c.melt.z / soft;
-    return c.melt.w > 0.0 ? 1.0 - smoothstep(r, r + 1.0, d) : smoothstep(r - 1.0, r, d);
+    float away = smoothstep(r - 1.0, r, d);
+    if (c.melt.w < 0.0) return away;
+    // On the card the slide washing in is whole a front ahead of the one
+    // washing away, which lies over it, so nothing behind shows through. In
+    // a mirror floor neither covers the other, so there it takes exactly
+    // what the other leaves, or the front would show as a bright haze.
+    return c.mirror.x > 0.5 ? 1.0 - away : 1.0 - smoothstep(r, r + 1.0, d);
 }
 
 // 1 inside a card's spotlight region, 0 outside, with a soft edge.
