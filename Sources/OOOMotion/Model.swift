@@ -135,6 +135,9 @@ public struct Shot: Codable, Hashable, Sendable, Identifiable {
     /// True for a shot Direct for Me planned, until its framing is changed
     /// by hand: a planned framing follows the canvas, one you set never moves.
     public var planned: Bool?
+    /// The slide this shot frames, in a video over several: the id of one of
+    /// the slides after the first, or nil for the first.
+    public var page: UUID?
 
     public var isPlanned: Bool { planned == true }
 

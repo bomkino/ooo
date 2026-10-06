@@ -21,8 +21,9 @@ import StageKit
 //                                           draw a test slide: 2576 × 1080 or 1920 × 1080
 //                                           (wide-revised: the wide slide corrected; cover: the
 //                                           deck's cover, 2576 × 1080)
-//   ooo-lab turns --out grid.png            the cover turning over (top) and back (below), at
-//                                           six moments of each turn
+//   ooo-lab changes --out grid.png          each change of slide (down), turning over or
+//                                           melting, at six moments (across)
+//   ooo-lab marks --out grid.png            each mark drawn on the card, drawing on and after
 //   ooo-lab lifts --out grid.png            the stage rising to leave room for you, and a
 //                                           close-up while it is up, the room marked
 //   ooo-lab stills --out dir                the stills Save Stills writes: the opening, then
@@ -50,9 +51,10 @@ import StageKit
 // drop) and --replace <file> (then Replace Slide with it: the tour follows
 // its words onto the new slide), --format reel|portrait|square|landscape, --floor none|soft|mirror,
 // --ending hold|pullBack|fade|leave, --arrive rise|unfold|drop|develop|turn|glide|weave|none and --title "words" [--kicker "line above"
-// [--kicker-as-typed]] [--face modern|grotesk|editorial|poster], --cover <file> [--turn 3.4] [--no-turn-back]
-// [--back-at 20] (a cover that turns over to the slide), and --lift whole|4-10,14- [--room 0.42] (room for
-// you: when the stage is up, and how much of the frame it leaves clear).
+// [--kicker-as-typed]] [--face modern|grotesk|editorial|poster], --more <file>[,<file>…] [--melt 2,3|all]
+// [--home [--home-at 20]] (slides after the first: the card turns over or melts to each, and turns back to
+// the first at the end), --marks demo (a mark drawn round the first detail on each slide), and --lift
+// whole|4-10,14- [--room 0.42] (room for you: when the stage is up, and how much of the frame it leaves clear).
 
 let args = CommandLine.arguments
 func value(_ name: String) -> String? {
@@ -146,24 +148,49 @@ if let path = value("--replace") {
     }
 }
 
-if let path = value("--cover") {
-    // The app's Choose Cover: another slide on the front of the card.
-    let url = URL(fileURLWithPath: path)
-    guard var ref = SlideSource.inspect(url) else { fail("not a slide: \(path)") }
+if let list = value("--more") {
+    // The app's Add Slide: the slides after the first, in order, each read,
+    // and the tour planned over them all. --melt 2,3 (or all) names the
+    // added slides the card melts into; the rest it turns over to.
     let dir = media ?? FileManager.default.temporaryDirectory.appendingPathComponent("ooo-lab-\(UUID().uuidString)", isDirectory: true)
-    let file = "cover-\(UUID().uuidString.prefix(8))." + url.pathExtension.lowercased()
+    let melts = value("--melt") ?? ""
+    var pages: [Page] = []
     do {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        try FileManager.default.copyItem(at: url, to: dir.appendingPathComponent(file))
+        for (i, path) in list.split(separator: ",").map(String.init).enumerated() {
+            let url = URL(fileURLWithPath: path)
+            guard var ref = SlideSource.inspect(url) else { fail("not a slide: \(path)") }
+            let file = "slide-\(i + 2)." + url.pathExtension.lowercased()
+            try FileManager.default.copyItem(at: url, to: dir.appendingPathComponent(file))
+            ref.file = file
+            let melt = melts == "all" || melts.split(separator: ",").contains { Int($0) == i + 1 }
+            pages.append(Page(slide: ref, reading: try SlideAnalysis.read(SlideSource(ref: ref, media: dir)), change: melt ? .melt : .turn))
+        }
+        media = dir
+        project.pages = pages
+        if args.contains("--home") { project.home = HomeTiming(at: Double(value("--home-at") ?? "")) }
+        if project.reading == nil { project.reading = try SlideAnalysis.read(SlideSource(ref: project.slide, media: dir)) }
+        guard let found = project.readings else { fail("could not read every slide") }
+        project.shots = project.plannedShots(found)
+        project.makeRoomForOpening()
     } catch {
-        fail("could not copy \(path): \(error)")
+        fail("could not add the slides: \(error)")
     }
-    ref.file = file
-    media = dir
-    project.cover = Cover(slide: ref, turn: Double(value("--turn") ?? "") ?? project.defaultCoverTurn,
-                          turnBack: !args.contains("--no-turn-back"), backAt: Double(value("--back-at") ?? ""))
-    project.makeRoomForOpening()
 }
+if value("--marks") == "demo" {
+    // Marks as a hand would draw them: round the first detail on each slide
+    // as the camera lands on it, the first staying, the rest fading.
+    var marks: [Mark] = []
+    for k in 0..<project.slideCount {
+        let id = project.pageID(k)
+        guard let shot = project.shots.filter({ project.pageIndex($0.page) == k && $0.focus != nil }).min(by: { $0.time < $1.time }),
+              let focus = shot.focus else { continue }
+        marks.append(Mark(page: id, time: shot.time + 0.25, strokes: [Mark.loop(around: focus, slideAspect: project.slide(k).aspect, seed: k)],
+                          color: k % 2 == 0 ? .red : .yellow, fades: k > 0))
+    }
+    project.marks = marks
+}
+
 if let spec = value("--lift") {
     guard let lift = Lift(spec: spec, room: Float(value("--room") ?? "") ?? Lift.defaultRoom) else {
         fail("--lift takes whole, or start-end[,start-end…] (an empty end: to the end)")
@@ -332,7 +359,7 @@ case "openings":
                 p.floor = floor
                 p.shots = []
                 p.length = p.arrive.end + 3
-                let scene = SlideScene(project: p, base: base.base, details: base.details)
+                let scene = SlideScene(project: p, bases: base.bases, details: base.details)
                 let img = try stage.still(scene, at: p.arrive.end + 1.2, width: cw, height: ch, samples: 4)
                 ctx.draw(img, in: CGRect(x: c * cw, y: (floors.count - 1 - r) * ch, width: cw, height: ch))
             }
@@ -366,7 +393,7 @@ case "backdrops":
                 if side == 1, let colours { p.backdrop.palette = colours.atLightness(of: look.defaults.palette) }
                 p.shots = []
                 p.length = p.arrive.end + 3
-                let scene = SlideScene(project: p, base: base.base, details: base.details)
+                let scene = SlideScene(project: p, bases: base.bases, details: base.details)
                 let img = try stage.still(scene, at: p.arrive.end + 1.2, width: cw, height: ch, samples: 4)
                 let (r, c) = (i / pairs, (i % pairs) * 2 + side)
                 ctx.draw(img, in: CGRect(x: c * cw, y: (rows - 1 - r) * ch, width: cw, height: ch))
@@ -397,7 +424,7 @@ case "arrivals":
             p.title = nil
             p.shots = []
             p.length = p.arrive.end + 3
-            let scene = SlideScene(project: p, base: base.base, details: base.details)
+            let scene = SlideScene(project: p, bases: base.bases, details: base.details)
             for (c, m) in moments.enumerated() {
                 let t = m < 1 ? p.arrive.duration * m : p.arrive.end + 0.3
                 let img = try stage.still(scene, at: t, width: cw, height: ch, samples: 6)
@@ -428,7 +455,7 @@ case "titles":
             p.title = words
             p.title?.face = face
             p.makeRoomForOpening()
-            let scene = SlideScene(project: p, base: base.base, details: base.details)
+            let scene = SlideScene(project: p, bases: base.bases, details: base.details)
             let rest = (scene.choreography.beats.first?.land ?? 2) + 1.0
             let img = try stage.still(scene, at: rest, width: cw, height: ch, samples: 4)
             ctx.draw(img, in: CGRect(x: c * cw, y: ch, width: cw, height: ch))
@@ -436,7 +463,7 @@ case "titles":
         var p = project
         p.title = words
         p.makeRoomForOpening()
-        let scene = SlideScene(project: p, base: base.base, details: base.details)
+        let scene = SlideScene(project: p, bases: base.bases, details: base.details)
         let beats = scene.choreography.beats
         let land = beats.first?.land ?? 2
         let leave = beats.count > 1 ? beats[1].depart + 0.2 : land + 2
@@ -606,32 +633,62 @@ case "inkcheck":
         fail("inkcheck failed: \(error)")
     }
 
-case "turns":
-    // The cover turning over to the slide (top row) and back (below), each at
-    // six moments: just before, four through the turn, and settled after.
-    guard project.cover != nil else { fail("turns needs --cover") }
+case "turns", "changes":
+    // Each change of slide, a row each: turning over at six moments (just
+    // before, four through the turn, settled after), melting at six (just
+    // before, four as it spreads, done).
     let scene = loadScene()
-    let out = URL(fileURLWithPath: value("--out") ?? "turns.png")
-    let turns = scene.choreography.turns
-    let moments: [Double] = [-0.1, 0.22, 0.4, 0.55, 0.75, 1.0]
+    let changes = scene.choreography.changes
+    guard !changes.isEmpty else { fail("changes needs --more") }
+    let out = URL(fileURLWithPath: value("--out") ?? "changes.png")
     let cw = project.format.width / 3, ch = project.format.height / 3
     do {
         let stage = try SlideStage()
-        guard let ctx = CGContext(data: nil, width: cw * moments.count, height: ch * turns.count, bitsPerComponent: 8, bytesPerRow: 0,
+        guard let ctx = CGContext(data: nil, width: cw * 6, height: ch * changes.count, bitsPerComponent: 8, bytesPerRow: 0,
                                   space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { fail("no context") }
-        for (r, turn) in turns.enumerated() {
+        for (r, change) in changes.enumerated() {
+            let moments: [Double] = change.kind == .turn ? [-0.1, 0.22, 0.4, 0.55, 0.75, 1.0] : [-0.05, 0.12, 0.3, 0.5, 0.75, 1.0]
             for (c, m) in moments.enumerated() {
-                let t = m < 1 ? turn.start + Turn.length * m : turn.end + Choreography.turnSettle
-                let img = try stage.still(scene, at: t, width: cw, height: ch, samples: 8)
-                ctx.draw(img, in: CGRect(x: c * cw, y: (turns.count - 1 - r) * ch, width: cw, height: ch))
+                let t = m < 1 ? change.start + change.length * m : change.end + (change.kind == .turn ? Choreography.turnSettle : 0.2)
+                let img = try stage.still(scene, at: min(max(t, 0), scene.duration - 0.02), width: cw, height: ch, samples: 8)
+                ctx.draw(img, in: CGRect(x: c * cw, y: (changes.count - 1 - r) * ch, width: cw, height: ch))
             }
         }
         try ImageOutput.writePNG(ctx.makeImage()!, to: out)
-        print("turns \(out.path): \(turns.map { String(format: "%@ at %.2f s", $0.back ? "back" : "over", $0.start) }) down; "
-            + "before, 22%, 40%, 55%, 75% and settled across")
+        print("changes \(out.path): " + changes.map { c in
+            String(format: "%@ to slide %d at %.2f s", c.back ? "turns back" : (c.kind == .turn ? "turns over" : "melts"), c.to + 1, c.start)
+        }.joined(separator: "; ") + " (down); before, four moments through and settled (across)")
     } catch {
-        fail("turns failed: \(error)")
+        fail("changes failed: \(error)")
+    }
+
+case "marks":
+    // Each mark drawing on, a row each: as it starts, a third and two thirds
+    // drawn, drawn, and a moment later (gone, if it fades).
+    let scene = loadScene()
+    let marks = project.marks ?? []
+    guard !marks.isEmpty else { fail("marks needs --marks demo") }
+    let out = URL(fileURLWithPath: value("--out") ?? "marks.png")
+    let cw = project.format.width / 3, ch = project.format.height / 3
+    do {
+        let stage = try SlideStage()
+        guard let ctx = CGContext(data: nil, width: cw * 5, height: ch * marks.count, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { fail("no context") }
+        for (r, m) in marks.enumerated() {
+            let moments = [m.time + 0.05, m.time + m.drawLength / 3, m.time + m.drawLength * 2 / 3, m.drawn + 0.3,
+                           m.fades ? m.gone + 0.1 : m.drawn + 2.5]
+            for (c, t) in moments.enumerated() {
+                let img = try stage.still(scene, at: min(max(t, 0), scene.duration - 0.02), width: cw, height: ch, samples: 8)
+                ctx.draw(img, in: CGRect(x: c * cw, y: (marks.count - 1 - r) * ch, width: cw, height: ch))
+            }
+        }
+        try ImageOutput.writePNG(ctx.makeImage()!, to: out)
+        print("marks \(out.path): " + marks.map { String(format: "%@ on slide %d at %.2f s, %@", $0.color.title, project.pageIndex($0.page) + 1,
+                                                          $0.time, $0.fades ? "fades" : "stays") }.joined(separator: "; "))
+    } catch {
+        fail("marks failed: \(error)")
     }
 
 case "lifts":
@@ -768,10 +825,10 @@ case "path":
 default:
     print("""
     ooo-lab — headless renders and checks for OOO
-      shaders | still | sheet | render | analyze | plan | path | landings | stills | openings | titles | turns | lifts
+      shaders | still | sheet | render | analyze | plan | path | landings | stills | openings | titles | changes | marks | lifts
       backdrops | arrivals | blurcheck | inkcheck | motioncheck | loopcheck | bench | colorcheck | fixture
       --project file.ooo | --slide file.pdf|png [--replace file]  --format reel|portrait|square|landscape  --floor none|soft|mirror  --out path
-      --cover file [--turn s] [--no-turn-back]  --lift whole|4-10,14- [--room 0.42]
+      --more file,file [--melt 2|all] [--home]  --marks demo  --lift whole|4-10,14- [--room 0.42]
     """)
 }
 

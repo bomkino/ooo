@@ -33,7 +33,28 @@ struct CardU {
     float4 spot;        // spotlight region in the whole card's uv: u0, v0, u1, v1
     float4 spotP;       // spotlight dim (+ outside, − inside), feather, own shadow ground (1), its z
     float4 soft;        // x: width (world) over which the card's edges fade out; 0 = crisp, y: surface amount, z: develop
+    float4 melt;        // a melt through the card: centre x, centre y, radius, front (+ washing in, − washing away, 0 none)
+    float4 ink;         // ink drawn by hand: how far drawn, head softness, on, unused
 };
+
+// How much of a card a melt leaves showing at world point `wp`: inside its
+// radius when washing in, outside it when washing away, across a ragged soft
+// front. The noise is laid in units of the front's width, so the blot keeps
+// its shape as it spreads, the way ink does in water.
+inline float meltMask(float2 wp, constant CardU &c) {
+    float soft = max(abs(c.melt.w), 1e-5);
+    float2 q = (wp - c.melt.xy) / soft;
+    float n = snoise3(float3(q * 0.55, 1.7)) + 0.5 * snoise3(float3(q * 1.4, 4.3));
+    float d = length(q) + 0.45 * n;
+    float r = c.melt.z / soft;
+    float away = smoothstep(r - 1.0, r, d);
+    if (c.melt.w < 0.0) return away;
+    // On the card the slide washing in is whole a front ahead of the one
+    // washing away, which lies over it, so nothing behind shows through. In
+    // a mirror floor neither covers the other, so there it takes exactly
+    // what the other leaves, or the front would show as a bright haze.
+    return c.mirror.x > 0.5 ? 1.0 - away : 1.0 - smoothstep(r, r + 1.0, d);
+}
 
 // 1 inside a card's spotlight region, 0 outside, with a soft edge.
 inline float spotMask(float2 puv, float2 ps, constant CardU &c) {
@@ -276,6 +297,12 @@ fragment float4 card_fragment(CardVOut in [[stage_in]], bool facing [[front_faci
         float edge = (puv.x - c.extra.x) * ps.x;
         mask *= 1.0 - smoothstep(-pxWorld, pxWorld, edge);
     }
+    if (c.melt.w != 0.0) {
+        // Measured on the card, not in its reflection.
+        float2 wp = in.worldPos.xy;
+        if (c.mirror.x > 0.5) wp.y = 2.0 * c.mirror.y - wp.y;
+        mask *= meltMask(wp, c);
+    }
     if (mask <= 0.0) discard_fragment();
 
     if (c.extra.y > 0.5) {
@@ -309,6 +336,17 @@ fragment float4 card_fragment(CardVOut in [[stage_in]], bool facing [[front_faci
     gy *= mix(1.0, lw / max(ly, 1e-8), rounding);
     float4 m = sampleDefocus(tex, s, muv, radius, gx * widen, gy * widen);
     m *= inside;
+
+    if (c.ink.z > 0.5) {
+        // Ink: it shows where the pen has been by now, its head soft, in the
+        // pen's colour, lying flat on the card.
+        float cover = m.g;
+        float when = cover > 1e-4 ? m.r / cover : 1.0;
+        float drawn = 1.0 - smoothstep(c.ink.x - c.ink.y, c.ink.x, when);
+        float ia = cover * drawn * mask * c.sizeCorner.w * c.color.a;
+        if (ia <= 0.0) discard_fragment();
+        return float4(c.color.rgb * ia, ia);
+    }
 
     int surface = int(c.fx.w + 0.5);
     float3 rgb = m.a > 1e-5 ? m.rgb / m.a : float3(0.0);
@@ -349,7 +387,11 @@ fragment float4 card_fragment(CardVOut in [[stage_in]], bool facing [[front_faci
             float spec = pow(max(dot(N, H), 0.0), 30.0) * 0.16;
             float3 R = reflect(-V, N);
             float softbox = smoothstep(0.55, 0.9, R.y) * smoothstep(-0.2, 0.25, R.z) * 0.10;
-            rgb += spec + softbox + fres * 0.08;
+            // Dark artwork keeps its depth, as on Satin: the sheen is held back
+            // where the print is dark, or as the camera came in on a dark
+            // slide the lobe would spread over all of it and turn it grey.
+            float keep = mix(0.2, 1.0, smoothstep(0.02, 0.4, dot(unlit, float3(0.2126, 0.7152, 0.0722))));
+            rgb += keep * (spec + softbox + fres * 0.08);
         } else if (surface == 3) {
             // Foil: a thin film over the print. Its colour comes from light
             // interfering in a film a few hundred nanometres thick, so it shifts

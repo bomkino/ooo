@@ -7,14 +7,18 @@ public struct ChoreographyInput: Sendable {
     public var arrive: Arrive
     public var ending: Ending
     public var duration: Double
+    /// The first slide's width / height.
     public var slideAspect: Float
     public var canvasAspect: Float
     public var style: MotionStyle
     public var seed: UInt32
     /// The part of the canvas framings sit in.
     public var safe: SafeArea
-    /// The cover the video opens on, and when it turns; nil for none.
-    public var cover: CoverTiming?
+    /// The slides after the first, in order, and how and when the card
+    /// changes to each. A shot frames the slide its `page` names.
+    public var pages: [PageTiming]
+    /// Turning back to the first slide before the end; nil stays on the last.
+    public var home: HomeTiming?
     /// Where the stage rises to leave room below; nil for never.
     public var lift: Lift?
     /// The share of the frame an opening title needs above the slide while
@@ -23,7 +27,7 @@ public struct ChoreographyInput: Sendable {
 
     public init(overview: Shot, shots: [Shot], arrive: Arrive, ending: Ending, duration: Double,
                 slideAspect: Float, canvasAspect: Float, style: MotionStyle, seed: UInt32 = 1, safe: SafeArea = .none,
-                cover: CoverTiming? = nil, lift: Lift? = nil, titleRoom: Float = 0) {
+                pages: [PageTiming] = [], home: HomeTiming? = nil, lift: Lift? = nil, titleRoom: Float = 0) {
         self.overview = overview
         self.shots = shots
         self.arrive = arrive
@@ -34,9 +38,20 @@ public struct ChoreographyInput: Sendable {
         self.style = style
         self.seed = seed
         self.safe = safe
-        self.cover = cover
+        self.pages = pages
+        self.home = home
         self.lift = lift
         self.titleRoom = titleRoom
+    }
+
+    /// Every slide's width / height, the first first.
+    public var aspects: [Float] { [slideAspect] + pages.map(\.aspect) }
+
+    /// Which slide `shot` frames (0 is the first); a slide no longer in the
+    /// video counts as the first.
+    public func page(of shot: Shot) -> Int {
+        guard let id = shot.page, let k = pages.firstIndex(where: { $0.id == id }) else { return 0 }
+        return k + 1
     }
 }
 
@@ -53,15 +68,39 @@ public struct ChoreographyInput: Sendable {
 /// On top of the path the camera leans with its own speed (swing) and drifts
 /// as if held; both are smooth in time.
 ///
-/// With a cover, the camera rests on the whole slide while the cover turns
-/// over to it, and comes back to rest there before it turns back. With a
+/// Over several slides, the card changes from one to the next. Before it
+/// turns over, the camera comes back to rest on the whole slide, and while it
+/// turns it eases to the whole of the next. Before it melts, the camera rests
+/// on its last shot, and as the melt starts it cuts, unseen, to the first
+/// shot on the next slide, which looks from the same angle, while the old
+/// slide is kept exactly where the eye had it (see `meltHandoff`). With a
 /// Lift, every beat is framed twice, for the whole canvas and for the part
 /// left above the room, and the camera eases from one path to the other as
 /// the stage rises and settles.
 public struct Choreography: Sendable {
+    /// What a beat is for.
+    public enum Role: Sendable {
+        /// The whole first slide, as it arrives.
+        case opening
+        case shot
+        /// Back to the whole slide before the card turns over.
+        case whole
+        /// The whole of the next slide, while the card turns over to it.
+        case turned
+        /// The whole first slide again, while the card turns back to it.
+        case home
+        /// The whole slide again at the end.
+        case pullBack
+    }
+
     public struct Beat: Sendable {
         public let shot: Shot
         public let isOverview: Bool
+        public let role: Role
+        /// The slide this beat frames (0 is the first).
+        public let page: Int
+        /// The camera cuts here unseen as the card melts to this slide.
+        public let melts: Bool
         /// The settled framing.
         public let pose: CameraPose
         /// When the move into this beat starts, when it arrives, and when the move out starts.
@@ -89,7 +128,7 @@ public struct Choreography: Sendable {
         /// The travel this move would take with all the room it wants.
         public let wanted: Double
         /// How long the hold takes to bleed away the last of the move: the
-        /// whole hold, or less where the card turns soon after landing.
+        /// whole hold, or less where the card changes soon after landing.
         let settling: Double
 
         public var travel: Double { land - depart }
@@ -101,8 +140,10 @@ public struct Choreography: Sendable {
     /// (same times, same moves); nil without a Lift.
     public let lifted: [Beat]?
     public let lift: Lift?
-    /// The cover turning over to the slide, and back to it: none, one or two.
-    public let turns: [Turn]
+    /// The card changing from slide to slide, in time order.
+    public let changes: [SlideChange]
+    /// Every slide's width / height, the first first.
+    public let aspects: [Float]
     /// Which way the card turns (see `turnDirection`).
     public let turnSign: Float
     public let duration: Double
@@ -117,14 +158,18 @@ public struct Choreography: Sendable {
     public static let minimumHold = 0.12
     /// After a turn, the card settles a moment before the camera sets off.
     public static let turnSettle = 0.3
-    /// The camera lands on the whole slide this long before it turns back.
+    /// The camera lands on the whole slide this long before it turns.
     public static let backLead = 0.4
-    /// How long the cover rests before it turns over, at the least, and
-    /// after it has turned back, before the ending.
+    /// How long a slide with no shots of its own rests before it turns over,
+    /// at the least, and how long the first rests after the card has turned
+    /// back, before the ending.
     public static let coverRest = 1.6
-    /// The overview the camera comes back to before the card turns back.
-    public static let backToCover = UUID(uuidString: "00000000-0000-0000-0000-00000000C0E2")!
+    /// How long the camera takes, about, to fly back to the whole slide.
+    public static let flightBack = 1.5
     static let pullBackID = UUID(uuidString: "00000000-0000-0000-0000-00000000B4CC")!
+
+    /// The card's turns over, in time order.
+    public var turns: [SlideChange] { changes.filter { $0.kind == .turn } }
 
     public init(_ input: ChoreographyInput) {
         duration = max(input.duration, 0.1)
@@ -132,80 +177,20 @@ public struct Choreography: Sendable {
         slideAspect = input.slideAspect
         canvasAspect = input.canvasAspect
         ending = input.ending
+        aspects = input.aspects
         turnSign = turnDirection(overviewYaw: input.overview.yaw)
         let seed = Int(input.seed)
         phases = (hashSigned(seed, 11) * .pi, hashSigned(seed, 12) * .pi, hashSigned(seed, 13) * .pi,
                   hashSigned(seed, 14) * .pi, hashSigned(seed, 15) * .pi, hashSigned(seed, 16) * .pi)
 
-        let A = input.slideAspect, C = input.canvasAspect
-        let arriveEnd = min(input.arrive.end, duration)
+        let C = input.canvasAspect
+        let aspects = input.aspects
+        let (plan, changes) = Self.layout(input, duration: duration)
+        self.changes = changes
 
-        // The cover rests on the overview until it turns over; the tour sets
-        // off once the slide on its back has settled.
-        var turns: [Turn] = []
-        var holdOpening = arriveEnd
-        if let cover = input.cover {
-            let latest = max(duration - Turn.length - 0.2, arriveEnd)
-            let over = Turn(start: min(max(cover.turn, arriveEnd + 0.3), latest), back: false)
-            turns.append(over)
-            holdOpening = over.end + Self.turnSettle
-        }
-
-        // The overview, then the shots in time order, never before the slide has
-        // arrived (or the cover has turned) and never two on the same moment.
-        var plan: [(shot: Shot, overview: Bool)] = []
-        var overview = input.overview
-        overview.time = arriveEnd
-        plan.append((overview, true))
-        var last = arriveEnd
-        for (k, var s) in input.shots.sorted(by: { $0.time < $1.time }).enumerated() {
-            s.time = max(s.time, last + 0.25)
-            if k == 0 && !turns.isEmpty && s.move != .cut {
-                // The first move sets off once the card has settled, and takes the time it wants.
-                let from = CameraPose(shot: overview, slideAspect: A, canvasAspect: C, safe: input.safe)
-                let to = CameraPose(shot: s, slideAspect: A, canvasAspect: C, safe: input.safe)
-                let want = s.travel ?? Choreography.autoTravel(from: from, to: to, ease: s.ease, move: s.move, style: input.style,
-                                                               canvasAspect: C)
-                s.time = max(s.time, holdOpening + max(want, 0.6))
-            } else if k == 0 && !turns.isEmpty {
-                s.time = max(s.time, holdOpening + 0.3)
-            }
-            last = s.time
-            plan.append((s, false))
-        }
-        if let cover = input.cover, cover.turnBack {
-            // Back to the whole slide, settled, before it turns back to the cover.
-            last = max(last, holdOpening)
-            var back = input.overview
-            back.id = Self.backToCover
-            let auto = duration - (Self.backLead + Turn.length + Self.coverRest + Self.endingTail(input.ending))
-            var land = max(last + 1.6, cover.backAt.map { $0 - Self.backLead } ?? auto)
-            land = max(min(land, duration - Self.backLead - Turn.length - 0.2), last + 0.25)
-            back.time = land
-            back.travel = nil
-            back.ease = .breathe
-            back.breathe = 0
-            back.label = "Back to the cover"
-            last = land
-            plan.append((back, true))
-            turns.append(Turn(start: land + Self.backLead, back: true))
-        } else if input.ending == .pullBack {
-            var back = input.overview
-            back.id = Self.pullBackID
-            // Lands with time to settle and rest on the whole slide before the end.
-            back.time = max(last + 1.6, duration - 1.1)
-            back.travel = nil
-            back.ease = .breathe
-            back.breathe = 0
-            back.label = "The whole slide"
-            last = back.time
-            plan.append((back, true))
-        }
-        self.turns = turns
-
-        let poses = plan.map { CameraPose(shot: $0.shot, slideAspect: A, canvasAspect: C, safe: input.safe) }
+        let poses = plan.map { CameraPose(shot: $0.shot, slideAspect: aspects[$0.page], canvasAspect: C, safe: input.safe) }
         let sweeps: [CameraPose?] = plan.map {
-            $0.shot.sweep == nil ? nil : CameraPose(sweepEndOf: $0.shot, slideAspect: A, canvasAspect: C, safe: input.safe)
+            $0.shot.sweep == nil ? nil : CameraPose(sweepEndOf: $0.shot, slideAspect: aspects[$0.page], canvasAspect: C, safe: input.safe)
         }
         /// Where a beat's hold leaves the camera, before its breath.
         let rests = poses.indices.map { sweeps[$0] ?? poses[$0] }
@@ -217,6 +202,12 @@ public struct Choreography: Sendable {
             let land = item.shot.time
             if i == 0 {
                 departs.append(input.arrive.kind == .none ? land : 0)
+                wanted.append(0)
+                continue
+            }
+            if let from = item.turnFrom {
+                // Reframes for the next slide while the card turns over to it.
+                departs.append(min(from, land))
                 wanted.append(0)
                 continue
             }
@@ -233,13 +224,14 @@ public struct Choreography: Sendable {
                                                                      move: item.shot.move, style: input.style, canvasAspect: C)
             let travel = gap < 0.25 ? max(land - prevLand - 0.05, 0.08) : min(max(want, 0.25), gap)
             var depart = land - travel
-            // Nothing sets off while the card is still turning.
-            if i == 1 && !turns.isEmpty { depart = min(max(depart, holdOpening), land - 0.08) }
+            // Nothing sets off while the card is still changing, and the first
+            // move after it takes the time it wants (the card's own settle is the hold).
+            if let settled = item.notBefore { depart = min(max(land - max(want, 0.25), settled), land - 0.08) }
             departs.append(depart)
             wanted.append(want)
         }
 
-        beats = Self.build(plan, poses: poses, sweeps: sweeps, departs: departs, wanted: wanted, turns: turns,
+        beats = Self.build(plan, poses: poses, sweeps: sweeps, departs: departs, wanted: wanted, changes: changes,
                            input: input, duration: duration)
 
         if let lift = input.lift, !lift.isEmpty {
@@ -248,11 +240,14 @@ public struct Choreography: Sendable {
             var opening = up
             opening.top = min(up.top + input.titleRoom, 1 - up.bottom - 0.25)
             let safe = { (i: Int) -> SafeArea in plan[i].overview ? opening : up }
-            let liftedPoses = plan.indices.map { CameraPose(shot: plan[$0].shot, slideAspect: A, canvasAspect: C, safe: safe($0)) }
-            let liftedSweeps: [CameraPose?] = plan.indices.map {
-                plan[$0].shot.sweep == nil ? nil : CameraPose(sweepEndOf: plan[$0].shot, slideAspect: A, canvasAspect: C, safe: safe($0))
+            let liftedPoses = plan.indices.map {
+                CameraPose(shot: plan[$0].shot, slideAspect: aspects[plan[$0].page], canvasAspect: C, safe: safe($0))
             }
-            lifted = Self.build(plan, poses: liftedPoses, sweeps: liftedSweeps, departs: departs, wanted: wanted, turns: turns,
+            let liftedSweeps: [CameraPose?] = plan.indices.map {
+                plan[$0].shot.sweep == nil ? nil
+                    : CameraPose(sweepEndOf: plan[$0].shot, slideAspect: aspects[plan[$0].page], canvasAspect: C, safe: safe($0))
+            }
+            lifted = Self.build(plan, poses: liftedPoses, sweeps: liftedSweeps, departs: departs, wanted: wanted, changes: changes,
                                 input: input, duration: duration)
             self.lift = lift
         } else {
@@ -261,13 +256,213 @@ public struct Choreography: Sendable {
         }
     }
 
+    /// One beat of the plan, before its move is timed.
+    struct Item {
+        var shot: Shot
+        var overview: Bool
+        var role: Role
+        var page: Int
+        var melts = false
+        /// Departs as the card starts to turn, landing as it lands.
+        var turnFrom: Double?
+        /// Sets off no earlier than this: the card has settled after a change.
+        var notBefore: Double?
+    }
+
+    /// The beats in time order and the card's changes between them. Every
+    /// slide's shots come in turn, never before the slide has arrived (or
+    /// the card has changed to it) and never two on the same moment; each
+    /// change waits for the slide before it to be seen. Without a `duration`
+    /// it stops there (for the natural length); with one it adds the turn
+    /// back to the first slide, or the pull back to the whole slide.
+    static func layout(_ input: ChoreographyInput, duration: Double?) -> (items: [Item], changes: [SlideChange]) {
+        let aspects = input.aspects, C = input.canvasAspect
+        let n = aspects.count
+        let arriveEnd = duration.map { min(input.arrive.end, $0) } ?? input.arrive.end
+        var byPage = Array(repeating: [Shot](), count: n)
+        for s in input.shots.sorted(by: { $0.time < $1.time }) { byPage[input.page(of: s)].append(s) }
+        func overview(_ k: Int) -> Shot {
+            Shot.overview(like: input.overview, baseAspect: aspects[0], slideAspect: aspects[k], canvasAspect: C)
+        }
+        func pose(_ s: Shot, _ k: Int) -> CameraPose { CameraPose(shot: s, slideAspect: aspects[k], canvasAspect: C, safe: input.safe) }
+        func rest(_ item: Item) -> CameraPose {
+            item.shot.sweep == nil ? pose(item.shot, item.page)
+                : CameraPose(sweepEndOf: item.shot, slideAspect: aspects[item.page], canvasAspect: C, safe: input.safe)
+        }
+
+        var items: [Item] = []
+        var changes: [SlideChange] = []
+        var opening = overview(0)
+        opening.time = arriveEnd
+        items.append(Item(shot: opening, overview: true, role: .opening, page: 0))
+        var last = arriveEnd
+        // When the card has settled after its last change.
+        var settled = arriveEnd
+
+        func place(_ list: [Shot], page k: Int, afterChange: Bool) {
+            for (j, var s) in list.enumerated() {
+                s.time = max(s.time, last + 0.25)
+                var item = Item(shot: s, overview: false, role: .shot, page: k)
+                if j == 0 && afterChange {
+                    // The first move sets off once the card has settled, and takes the time it wants.
+                    if s.move != .cut {
+                        let want = s.travel ?? autoTravel(from: rest(items[items.count - 1]), to: pose(s, k), ease: s.ease,
+                                                          move: s.move, style: input.style, canvasAspect: C)
+                        s.time = max(s.time, settled + max(want, 0.6))
+                    } else {
+                        s.time = max(s.time, settled + 0.3)
+                    }
+                    item.shot = s
+                    item.notBefore = settled
+                }
+                last = s.time
+                items.append(item)
+            }
+        }
+
+        place(byPage[0], page: 0, afterChange: false)
+        for k in 1..<max(n, 1) {
+            let next = input.pages[k - 1]
+            var list = byPage[k]
+            let previous = items[items.count - 1]
+            let onShot = !previous.overview
+            let from = max(last, settled)
+            // A slide with no shots of its own rests a moment before it changes;
+            // a last shot holds for what it has to say.
+            let seen = onShot ? holdBeforeChange(previous.shot) : max(coverRest - (from - previous.shot.time), 0.3)
+            let start: Double
+            switch next.change {
+            case .turn:
+                // The flight back to the whole slide takes the time it wants.
+                let flight = onShot ? autoTravel(from: rest(previous), to: pose(overview(k - 1), k - 1), ease: .breathe,
+                                                 style: input.style, canvasAspect: C) : 0
+                let least = from + (onShot ? room(forTravel: flight) + backLead : 0.3)
+                let natural = from + seen + (onShot ? flight + backLead : 0)
+                // Turning as late as the next slide's first shot allows, so the
+                // last one here holds while it is still being talked about.
+                let ideal = list.first.map { s -> Double in
+                    let want = s.travel ?? autoTravel(from: pose(overview(k), k), to: pose(s, k), ease: s.ease, move: s.move,
+                                                      style: input.style, canvasAspect: C)
+                    return s.time - (next.change.length + turnSettle + max(want, 0.6))
+                }
+                start = next.at.map { max($0, least) } ?? max(natural, ideal ?? natural)
+                if onShot {
+                    var whole = overview(k - 1)
+                    whole.id = Self.generatedID(1, k - 1)
+                    whole.time = start - backLead
+                    whole.travel = nil
+                    whole.ease = .breathe
+                    whole.breathe = 0
+                    whole.label = "The whole slide"
+                    items.append(Item(shot: whole, overview: true, role: .whole, page: k - 1))
+                }
+                changes.append(SlideChange(start: start, kind: .turn, from: k - 1, to: k))
+                var turned = overview(k)
+                turned.id = Self.generatedID(2, k)
+                turned.time = start + next.change.length
+                turned.move = .push
+                turned.ease = .glide
+                turned.travel = nil
+                turned.label = "Slide \(k + 1)"
+                items.append(Item(shot: turned, overview: true, role: .turned, page: k, turnFrom: start))
+                last = turned.time
+                settled = start + next.change.length + turnSettle
+            case .melt:
+                let least = from + 0.6
+                let natural = from + max(seen, 0.6)
+                // The next slide's first shot lands as the melt starts.
+                start = next.at.map { max($0, least) } ?? max(natural, list.first?.time ?? natural)
+                changes.append(SlideChange(start: start, kind: .melt, from: k - 1, to: k))
+                var first: Shot
+                var whole = false
+                if list.isEmpty {
+                    first = overview(k)
+                    first.id = Self.generatedID(3, k)
+                    first.label = "Slide \(k + 1)"
+                    whole = true
+                } else {
+                    first = list.removeFirst()
+                }
+                first.time = start
+                first.move = .cut
+                first.travel = nil
+                items.append(Item(shot: first, overview: whole, role: whole ? .turned : .shot, page: k, melts: true))
+                last = start
+                settled = start + next.change.length
+            }
+            place(list, page: k, afterChange: true)
+        }
+
+        guard let duration else { return (items, changes) }
+        let current = items[items.count - 1]
+        let onShot = !current.overview
+        if let home = input.home, n > 1 {
+            // Back to the whole slide, settled, before it turns back to the first.
+            let auto = duration - (backLead + PageChange.turn.length + coverRest + endingTail(input.ending))
+            var land = max(last + (onShot ? 1.6 : 0.25), home.at.map { $0 - backLead } ?? auto)
+            land = max(min(land, duration - backLead - PageChange.turn.length - 0.2), last + 0.25)
+            var start = land + backLead
+            if onShot {
+                var whole = overview(current.page)
+                whole.id = Self.generatedID(1, current.page)
+                whole.time = land
+                whole.travel = nil
+                whole.ease = .breathe
+                whole.breathe = 0
+                whole.label = "The whole slide"
+                whole.page = nil
+                items.append(Item(shot: whole, overview: true, role: .whole, page: current.page))
+            } else {
+                start = max(start, last + 0.3)
+            }
+            changes.append(SlideChange(start: start, kind: .turn, from: n - 1, to: 0, back: true))
+            var first = overview(0)
+            first.id = Self.generatedID(4, 0)
+            first.time = start + PageChange.turn.length
+            first.move = .push
+            first.ease = .glide
+            first.travel = nil
+            first.label = "Back to the first slide"
+            items.append(Item(shot: first, overview: true, role: .home, page: 0, turnFrom: start))
+        } else if input.ending == .pullBack {
+            var back = overview(current.page)
+            back.id = Self.pullBackID
+            // Lands with time to settle and rest on the whole slide before the end.
+            back.time = max(last + 1.6, duration - 1.1)
+            back.travel = nil
+            back.ease = .breathe
+            back.breathe = 0
+            back.label = "The whole slide"
+            items.append(Item(shot: back, overview: true, role: .pullBack, page: current.page))
+        }
+        return (items, changes)
+    }
+
+    /// The least time between two landings that leaves a move of `travel`
+    /// seconds all of it, with the hold every interval keeps.
+    static func room(forTravel travel: Double) -> Double {
+        travel <= 2.125 ? max(travel / 0.68, travel + minimumHold) : travel + 1.0
+    }
+
+    /// How long a last shot holds before the card changes: long enough to
+    /// read what it frames, or to glide along its line.
+    static func holdBeforeChange(_ shot: Shot) -> Double {
+        let glide = shot.sweep == nil ? 0 : readLead + (shot.sweepTime ?? 1.6)
+        return max(1.6 + min(readingTime(shot.cue), 2.0), glide + 0.4)
+    }
+
+    /// A fixed id for a beat the path adds itself.
+    static func generatedID(_ kind: UInt8, _ k: Int) -> UUID {
+        UUID(uuid: (0, 0, 0, 0, 0, 0, 0x40, 0, 0x80, 0, 0, 0, 0xC0, kind, UInt8(truncatingIfNeeded: k >> 8), UInt8(truncatingIfNeeded: k)))
+    }
+
     /// The beats for one framing of the plan: each move from where the last
     /// rested to its pose, its landing, hold, breath and read-along.
-    private static func build(_ plan: [(shot: Shot, overview: Bool)], poses: [CameraPose], sweeps: [CameraPose?],
-                              departs: [Double], wanted: [Double], turns: [Turn], input: ChoreographyInput,
+    private static func build(_ plan: [Item], poses: [CameraPose], sweeps: [CameraPose?],
+                              departs: [Double], wanted: [Double], changes: [SlideChange], input: ChoreographyInput,
                               duration: Double) -> [Beat] {
         let C = input.canvasAspect
-        let rests = poses.indices.map { sweeps[$0] ?? poses[$0] }
+        var rests = poses.indices.map { sweeps[$0] ?? poses[$0] }
         let w = { (h: Float) -> Float in h * C.squareRoot() }
         let rho = input.style.rho
         let settleScale = input.style.paceScale.squareRoot()
@@ -277,14 +472,26 @@ public struct Choreography: Sendable {
             let depart = departs[i]
             let leave = i + 1 < plan.count ? departs[i + 1] : duration
             let hold = max(leave - land, 0)
-            // The camera is still before a card turns: the last of the move is
-            // taken in by the time the turn starts (or soon after it starts,
-            // for the cover that turns early).
+            // The camera is still before the card changes: the last of the move
+            // is taken in by the time the change starts.
             var settling = hold
-            if let turn = turns.first(where: { $0.start >= land - 1e-9 && $0.start < leave }) {
-                settling = min(hold, max(turn.start - land, 0.6))
+            if let change = changes.first(where: { $0.start >= land - 1e-9 && $0.start < leave }) {
+                settling = min(hold, max(change.start - land, 0.6))
             }
-            let pose = poses[i]
+            var pose = poses[i]
+            if item.melts, i > 0 {
+                // The cut under a melt keeps the angle, lens and depth the camera
+                // had come to rest with, so the old slide can be kept exactly
+                // where the eye had it.
+                let before = built[i - 1]
+                let end = before.sweepTo ?? before.pose
+                pose.yaw = end.yaw
+                pose.pitch = end.pitch
+                pose.roll = before.pose.roll
+                pose.fov = before.pose.fov
+                pose.aperture = before.pose.aperture
+                if sweeps[i] == nil { rests[i] = pose }
+            }
             // Where the move starts: the previous beat at the end of its breath,
             // or for the overview the camera's opening position.
             var from: CameraPose
@@ -317,7 +524,8 @@ public struct Choreography: Sendable {
             let glide = hold > 0.5 ? sweeps[i] : nil
             let sweepEnd = max(land + min(Self.readLead + (item.shot.sweepTime ?? hold * 0.82), hold - 0.2), land + 0.3)
             let sweepStart = land + min(Self.readLead, (sweepEnd - land) * 0.25)
-            built.append(Beat(shot: item.shot, isOverview: item.overview, pose: pose, depart: depart, land: land, leave: leave,
+            built.append(Beat(shot: item.shot, isOverview: item.overview, role: item.role, page: item.page, melts: item.melts,
+                              pose: pose, depart: depart, land: land, leave: leave,
                               from: from, path: path, curve: curve, overrun: overrun, tail: tail,
                               breathe: breathe, arcSign: dx >= 0 ? 1 : -1, sweepTo: glide,
                               sweepStart: sweepStart, sweepEnd: sweepEnd, wanted: wanted[i], settling: settling))
@@ -400,7 +608,7 @@ public struct Choreography: Sendable {
     /// The time of a cut inside (a, b], if there is one: motion blur must not span it.
     public func cut(between a: Double, and b: Double) -> Double? {
         let lo = min(a, b), hi = max(a, b)
-        for beat in beats where beat.shot.move == .cut && !beat.isOverview && beat.land > lo && beat.land <= hi {
+        for beat in beats where beat.shot.move == .cut && (!beat.isOverview || beat.melts) && beat.land > lo && beat.land <= hi {
             return beat.land
         }
         return nil
@@ -435,10 +643,33 @@ public struct Choreography: Sendable {
             p.roll += k * radians(0.12) * sinf(0.047 * tt + ph.1)
         }
         // While the card turns, the camera gives it a little room.
-        for turn in turns where turn.contains(t) {
+        for turn in changes where turn.kind == .turn && turn.contains(t) {
             p.height *= 1 + CardTurn.cameraRoom(turn.progress(at: t))
         }
         return p
+    }
+
+    // MARK: Slides
+
+    /// The change under way at `t`, and how far through it, when the card is changing.
+    public func change(at t: Double) -> (change: SlideChange, progress: Float)? {
+        for c in changes where c.contains(t) { return (c, c.progress(at: t)) }
+        return nil
+    }
+
+    /// The slide face up at `t` (0 is the first): the one the card last
+    /// changed to, once the change has started.
+    public func page(at t: Double) -> Int {
+        changes.last { $0.start <= t }?.to ?? 0
+    }
+
+    /// The two views either side of the unseen cut a melt starts with: the
+    /// camera resting on the old slide, and the same view on the new one.
+    /// Every point the first sees on the old slide, the second sees at
+    /// `to.target + (p − from.target) · to.height / from.height`, so the old
+    /// slide, moved and scaled that way, stays exactly where the eye had it.
+    public func meltHandoff(_ melt: SlideChange) -> (from: CameraPose, to: CameraPose) {
+        (basePose(at: melt.start - 1e-4), basePose(at: melt.start))
     }
 
     /// The camera at `t` without swing or drift: on the tour as framed for
@@ -559,10 +790,13 @@ public struct Choreography: Sendable {
     /// over the first half-second of a hold and the last third of one.
     public func settled(at t: Double) -> Float {
         guard !beats.isEmpty else { return 0 }
-        let b = beats[beatIndex(at: t)]
+        let i = beatIndex(at: t)
+        let b = beats[i]
         guard t >= b.land else { return 0 }
-        let rise = smootherstep(Float((t - b.land) / 0.5))
-        let fall: Float = b.leave >= duration - 1e-6 ? 1 : 1 - smootherstep(Float((t - (b.leave - 0.3)) / 0.3))
+        // A melt's cut is unseen: the camera holds still across it.
+        let rise = b.melts ? 1 : smootherstep(Float((t - b.land) / 0.5))
+        let stays = b.leave >= duration - 1e-6 || (i + 1 < beats.count && beats[i + 1].melts)
+        let fall: Float = stays ? 1 : 1 - smootherstep(Float((t - (b.leave - 0.3)) / 0.3))
         return rise * fall
     }
 
@@ -588,35 +822,32 @@ public struct Choreography: Sendable {
     /// How long a read-along rests on the start of its line before gliding.
     public static let readLead = 0.4
 
-    /// How much later than the arrival the tour can set off with this cover:
-    /// once it has rested, turned over and settled.
-    public static func coverDelay(_ cover: CoverTiming?, arrive: Arrive) -> Double {
-        guard let cover else { return 0 }
-        return max(cover.turn, arrive.end + 0.3) + Turn.length + turnSettle - arrive.end
+    /// A natural length for a video with these slides and shots and no
+    /// voiceover: every shot holds for what it has to say, every change has
+    /// its time, and turning back, there is time for the flight back to the
+    /// whole slide, the turn and a rest on the first.
+    public static func naturalDuration(shots: [Shot], arrive: Arrive, ending: Ending) -> Double {
+        naturalDuration(ChoreographyInput(overview: .overview(), shots: shots, arrive: arrive, ending: ending, duration: 0,
+                                          slideAspect: 16.0 / 9.0, canvasAspect: 16.0 / 9.0, style: MotionStyle()))
     }
 
-    /// A natural length for a video with these shots and no voiceover: with a
-    /// cover, time for it to rest and turn over first and, turning back, for
-    /// the flight back to the whole slide, the turn and a rest on the cover.
-    public static func naturalDuration(shots: [Shot], arrive: Arrive, ending: Ending, cover: CoverTiming? = nil) -> Double {
-        var last = max(shots.map(\.time).max() ?? arrive.end, arrive.end)
-        if let cover {
-            let turned = max(cover.turn, arrive.end + 0.3) + Turn.length + turnSettle
-            last = max(last, shots.isEmpty ? turned : turned + 2.0)
-        }
+    public static func naturalDuration(_ input: ChoreographyInput) -> Double {
+        let (items, _) = layout(input, duration: nil)
+        let lastItem = items.last
+        let last = max(lastItem?.shot.time ?? input.arrive.end, input.arrive.end)
         // A shot that reads along a line holds for its glide; one with more
         // to read than a glance holds for that.
-        let lastShot = shots.max { $0.time < $1.time }
+        let lastShot = lastItem.flatMap { $0.overview ? nil : $0.shot }
         let glide = lastShot?.sweep == nil ? 0 : max(readLead + (lastShot?.sweepTime ?? 1.6) - 1.2, 0)
-        let reading = lastShot?.sweep == nil ? min(readingTime(lastShot?.cue), 2.4) : 0
-        var d = last + (shots.isEmpty ? 2.6 : 2.4) + glide + reading
-        if let cover, cover.turnBack {
-            let tail = backLead + Turn.length + coverRest + endingTail(ending)
-            d += 2.3 + tail
-            if let at = cover.backAt { d = max(d, at + Turn.length + coverRest + endingTail(ending)) }
+        let reading = lastShot != nil && lastShot?.sweep == nil ? min(readingTime(lastShot?.cue), 2.4) : 0
+        var d = last + (lastShot == nil ? 2.6 : 2.4) + glide + reading
+        if let home = input.home, !input.pages.isEmpty {
+            let tail = backLead + PageChange.turn.length + coverRest + endingTail(input.ending)
+            d += (lastShot == nil ? 0.4 : 2.3) + tail
+            if let at = home.at { d = max(d, at + PageChange.turn.length + coverRest + endingTail(input.ending)) }
             return d
         }
-        switch ending {
+        switch input.ending {
         // The pull-back's flight comes out of this, so the last shot still holds.
         case .pullBack: d += 3.4
         case .fade: d += 0.6

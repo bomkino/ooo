@@ -79,6 +79,8 @@ cat > "$APPDIR/Contents/Info.plist" <<PLIST
   <key>SUPublicEDKey</key><string>$SPARKLE_PUBLIC_KEY</string>
   <key>SUEnableAutomaticChecks</key><true/>
   <key>NSHumanReadableCopyright</key><string>© 2026 pitch.dog. Free software under the GNU AGPL 3.0.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>OOO records a scratch voiceover as you talk the video through, so the camera can land on your words. It stays on this Mac.</string>
   <key>NSSpeechRecognitionUsageDescription</key>
   <string>OOO listens to your voiceover on this Mac to find when you say each word, so every move lands just before you name it.</string>
   <key>CFBundleDocumentTypes</key>
