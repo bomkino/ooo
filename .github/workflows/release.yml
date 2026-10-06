@@ -77,20 +77,51 @@ jobs:
           XML
           xmllint --noout "$OUT/appcast.xml"
           (cd "$OUT" && shasum -a 256 "$DMG" "$ZIP" > SHA256SUMS.txt)
-          # The release notes: how to install, then this version's section of the changelog.
+          # The release notes, in the shape of Drift's, Galileo's and Backdrop's:
+          # what's new (this version's section of the changelog), how to install,
+          # the files, what was checked, the source and the checksums.
           awk -v v="## $VERSION" 'index($0, v) == 1 { on = 1; next } /^## / { on = 0 } on' CHANGELOG.md > changes.md
           [ -s changes.md ] || { echo "::error::CHANGELOG.md has no section for $VERSION"; exit 1; }
           {
-            echo "**For Apple silicon Macs with macOS 14 or later.** Download \`$DMG\`, open it and drag OOO onto Applications. The first time you open it, macOS stops it: open System Settings › Privacy & Security, scroll down and click **Open Anyway**. From this version on, OOO updates itself."
+            echo "**OOO $VERSION: one slide, one camera, all the love. The first public release, and it updates itself.**"
+            echo
+            echo "### What's new"
             cat changes.md
+            echo
+            sed -e "s/@VERSION@/$VERSION/g" <<'NOTES'
+          ### Install
+
+          1. Download `OOO-@VERSION@-macOS-arm64.dmg`, open it, and drag OOO onto **Applications**. If macOS offers to install it for you and then says "Could not install", click OK and drag it instead. (That route only works for apps notarized by Apple.) `OOO-@VERSION@-macOS-arm64.zip` is the same app, if you'd rather unzip it.
+          2. The first time you open it, macOS stops it. Open **System Settings › Privacy & Security**, scroll down, and click **Open Anyway**. (Control-click › Open no longer works on current macOS.)
+
+          It needs an Apple silicon Mac with macOS 14 or later. OOO is free and open source, signed ad hoc and not notarized. From this version on, it updates itself.
+
+          ### Files
+
+          - `OOO-@VERSION@-macOS-arm64.dmg`: the app, to install by hand.
+          - `OOO-@VERSION@-macOS-arm64.zip`: the same app; the in-app updater uses this one.
+          - `appcast.xml`: the update feed installed apps read. Keep it on the newest release.
+          - `SHA256SUMS.txt`: checksums.
+
+          ### Checked
+
+          Built from this commit by `release.yml` on GitHub's macOS 26 runner (Apple silicon). The unit tests pass: the camera's maths, the director, documents and the renderer. In `scripts/test-update.sh`, a test copy updated itself from a signed local feed and relaunched on the new version, and an update with a single changed byte was refused.
+          NOTES
+            echo
+            echo "Source: \`$GITHUB_SHA\` (main)."
+            echo
+            echo '```'
+            cat "$OUT/SHA256SUMS.txt"
+            echo '```'
           } > notes.md
+          cat notes.md
           ls -l "$OUT"; cat "$OUT/appcast.xml" "$OUT/SHA256SUMS.txt"
       - name: Publish the release, marked Latest
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "v$VERSION" release/* --target "$GITHUB_SHA" --latest \
-            --title "OOO $VERSION · Apple silicon Mac" --notes-file notes.md
+            --title "OOO $VERSION — Apple silicon Mac" --notes-file notes.md
           # The feed every copy reads now points at this release.
           for _ in $(seq 12); do
             curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/appcast.xml" | grep "<sparkle:shortVersionString>$VERSION<" && exit 0

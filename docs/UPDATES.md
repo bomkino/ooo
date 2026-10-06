@@ -31,10 +31,12 @@ bash scripts/build-app.sh release
 bash scripts/test-update.sh                 # a signed update installs, a tampered one is refused
 bash scripts/make-release.sh ../release/ooo notes.md
 #    → OOO-x.y.z-macOS-arm64.dmg, OOO-x.y.z-macOS-arm64.zip, appcast.xml, SHA256SUMS.txt
-# 2. Publish all four on the release tagged vx.y.z, marked Latest, with the
-#    changelog's section as the notes:
+# 2. Publish all four on the release tagged vx.y.z, marked Latest. Write the
+#    notes in the shape of 0.2.0's (and Drift's): a bold line, What's new
+#    (the changelog's section), Install, Files, Checked, Source and the
+#    checksums.
 gh release create vx.y.z -R bomkino/ooo --target "$(git rev-parse HEAD)" --latest \
-  --title "OOO x.y.z · Apple silicon Mac" --notes-file release-notes.md ../release/ooo/*
+  --title "OOO x.y.z — Apple silicon Mac" --notes-file release-notes.md ../release/ooo/*
 # 3. Check the feed now points at it:
 curl -sL https://github.com/bomkino/ooo/releases/latest/download/appcast.xml | grep shortVersionString
 ```

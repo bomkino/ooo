@@ -38,7 +38,7 @@ Everything runs on your Mac. Nothing is uploaded. The only thing OOO fetches is 
 
 ## Install
 
-Download `OOO-0.2.0-macOS-arm64.dmg` from the [latest release](https://github.com/bomkino/ooo/releases/latest), open it and drag OOO onto Applications. If macOS offers to install the app for you and then says "Could not install", click OK and drag it instead: macOS only installs that way for apps notarized by Apple. A ZIP of the app is on the release page too.
+Download the disk image (`OOO-x.y.z-macOS-arm64.dmg`) from the [latest release](https://github.com/bomkino/ooo/releases/latest), open it and drag OOO onto Applications. If macOS offers to install the app for you and then says "Could not install", click OK and drag it instead: macOS only installs that way for apps notarized by Apple. A ZIP of the app is on the release page too.
 
 OOO is signed ad hoc and not notarized, so the first time you open it, macOS stops it. Open System Settings › Privacy & Security, scroll down and click **Open Anyway** (Control-click › Open no longer works from macOS Sequoia on). A copy downloaded from Terminal opens straight away, because nothing marks it as downloaded from the web:
 

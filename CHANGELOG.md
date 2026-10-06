@@ -4,12 +4,10 @@
 
 OOO's first public release, made for pitch.dog's everyday case: a wide slide (2576 × 1080 or 1920 × 1080) in a 1080 × 1920 reel.
 
-**Updates itself.** OOO checks its GitHub releases once a day and offers new versions in the app: read what's new, click Install, and it relaunches on the new version a few seconds later, with no second trip to Privacy & Security. **Check for Updates…** in the OOO menu checks now.
-
-- Updates are signed with pitch.dog's own key, and anything not signed with it is refused. No Apple developer account is needed.
-- Install this version by hand once; every version after it arrives by itself.
-- The first launch of a downloaded copy needs System Settings › Privacy & Security › **Open Anyway** (Control-click › Open no longer works). If macOS offers to install from the disk image and says "Could not install", drag the app onto Applications instead. A ZIP is on the release page too.
-- Uses Sparkle 2.10.0 (MIT licence, credited in NOTICES and inside the app).
+**It updates itself**
+- **In-app updates.** OOO checks this repository's releases once a day and offers new versions itself: read what's new, click **Install Update**, and it relaunches on the new version a few seconds later. **Check for Updates…** in the OOO menu checks now.
+- **Safe without an Apple account.** Updates are signed with pitch.dog's own key, and the app refuses anything not signed with it.
+- **Install this version by hand once.** Every version after it arrives by itself, with no second trip to Privacy & Security.
 
 **The slide as it is**
 - **Black type stays black while it is read.** Gloss's sheen and the lens's glow used to lift black ink to a mid-grey at every hold. Now the sheen steps back while the camera holds and the glow lights the room around the slide, not its face.
@@ -30,7 +28,6 @@ OOO's first public release, made for pitch.dog's everyday case: a wide slide (25
 - Stills and Save Cover Frame match the exported frame exactly; error messages read as sentences; the stage stops drawing while it can't be seen.
 
 **Made for the reel**
-
 - **Composed for the canvas.** Framings are solved against their real outline at any angle and placed in the part of a Reel, Short or TikTok that the profile and caption leave clear. The opening turns a wide slide towards you in a tall frame, so it stands larger and with depth.
 - **A floor.** None, Soft (new default) or Mirror: the empty half of a tall frame holds the slide's reflection.
 - **An opening title.** Optional words above the slide, in four faces, that rise in as it lands and hold while they are read, clear as the camera goes in and come back for a Pull Back.
