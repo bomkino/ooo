@@ -36,6 +36,9 @@ import StageKit
 //                                           any jump (--strict: exit 2 on a problem)
 //   ooo-lab loopcheck [--ending leave]      the step from the last frame back to the
 //                                           first against the steps either side of it
+//   ooo-lab bench                           export and preview timings (p50, p95, p99), and the machine
+//   ooo-lab colorcheck                      each landing as drawn against the same frame decoded
+//                                           from the video: ΔE as written and as macOS shows it
 //
 // Every command takes --project <file.ooo> (default: the sample), or
 // --slide <file> (a PDF or picture, read and directed as the app would on a
@@ -578,6 +581,20 @@ case "motioncheck":
     print(check.summary)
     if args.contains("--strict"), !check.problems.isEmpty { exit(2) }
 
+case "bench":
+    do {
+        try bench(loadScene())
+    } catch {
+        fail("bench failed: \(error)")
+    }
+
+case "colorcheck":
+    do {
+        try colorcheck(loadScene())
+    } catch {
+        fail("colorcheck failed: \(error)")
+    }
+
 case "loopcheck":
     // A platform plays a reel on repeat: the step from the last frame back to
     // the first should be no bigger than the steps between neighbouring frames.
@@ -649,7 +666,7 @@ default:
     print("""
     ooo-lab — headless renders and checks for OOO
       shaders | still | sheet | render | analyze | plan | path | landings | stills | openings | titles
-      backdrops | arrivals | blurcheck | inkcheck | motioncheck | loopcheck | fixture
+      backdrops | arrivals | blurcheck | inkcheck | motioncheck | loopcheck | bench | colorcheck | fixture
       --project file.ooo | --slide file.pdf|png [--replace file]  --format reel|portrait|square|landscape  --floor none|soft|mirror  --out path
     """)
 }

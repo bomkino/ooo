@@ -1,7 +1,9 @@
 #!/bin/bash
 # Proves in-app updates work before a release, on this Mac or in CI, without
-# pitch.dog's real key: a throwaway key signs a local feed, and test copies of
-# the app (another name and bundle identifier) trust only that key.
+# pitch.dog's real key: the release scripts (make-release.sh, then
+# sign-release.sh --dir) pack and sign a local feed with a throwaway key, and
+# test copies of the app (another name and bundle identifier) trust only that
+# key.
 #
 #   bash scripts/test-update.sh
 #
@@ -48,8 +50,10 @@ VERSION_OVERRIDE=9.0.0 bash scripts/build-app.sh release >/dev/null
 mkdir -p "$T/install" "$T/feed"
 ditto "dist/$NAME.app" "$T/old.app"
 VERSION_OVERRIDE=9.0.1 bash scripts/build-app.sh release >/dev/null
+# Packed and signed by the release scripts themselves, with the throwaway key.
+bash scripts/make-release.sh "$T/feed" >/dev/null
 SPARKLE_BIN="$SPARKLE_BIN" SPARKLE_KEY="$T/key" DOWNLOAD_URL="http://127.0.0.1:$PORT/" \
-  bash scripts/make-release.sh "$T/feed"
+  bash scripts/sign-release.sh --dir "$T/feed"
 rm -rf "dist/$NAME.app"
 ZIP="$(cd "$T/feed" && ls *.zip)"
 

@@ -1,11 +1,15 @@
-# Publishes OOO's first release with in-app updates (v0.2.0) from CI, run by
-# hand from the Actions tab on main.
+# Publishes an OOO release from CI, run by hand from the Actions tab on main:
+# the disk image, the ZIP, checksums and notes, marked Latest.
 #
-# Nothing can update to a first release, so its appcast.xml only has to say
-# "this is the newest version" and needs no signature. Every later release
-# must carry an appcast signed with pitch.dog's private key, which never
-# leaves the release Mac, so this workflow refuses once a release exists:
-# make later releases on the Mac with scripts/make-release.sh (docs/UPDATES.md).
+# The update feed (appcast.xml) has to be signed with pitch.dog's private key,
+# which never leaves the release Mac and is never given to CI. So this release
+# carries the current feed over unchanged: installed copies, old and new, keep
+# reading "up to date" and download nothing. Then, on the release Mac,
+#
+#   bash scripts/sign-release.sh v<version>
+#
+# signs this release's ZIP and replaces the feed, and installed copies are
+# offered the new version (docs/UPDATES.md).
 name: release
 
 on:
@@ -26,67 +30,66 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Only the first release is made here
+      - name: Only a new, higher version is published
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           [ "$GITHUB_REF_NAME" = main ] || { echo "::error::Run this on main."; exit 1; }
-          if [ -n "$(gh release list -R "$GITHUB_REPOSITORY" --limit 1 --json tagName --jq '.[].tagName')" ]; then
-            echo "::error::A release exists already. Later releases need an appcast signed on the release Mac: see docs/UPDATES.md."
-            exit 1
+          VERSION="$(sed -n 's/^VERSION="\${VERSION_OVERRIDE:-\(.*\)}"$/\1/p' scripts/build-app.sh)"
+          [ -n "$VERSION" ] || { echo "::error::No version in scripts/build-app.sh"; exit 1; }
+          if gh release view "v$VERSION" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::v$VERSION is published already. Raise VERSION in scripts/build-app.sh."; exit 1
           fi
+          LATEST="$(gh release list -R "$GITHUB_REPOSITORY" --json tagName,isLatest --jq '.[] | select(.isLatest) | .tagName')"
+          build() { echo "$1" | awk -F. '{ printf "%d", $1 * 10000 + $2 * 100 + $3 }'; }
+          if [ -n "$LATEST" ] && [ "$(build "$VERSION")" -le "$(build "${LATEST#v}")" ]; then
+            echo "::error::$VERSION isn't newer than the Latest release, $LATEST."; exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "LATEST=$LATEST" >> "$GITHUB_ENV"
+          echo "Publishing $VERSION after ${LATEST:-nothing}"
       - name: Test
         run: swift test
       - name: Package the app
         run: bash scripts/build-app.sh release
-      - name: Test in-app updates
+      - name: Test in-app updates (packed and signed by the release scripts, with a throwaway key)
         timeout-minutes: 10
         run: bash scripts/test-update.sh
       - name: Pack the release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" dist/OOO.app/Contents/Info.plist)"
-          BUILD="$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" dist/OOO.app/Contents/Info.plist)"
+          [ "$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" dist/OOO.app/Contents/Info.plist)" = "$VERSION" ] \
+            || { echo "::error::OOO.app isn't $VERSION"; exit 1; }
           KEY="$(/usr/libexec/PlistBuddy -c "Print :SUPublicEDKey" dist/OOO.app/Contents/Info.plist)"
           [ "$KEY" = "P43E8I+FgVyAW3QkS4J9bnDRRhAnsS4y3dT2WDce1lQ=" ] || { echo "::error::OOO.app doesn't trust pitch.dog's update key"; exit 1; }
-          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          OUT=release; DMG="OOO-$VERSION-macOS-arm64.dmg"; ZIP="OOO-$VERSION-macOS-arm64.zip"
-          mkdir -p "$OUT" stage
-          ditto dist/OOO.app stage/OOO.app
-          ln -s /Applications stage/Applications
-          hdiutil create -quiet -volname OOO -srcfolder stage -ov -format UDZO -fs HFS+ "$OUT/$DMG"
-          ditto -c -k --sequesterRsrc --keepParent dist/OOO.app "$OUT/$ZIP"
-          # The feed for every copy of this version: it lists this version only,
-          # so the app reports it is up to date and downloads nothing.
-          cat > "$OUT/appcast.xml" <<XML
-          <?xml version="1.0" encoding="utf-8"?>
-          <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
-            <channel>
-              <title>OOO</title>
-              <link>https://github.com/$GITHUB_REPOSITORY/releases</link>
-              <item>
-                <title>$VERSION</title>
-                <pubDate>$(LC_ALL=C date -u "+%a, %d %b %Y %H:%M:%S +0000")</pubDate>
-                <sparkle:version>$BUILD</sparkle:version>
-                <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
-                <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-                <link>https://github.com/$GITHUB_REPOSITORY/releases/tag/v$VERSION</link>
-                <enclosure url="https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION/$ZIP" length="$(stat -f %z "$OUT/$ZIP")" type="application/octet-stream"/>
-              </item>
-            </channel>
-          </rss>
-          XML
-          xmllint --noout "$OUT/appcast.xml"
-          (cd "$OUT" && shasum -a 256 "$DMG" "$ZIP" > SHA256SUMS.txt)
+          bash scripts/make-release.sh release
+          # The feed, carried over from the Latest release unchanged, after
+          # checking it is safe to keep serving: it must name a version below
+          # this one, and the ZIP it names must still download.
+          if [ -n "$LATEST" ]; then
+            gh release download "$LATEST" -R "$GITHUB_REPOSITORY" -p appcast.xml -D release
+            xmllint --noout release/appcast.xml
+            FEED_BUILD="$(xmllint --xpath 'string(//*[local-name()="version"][1])' release/appcast.xml)"
+            [ -n "$FEED_BUILD" ] || FEED_BUILD="$(grep -o 'sparkle:version="[0-9]*"' release/appcast.xml | head -1 | cut -d'"' -f2)"
+            BUILD="$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" dist/OOO.app/Contents/Info.plist)"
+            [ -n "$FEED_BUILD" ] && [ "$FEED_BUILD" -lt "$BUILD" ] \
+              || { echo "::error::The carried feed names build '$FEED_BUILD', not one below $BUILD"; exit 1; }
+            URL="$(grep -o 'url="[^"]*"' release/appcast.xml | head -1 | cut -d'"' -f2)"
+            curl -fsSIL -o /dev/null "$URL" || { echo "::error::The carried feed's download ($URL) doesn't answer"; exit 1; }
+            echo "Carrying over $LATEST's feed: build $FEED_BUILD, $URL"
+          fi
           # The release notes, in the shape of Drift's, Galileo's and Backdrop's:
-          # what's new (this version's section of the changelog), how to install,
+          # the changelog section's opening line, what's new, how to install,
           # the files, what was checked, the source and the checksums.
           awk -v v="## $VERSION" 'index($0, v) == 1 { on = 1; next } /^## / { on = 0 } on' CHANGELOG.md > changes.md
           [ -s changes.md ] || { echo "::error::CHANGELOG.md has no section for $VERSION"; exit 1; }
+          LEAD="$(awk 'NF { print; exit }' changes.md)"
           {
-            echo "**OOO $VERSION: one slide, one camera, all the love. The first public release, and it updates itself.**"
+            echo "**$LEAD**"
             echo
             echo "### What's new"
-            cat changes.md
+            awk 'NF && !seen { seen = 1; next } seen' changes.md
             echo
             sed -e "s/@VERSION@/$VERSION/g" <<'NOTES'
           ### Install
@@ -94,37 +97,43 @@ jobs:
           1. Download `OOO-@VERSION@-macOS-arm64.dmg`, open it, and drag OOO onto **Applications**. If macOS offers to install it for you and then says "Could not install", click OK and drag it instead. (That route only works for apps notarized by Apple.) `OOO-@VERSION@-macOS-arm64.zip` is the same app, if you'd rather unzip it.
           2. The first time you open it, macOS stops it. Open **System Settings › Privacy & Security**, scroll down, and click **Open Anyway**. (Control-click › Open no longer works on current macOS.)
 
-          It needs an Apple silicon Mac with macOS 14 or later. OOO is free and open source, signed ad hoc and not notarized. From this version on, it updates itself.
+          It needs an Apple silicon Mac with macOS 14 or later. OOO is free and open source, signed ad hoc and not notarized. If you have OOO 0.2.0 or later, it offers this version itself (**OOO › Check for Updates…**).
 
           ### Files
 
           - `OOO-@VERSION@-macOS-arm64.dmg`: the app, to install by hand.
           - `OOO-@VERSION@-macOS-arm64.zip`: the same app; the in-app updater uses this one.
-          - `appcast.xml`: the update feed installed apps read. Keep it on the newest release.
+          - `appcast.xml`: the update feed installed copies read.
           - `SHA256SUMS.txt`: checksums.
 
           ### Checked
 
-          Built from this commit by `release.yml` on GitHub's macOS 26 runner (Apple silicon). The unit tests pass: the camera's maths, the director, documents and the renderer. In `scripts/test-update.sh`, a test copy updated itself from a signed local feed and relaunched on the new version, and an update with a single changed byte was refused.
+          Built from this commit by `release.yml` on GitHub's macOS 26 runner (Apple silicon). The unit tests pass: the camera's maths, the director, documents and the renderer. In `scripts/test-update.sh`, a test copy packed and signed by the release scripts updated itself from a local feed and relaunched on the new version, and an update with a single changed byte was refused.
           NOTES
             echo
             echo "Source: \`$GITHUB_SHA\` (main)."
             echo
             echo '```'
-            cat "$OUT/SHA256SUMS.txt"
+            cat release/SHA256SUMS.txt
             echo '```'
           } > notes.md
           cat notes.md
-          ls -l "$OUT"; cat "$OUT/appcast.xml" "$OUT/SHA256SUMS.txt"
+          ls -l release
       - name: Publish the release, marked Latest
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "v$VERSION" release/* --target "$GITHUB_SHA" --latest \
             --title "OOO $VERSION — Apple silicon Mac" --notes-file notes.md
-          # The feed every copy reads now points at this release.
+          # The feed every copy reads still names the version before this one,
+          # until scripts/sign-release.sh replaces it.
+          [ -n "$LATEST" ] || exit 0
           for _ in $(seq 12); do
-            curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/appcast.xml" | grep "<sparkle:shortVersionString>$VERSION<" && exit 0
+            FEED="$(curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/appcast.xml" || true)"
+            if echo "$FEED" | grep -Eq "shortVersionString(>|=\")${LATEST#v}[<\"]"; then
+              echo "The feed still offers ${LATEST#v}. Next, on the release Mac: bash scripts/sign-release.sh v$VERSION"
+              exit 0
+            fi
             sleep 5
           done
-          echo "::error::releases/latest/download/appcast.xml doesn't serve $VERSION"; exit 1
+          echo "::error::releases/latest/download/appcast.xml doesn't serve the carried feed"; exit 1

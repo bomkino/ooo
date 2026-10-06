@@ -8,7 +8,8 @@
 # the slide as supplied, how its moves fly (motioncheck), and a draft video.
 # Then the titles, every backdrop look, every arrival (Weave and Develop also
 # as draft videos), the wide tour moved onto a corrected slide (Replace
-# Slide), the stills Save Stills writes, export timings, and summary.txt with
+# Slide), the stills Save Stills writes, export timings, a bench (with the
+# machine it ran on), how colour survives the encoder, and summary.txt with
 # the numbers that matter. Fails when motioncheck finds a problem in any set.
 #
 #   bash scripts/ci-renders.sh [out-dir]
@@ -77,6 +78,10 @@ TMP="$(mktemp -d)"
   "$LAB" render --slide "$OUT/fixtures/wide.pdf" --quality good --out "$TMP/wide-pdf.mp4" | tail -1 | sed "s|^|wide-pdf: |"
 } | tee "$OUT/timings.txt"
 
+echo "== Bench and colour, on the wide picture"
+"$LAB" bench --slide "$OUT/fixtures/wide-2576x1080.png" | tee "$OUT/bench.txt"
+"$LAB" colorcheck --slide "$OUT/fixtures/wide-2576x1080.png" | tee "$OUT/color.txt"
+
 echo "== Adaptive motion blur against full samples"
 "$LAB" blurcheck --quality good > "$OUT/sample/blur-good.txt"
 "$LAB" blurcheck --slide "$OUT/fixtures/wide-2576x1080.png" --quality good > "$OUT/wide-png/blur-good.txt"
@@ -105,6 +110,8 @@ echo "== Summary"
   echo "export timings (Good):"; sed 's/^/  /' "$OUT/timings.txt"
   echo "adaptive blur:"; sed 's/^/  /' "$OUT/blur.txt"
   echo "loop:"; tail -1 "$OUT/loop.txt" | sed 's/^/  /'
+  echo "bench:"; grep -v '^bench:' "$OUT/bench.txt" | sed 's/^/  /'
+  echo "colour:"; grep -v '^colorcheck:' "$OUT/color.txt" | sed 's/^/  /'
 } | tee "$OUT/summary.txt"
 
 # No planned move may fly or turn past the limits, cut an emphasis short, or jump.
