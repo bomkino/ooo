@@ -20,8 +20,12 @@ public struct SlidePose: Sendable, Equatable {
     public var exposure: Float = 1
     /// Extra brightness, 0 = none.
     public var glow: Float = 0
+    /// 0…1, how much of the print has yet to come up: 1 is a blank sheet.
+    public var develop: Float = 0
     /// Bends like paper (curl at full strength) rather than card stock.
     public var paper = false
+    /// How far a Weave has come, 0…1, while the slide is still threads.
+    public var weave: Float?
 
     public init() {}
 
@@ -53,6 +57,9 @@ public enum Arrival {
         case .glide:
             p.height *= 1 + 0.12 * k
             p.pitch -= radians(2) * k
+        case .weave:
+            p.height *= 1 + 0.1 * k
+            p.yaw += radians(3) * k
         case .none:
             break
         }
@@ -69,6 +76,7 @@ public enum Arrival {
         case .turn: return d * 0.6
         case .glide: return d * 0.58
         case .develop: return d * 0.7
+        case .weave: return d * Double(weaveLast)
         case .none: return nil
         }
     }
@@ -122,11 +130,14 @@ public enum Arrival {
             p.opacity = smoothstep(a / 0.12)
 
         case .develop:
-            let resolve = Curves.approach(a, k: 4.5)
-            p.blur = 48 * (1 - resolve)
-            p.exposure = lerp(0.12, 1, Curves.approach(a, k: 3.8))
-            p.glow = 0.18 * Curves.bump(clamp01((a - 0.45) / 0.55))
-            p.opacity = smoothstep(a / 0.25)
+            // A print in the developer: the blank sheet settles where it
+            // lies, then the image comes up, the darks first and the palest
+            // tones last.
+            let settle = Curves.approach(a, k: 5)
+            p.develop = 1 - Curves.approach(max(a - 0.1, 0) / 0.9, k: 3.4)
+            p.blur = 10 * (1 - settle)
+            p.offset = Vec3(0, 0, -0.15 * s) * (1 - settle)
+            p.opacity = smoothstep(a / 0.15)
 
         case .turn:
             let turn = Curves.spring(a, bounce: 0.12, wobbles: 1.2)
@@ -156,10 +167,52 @@ public enum Arrival {
             p.curl = 0.18 * (1 - turn)
             p.opacity = smoothstep(a / 0.12)
 
+        case .weave:
+            // The slide itself waits, flat and in place, until its threads
+            // have come together; it only casts their shadow meanwhile.
+            p.weave = a
+
         case .none:
             break
         }
         return p
+    }
+
+    /// One thread of a Weave, relative to its place in the slide.
+    public struct Thread: Sendable, Equatable {
+        /// World units, in the slide's own frame.
+        public var offset: Vec3 = .zero
+        /// Radians, about the thread's own middle.
+        public var roll: Float = 0
+        /// 0…1: a loose thread is narrower and rounded, its core catching the light.
+        public var loose: Float = 0
+        public var opacity: Float = 1
+    }
+
+    /// How many threads a Weave knits the slide from.
+    public static let threads = 24
+    /// When the last thread is in place, as a fraction of the arrival.
+    static let weaveLast: Float = 0.96
+
+    /// Thread `i` (0 at the top) of a Weave `progress` (0…1) of the way
+    /// through. Threads shoot across from alternate sides, top to bottom like
+    /// weft on a loom, each a little early or late by `seed` (the same seed,
+    /// the same weave), and pull tight as they land.
+    public static func thread(_ i: Int, of n: Int = threads, at progress: Float, seed: UInt32, slideAspect A: Float,
+                              intensity: Float = 0.5) -> Thread {
+        let s = lerp(0.55, 1.35, clamp01(intensity))
+        let span: Float = 0.42
+        let order = Float(i) / Float(max(n - 1, 1))
+        let delay = (weaveLast - span - 0.04) * order + 0.04 * (hashSigned(i, seed &+ 0x5EA7) * 0.5 + 0.5)
+        let u = clamp01((progress - delay) / span)
+        let move = Curves.approach(u, k: 5.5)
+        let side: Float = i % 2 == 0 ? -1 : 1
+        var t = Thread()
+        t.offset = Vec3(side * (A * 1.1 + 0.3) * s, 0, 0.1 * s) * (1 - move)
+        t.roll = side * radians(1.5 * s) * (1 - move)
+        t.loose = 1 - Curves.approach(max(u - 0.12, 0) / 0.88, k: 4)
+        t.opacity = smoothstep(u / 0.1)
+        return t
     }
 
     /// The point `f` (0…1) of the way along a cubic Bézier by distance, not

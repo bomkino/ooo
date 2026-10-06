@@ -194,6 +194,7 @@ public struct SlideScene: @unchecked Sendable {
         slide.opacity = sp.opacity
         slide.blur = sp.blur * Float(outputWidth) / 1080
         slide.glow = sp.glow
+        slide.develop = sp.develop
         let light = sp.exposure * shown
         slide.color = SIMD4(light, light, light, 1)
         slide.corner = 0.028
@@ -235,7 +236,34 @@ public struct SlideScene: @unchecked Sendable {
                 break
             }
         }
-        cards.append(slide)
+        if let weave = sp.weave {
+            // A Weave: the slide's threads are drawn instead of it, and it only
+            // casts their shadow, deepening as they come together. It goes
+            // first, so its shadow falls under them.
+            let n = Arrival.threads
+            let turn = Matrix.rotationEuler(slide.rotation)
+            for i in 0..<n {
+                let th = Arrival.thread(i, of: n, at: weave, seed: project.seed, slideAspect: A, intensity: project.arrive.intensity)
+                guard th.opacity > 0.001 else { continue }
+                var thread = slide
+                thread.occurrence = 10 + i
+                thread.crop = SIMD4(0, Float(i) / Float(n), 1, Float(i + 1) / Float(n))
+                thread.size = SIMD2(A, 1 / Float(n))
+                let local = SIMD3<Float>(0, 0.5 - (Float(i) + 0.5) / Float(n), 0) + th.offset
+                let moved = turn * SIMD4(local, 0)
+                thread.position = slide.position + SIMD3(moved.x, moved.y, moved.z)
+                thread.rotation = slide.rotation + SIMD3(0, 0, th.roll)
+                thread.opacity = slide.opacity * th.opacity
+                thread.band = SIMD4(0.6, th.loose, 0.5, 0.05)
+                thread.shadow = 0
+                thread.edgeScale = 0
+                cards.append(thread)
+            }
+            slide.reveal = -0.01
+            slide.layer = -1
+            slide.shadow = shown * smoothstep((weave - 0.15) / 0.8)
+        }
+        cards.insert(slide, at: 0)
 
         let hold = restHold(at: t, pose: sp)
         if hold > 0.001, let patch {

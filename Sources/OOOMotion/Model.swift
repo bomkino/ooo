@@ -203,12 +203,14 @@ public enum ArriveKind: String, Codable, CaseIterable, Sendable, Identifiable {
     case unfold
     /// Falls onto the table and settles, its shadow gathering under it.
     case drop
-    /// Comes into focus where it lies, like a photograph developing.
+    /// Comes up where it lies like a print in the developer, the darks first.
     case develop
     /// Turns over from its back to face you.
     case turn
     /// Glides in along a long curve and lands.
     case glide
+    /// Knits itself together from threads that shoot in from both sides.
+    case weave
     /// Already there.
     case none
 
@@ -221,6 +223,7 @@ public enum ArriveKind: String, Codable, CaseIterable, Sendable, Identifiable {
         case .develop: return "Develop"
         case .turn: return "Turn"
         case .glide: return "Glide"
+        case .weave: return "Weave"
         case .none: return "None"
         }
     }
@@ -229,9 +232,10 @@ public enum ArriveKind: String, Codable, CaseIterable, Sendable, Identifiable {
         case .rise: return "Rises out of the dark, straightening as it comes into focus."
         case .unfold: return "Unrolls like a print and flattens with a little give."
         case .drop: return "Falls onto the table; its shadow gathers as it lands."
-        case .develop: return "Comes into focus where it lies, like a photograph developing."
+        case .develop: return "Comes up where it lies like a print in the developer, the darks first."
         case .turn: return "Turns over from its back to face you."
         case .glide: return "Glides in on a long curve and lands."
+        case .weave: return "Knits itself together, thread by thread, from both sides."
         case .none: return "Already there when the video starts."
         }
     }
@@ -243,6 +247,7 @@ public enum ArriveKind: String, Codable, CaseIterable, Sendable, Identifiable {
         case .develop: return 2.4
         case .turn: return 1.9
         case .glide: return 1.9
+        case .weave: return 2.6
         case .none: return 0
         }
     }

@@ -92,6 +92,9 @@ public struct CardPose: Sendable {
     /// How much of the surface's light (Print's tooth, Gloss's sheen, Foil,
     /// Satin) shows, 0…1. At 0 the card shows its media exactly as it is.
     public var surfaceAmount: Float = 1
+    /// 0…1, how much of the card's print has yet to come up, like a print in
+    /// the developer: the darks come first, the palest tones last. 0 = all there.
+    public var develop: Float = 0
     /// Whether the card shows in a mirror floor. A detail laid exactly over
     /// its card is already reflected with it.
     public var reflects = true

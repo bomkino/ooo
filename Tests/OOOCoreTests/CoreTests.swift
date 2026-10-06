@@ -157,4 +157,26 @@ final class CoreTests: XCTestCase {
         cb.waitUntilCompleted()
         XCTAssertEqual(full, 10)
     }
+
+    /// A Weave's threads come from the project's seed: every export of a
+    /// frame is the same, and another seed weaves another way.
+    func testAWeaveIsTheSameEveryTime() throws {
+        guard MTLCreateSystemDefaultDevice() != nil else { throw XCTSkip("No GPU") }
+        var project = OOOProject.sample
+        project.arrive = Arrive(kind: .weave)
+        let scene = try SlideLoader.scene(for: project, media: nil)
+        let stage = try SlideStage()
+        let t = project.arrive.duration * 0.45
+        let a = try stage.still(scene, at: t, width: 270, height: 480)
+        let b = try stage.still(scene, at: t, width: 270, height: 480)
+        XCTAssertEqual(a.dataProvider?.data as Data?, b.dataProvider?.data as Data?)
+        let threads = scene.stageFrame(at: t, canvasAspect: project.canvasAspect, outputWidth: 270, patch: nil).cards
+        XCTAssertGreaterThan(threads.count, 2, "mid-weave, the slide is threads")
+        XCTAssertEqual(scene.stageFrame(at: project.arrive.duration, canvasAspect: project.canvasAspect, outputWidth: 270, patch: nil).cards.count, 1,
+                       "once woven, it is one slide again")
+        project.seed = 7
+        let other = try SlideLoader.scene(for: project, media: nil)
+        XCTAssertNotEqual(other.stageFrame(at: t, canvasAspect: project.canvasAspect, outputWidth: 270, patch: nil).cards.map(\.position),
+                          threads.map(\.position))
+    }
 }

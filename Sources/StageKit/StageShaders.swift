@@ -32,7 +32,7 @@ struct CardU {
     float4 window;      // the region of the whole media this texture holds: u0, v0, u1, v1
     float4 spot;        // spotlight region in the whole card's uv: u0, v0, u1, v1
     float4 spotP;       // spotlight dim (+ outside, − inside), feather, own shadow ground (1), its z
-    float4 soft;        // x: width (world) over which the card's edges fade out; 0 = crisp
+    float4 soft;        // x: width (world) over which the card's edges fade out; 0 = crisp, y: surface amount, z: develop
 };
 
 // 1 inside a card's spotlight region, 0 outside, with a soft edge.
@@ -313,6 +313,13 @@ fragment float4 card_fragment(CardVOut in [[stage_in]], bool facing [[front_faci
     int surface = int(c.fx.w + 0.5);
     float3 rgb = m.a > 1e-5 ? m.rgb / m.a : float3(0.0);
     float alpha = m.a;
+    if (front && c.soft.z > 0.0) {
+        // A print in the developer: blank paper, then the darks come up
+        // first and the palest tones last.
+        float density = 1.0 - sqrt(clamp(dot(rgb, float3(0.2126, 0.7152, 0.0722)), 0.0, 1.0));
+        float th = c.soft.z * 1.2 - 0.2;
+        rgb = mix(float3(0.86, 0.84, 0.80), rgb, smoothstep(th, th + 0.2, density));
+    }
 
     float3 N = normalize(in.normal);
     float3 V = normalize(f.eye.xyz - in.worldPos);
@@ -384,8 +391,10 @@ fragment float4 card_fragment(CardVOut in [[stage_in]], bool facing [[front_faci
             rgb += keep * (0.09 * band + 0.75 * float3(1.0, 0.97, 0.94) * charlie * vis * NL);
         }
         // While a slide is read, its surface steps back and the media shows
-        // as it is: a sheen added over black type would turn it grey.
-        rgb = mix(unlit, rgb, c.soft.y);
+        // as it is: a sheen added over black type would turn it grey. What is
+        // left of it stays off the ink, where any light added reads as grey.
+        float ink = 1.0 - smoothstep(0.03, 0.4, dot(unlit, float3(0.2126, 0.7152, 0.0722)));
+        rgb = mix(unlit, rgb, c.soft.y * mix(1.0, c.soft.y, ink));
         // Edge catch light: a hairline along the rim facing the light.
         float edge = (1.0 - smoothstep(0.0, pxWorld * 2.2, abs(d + pxWorld * 1.2)));
         float facing = clamp(dot(normalize(float3(local, 0.0)), float3(L.xy, 0.0)) * 0.5 + 0.5, 0.0, 1.0);

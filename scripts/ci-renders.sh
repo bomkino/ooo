@@ -6,8 +6,9 @@
 # plan, a contact sheet, a still at the opening and at every landing, the
 # opening at five angles and three floors, how dark its type lands against
 # the slide as supplied, how its moves fly (motioncheck), and a draft video.
-# Then export timings, and summary.txt with the numbers that matter. Fails
-# when motioncheck finds a problem in any set.
+# Then the titles, every backdrop look, every arrival (Weave and Develop also
+# as draft videos), export timings, and summary.txt with the numbers that
+# matter. Fails when motioncheck finds a problem in any set.
 #
 #   bash scripts/ci-renders.sh [out-dir]
 set -eo pipefail
@@ -43,6 +44,11 @@ mkdir -p "$OUT/titles"
 "$LAB" titles --slide "$OUT/fixtures/wide-2576x1080.png" --title "How we grew 3.1× in nine months" --kicker "pitch.dog · Series A" --out "$OUT/titles/wide.png"
 "$LAB" titles --slide "$OUT/fixtures/standard-1920x1080.png" --title "A \$4.2B market nobody designs for." --kicker "pitch.dog" --out "$OUT/titles/standard.png"
 "$LAB" titles --slide "$OUT/fixtures/standard-1920x1080.png" --title "A \$4.2B market nobody designs for." --kicker "pitch.dog · Seed round" --kicker-as-typed --out "$OUT/titles/standard-as-typed.png"
+mkdir -p "$OUT/looks"
+"$LAB" backdrops --slide "$OUT/fixtures/wide-2576x1080.png" --out "$OUT/looks/backdrops.png"
+"$LAB" arrivals --slide "$OUT/fixtures/wide-2576x1080.png" --out "$OUT/looks/arrivals.png"
+"$LAB" render --slide "$OUT/fixtures/wide-2576x1080.png" --arrive weave --quality draft --scale 0.5 --out "$OUT/looks/weave-draft.mp4"
+"$LAB" render --slide "$OUT/fixtures/wide-2576x1080.png" --arrive develop --quality draft --scale 0.5 --out "$OUT/looks/develop-draft.mp4"
 render_set wide-png --slide "$OUT/fixtures/wide-2576x1080.png"
 render_set standard-png --slide "$OUT/fixtures/standard-1920x1080.png"
 render_set wide-pdf --slide "$OUT/fixtures/wide.pdf"

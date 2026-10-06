@@ -275,6 +275,7 @@ extension ArriveKind {
         case .develop: return "camera.aperture"
         case .turn: return "arrow.triangle.2.circlepath"
         case .glide: return "wind"
+        case .weave: return "line.3.horizontal"
         case .none: return "circle.slash"
         }
     }

@@ -191,19 +191,20 @@ public extension Palette {
     /// on the slide's colours and stays as dark or as light as it was, so the
     /// slide still stands out. A grey slide gives a grey room.
     func atLightness(of room: Palette, id: String = "from-slide", name: String = "From Slide") -> Palette {
-        let target = room.sorted
-        let hues = colors.map(\.oklab).sorted { $0.y * $0.y + $0.z * $0.z > $1.y * $1.y + $1.z * $1.z }
-        guard let lead = hues.first, !target.isEmpty else { return room }
         func chroma(_ c: SIMD3<Float>) -> Float { (c.y * c.y + c.z * c.z).squareRoot() }
+        let target = room.sorted
+        let hues: [SIMD3<Float>] = colors.map(\.oklab).sorted { chroma($0) > chroma($1) }
+        guard let lead = hues.first, !target.isEmpty else { return room }
         let second = hues.dropFirst().first { chroma($0) > 0.04 }
-        let out = target.enumerated().map { i, c -> RGB in
-            let L = c.lightness
-            let h = i == target.count / 2 ? second ?? lead : lead
-            let k = chroma(h)
-            let limit = 0.02 + 0.1 * max(0, 1 - abs(L - 0.55) / 0.55)
-            let s = k > 1e-4 ? min(k, limit) / k : 0
-            let lin = ColorMath.oklabToLinear(SIMD3(L, h.y * s, h.z * s))
-            return RGB(linear: simd_clamp(lin, SIMD3(repeating: 0), SIMD3(repeating: 1)))
+        let out = target.enumerated().map { (i: Int, c: RGB) -> RGB in
+            let L: Float = c.lightness
+            let h: SIMD3<Float> = i == target.count / 2 ? second ?? lead : lead
+            let k: Float = chroma(h)
+            let near: Float = max(0, 1 - abs(L - 0.55) / 0.55)
+            let limit: Float = 0.02 + 0.1 * near
+            let s: Float = k > 1e-4 ? min(k, limit) / k : 0
+            let lin = ColorMath.oklabToLinear(SIMD3<Float>(L, h.y * s, h.z * s))
+            return RGB(linear: simd_clamp(lin, SIMD3<Float>(repeating: 0), SIMD3<Float>(repeating: 1)))
         }
         return Palette(id: id, name: name, colors: out)
     }

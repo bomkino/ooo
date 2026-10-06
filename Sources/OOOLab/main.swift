@@ -21,6 +21,8 @@ import StageKit
 //   ooo-lab openings --out grid.png         the opening at five turns, 28° to 52° (across), and
 //                                           three floors (down: none, soft, mirror)
 //   ooo-lab titles --out grid.png           the opening title in four faces, and in time
+//   ooo-lab backdrops --out grid.png        every look behind the opening, as itself and From Slide
+//   ooo-lab arrivals --out grid.png         each arrival at five moments of its entrance
 //   ooo-lab blurcheck [--quality good]      adaptive motion blur against full samples:
 //                                           samples taken, GPU time, PSNR
 //   ooo-lab render --full-blur ...          every frame at the quality's full samples
@@ -34,7 +36,7 @@ import StageKit
 // Every command takes --project <file.ooo> (default: the sample), or
 // --slide <file> (a PDF or picture, read and directed as the app would on a
 // drop), --format reel|portrait|square|landscape, --floor none|soft|mirror,
-// --ending hold|pullBack|fade|leave and --title "words" [--kicker "line above"
+// --ending hold|pullBack|fade|leave, --arrive rise|unfold|drop|develop|turn|glide|weave|none and --title "words" [--kicker "line above"
 // [--kicker-as-typed]] [--face modern|grotesk|editorial|poster].
 
 let args = CommandLine.arguments
@@ -62,6 +64,10 @@ if let id = value("--format") {
     let (A, C) = (project.slideAspect, project.canvasAspect)
     project.format = f
     project.adaptOverview(fromSlideAspect: A, canvasAspect: C)
+}
+if let a = value("--arrive") {
+    guard let kind = ArriveKind(rawValue: a) else { fail("unknown arrival \(a)") }
+    project.arrive = Arrive(kind: kind)
 }
 if let text = value("--title") {
     var t = OpeningTitle(text: text, kicker: value("--kicker") ?? "", kickerCaps: !args.contains("--kicker-as-typed"))
@@ -93,8 +99,9 @@ if let path = value("--slide") {
         fail("could not copy \(path): \(error)")
     }
     ref.file = file
-    let (format, floor, title, ending) = (project.format, project.floor, project.title, project.ending)
+    let (format, floor, title, ending, arrive) = (project.format, project.floor, project.title, project.ending, project.arrive)
     project = OOOProject(slide: ref, format: format)
+    project.arrive = arrive
     project.floor = floor
     project.title = title
     project.ending = ending
@@ -262,6 +269,73 @@ case "openings":
         print("openings \(out.path): yaw \(yaws) across, floors \(floors.map(\.rawValue)) down")
     } catch {
         fail("openings failed: \(error)")
+    }
+
+case "backdrops":
+    // Every look behind the opening as it comes to rest, in pairs: its own
+    // palette, then From Slide (the room in the slide's colours).
+    let base = loadScene()
+    let out = URL(fileURLWithPath: value("--out") ?? "backdrops.png")
+    let looks = BackdropCatalog.styles
+    let colours = (try? SlideSource(ref: project.slide, media: media))?.renderWhole(side: 512)
+        .flatMap { Palette.extract(from: [$0], id: "slide", name: "Slide") }
+    let pairs = 3
+    let cw = project.format.width / 4, ch = project.format.height / 4
+    let rows = (looks.count + pairs - 1) / pairs
+    do {
+        let stage = try SlideStage()
+        guard let ctx = CGContext(data: nil, width: cw * pairs * 2, height: ch * rows, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { fail("no context") }
+        for (i, look) in looks.enumerated() {
+            for side in 0..<2 {
+                var p = project
+                p.backdrop = look.defaults
+                if side == 1, let colours { p.backdrop.palette = colours.atLightness(of: look.defaults.palette) }
+                p.shots = []
+                p.length = p.arrive.end + 3
+                let scene = SlideScene(project: p, base: base.base, details: base.details)
+                let img = try stage.still(scene, at: p.arrive.end + 1.2, width: cw, height: ch, samples: 4)
+                let (r, c) = (i / pairs, (i % pairs) * 2 + side)
+                ctx.draw(img, in: CGRect(x: c * cw, y: (rows - 1 - r) * ch, width: cw, height: ch))
+            }
+        }
+        try ImageOutput.writePNG(ctx.makeImage()!, to: out)
+        print("backdrops \(out.path): \(looks.map(\.name)) in reading order, each as itself then From Slide")
+    } catch {
+        fail("backdrops failed: \(error)")
+    }
+
+case "arrivals":
+    // Each arrival (down) at five moments of its entrance (across), the last
+    // just after it has come to rest.
+    let base = loadScene()
+    let out = URL(fileURLWithPath: value("--out") ?? "arrivals.png")
+    let kinds = ArriveKind.allCases.filter { $0 != .none }
+    let moments = [0.15, 0.35, 0.55, 0.75, 1.0]
+    let cw = project.format.width / 4, ch = project.format.height / 4
+    do {
+        let stage = try SlideStage()
+        guard let ctx = CGContext(data: nil, width: cw * moments.count, height: ch * kinds.count, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { fail("no context") }
+        for (r, kind) in kinds.enumerated() {
+            var p = project
+            p.arrive = Arrive(kind: kind)
+            p.title = nil
+            p.shots = []
+            p.length = p.arrive.end + 3
+            let scene = SlideScene(project: p, base: base.base, details: base.details)
+            for (c, m) in moments.enumerated() {
+                let t = m < 1 ? p.arrive.duration * m : p.arrive.end + 0.3
+                let img = try stage.still(scene, at: t, width: cw, height: ch, samples: 6)
+                ctx.draw(img, in: CGRect(x: c * cw, y: (kinds.count - 1 - r) * ch, width: cw, height: ch))
+            }
+        }
+        try ImageOutput.writePNG(ctx.makeImage()!, to: out)
+        print("arrivals \(out.path): \(kinds.map(\.title)) down, at \(moments.dropLast().map { "\(Int($0 * 100))%" }) and at rest across")
+    } catch {
+        fail("arrivals failed: \(error)")
     }
 
 case "titles":
