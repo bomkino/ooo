@@ -405,6 +405,7 @@ case "inkcheck":
     do {
         let stage = try SlideStage()
         var worst = 0, worstName = ""
+        var worstAt = (t: 0.0, pixels: [Int](), supplied: 0)
         for (i, beat) in scene.choreography.beats.enumerated() where !beat.isOverview {
             let t = min(beat.land + min(0.7, beat.hold * 0.45), scene.duration - 0.02)
             let seen = lumas(try stage.still(scene, at: t, width: w, height: h, samples: 1))
@@ -413,12 +414,13 @@ case "inkcheck":
             for y in y0..<y1 { for x in x0..<x1 { box.append(supplied[y * w + x]) } }
             box.sort()
             let darkest = Int(box.isEmpty ? 255 : box[box.count / 100])
-            var inkSeen: [UInt8] = [], inkSupplied: [UInt8] = []
+            var inkSeen: [UInt8] = [], inkSupplied: [UInt8] = [], pixels: [Int] = []
             if darkest < 90 {
                 for y in y0..<y1 {
                     for x in x0..<x1 where Int(supplied[y * w + x]) <= darkest + 8 {
                         inkSupplied.append(supplied[y * w + x])
                         inkSeen.append(seen[y * w + x])
+                        pixels.append(y * w + x)
                     }
                 }
             }
@@ -428,9 +430,30 @@ case "inkcheck":
                 continue
             }
             let (a, b) = (median(inkSeen), median(inkSupplied))
-            if a - b > worst { worst = a - b; worstName = name }
+            if a - b > worst {
+                worst = a - b
+                worstName = name
+                worstAt = (t, pixels, b)
+            }
             print(String(format: "%@ t %.2f  ink %3d as seen, %3d as supplied (%+d) over %d px  surface %.2f", name, t, a, b, a - b,
                          inkSeen.count, scene.surfaceAmount(at: t)))
+        }
+        if worst > 0 {
+            // Where the lift comes from: the worst landing again, one part of the finish left out at a time.
+            let parts: [(String, (inout OOOProject) -> Void)] = [
+                ("without bloom", { $0.look.finish.bloom = 0 }),
+                ("with the Original surface", { $0.look.surface = .original }),
+                ("without grain or vignette", { $0.look.finish.grain = 0; $0.look.finish.vignette = 0 }),
+                ("in a plain room", { $0.backdrop = plain.backdrop; $0.floor = FloorKind.none }),
+            ]
+            print("\(worstName), one part left out at a time:")
+            for (label, leaveOut) in parts {
+                var p = project
+                leaveOut(&p)
+                let v = lumas(try stage.still(try SlideLoader.scene(for: p, media: media), at: worstAt.t, width: w, height: h, samples: 1))
+                let m = median(worstAt.pixels.map { v[$0] })
+                print(String(format: "  %@: ink %3d (%+d)", label, m, m - worstAt.supplied))
+            }
         }
         print("inkcheck: ink lands at most \(worst) above the slide as supplied" + (worstName.isEmpty ? "" : " (\(worstName))"))
     } catch {

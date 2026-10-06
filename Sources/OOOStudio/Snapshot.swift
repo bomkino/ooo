@@ -1,6 +1,7 @@
 import AppKit
 import OOOCore
 import OOOMotion
+import ScreenCaptureKit
 import SwiftUI
 
 // Adapted from pitch.dog Studio's StudioSnapshot (StudioKit/Snapshot.swift in
@@ -16,9 +17,11 @@ import SwiftUI
 ///
 /// It opens a new document window (on the sample slide unless `--slide` gives
 /// one), waits until the slide is drawn and its tour planned, sets the window
-/// up as asked, draws it into a PNG and quits. The live Metal stage doesn't
-/// appear in a view's cached drawing, so in its place the window shows the
-/// exact frame the export would write at that moment.
+/// up as asked, captures it into a PNG and quits. It takes the window as the
+/// screen shows it where this Mac allows screen capture, and otherwise draws
+/// its views, which leaves out glass and the inspector's column. Neither sees
+/// the live Metal stage reliably, so in its place the window shows the exact
+/// frame the export would write at that moment.
 @MainActor
 public enum OOOSnapshot {
     public static var isRequested: Bool { CommandLine.arguments.contains("--snapshot") }
@@ -114,27 +117,77 @@ public enum OOOSnapshot {
         }
     }
 
+    /// The window at the size asked for, as far as the screen allows, with
+    /// the Dock and menu bar out of the way.
     static func sizeWindows() {
+        NSApp.activate(ignoringOtherApps: true)
+        if NSApp.isActive { NSApp.presentationOptions = [.autoHideDock, .autoHideMenuBar] }
         for w in NSApp.windows where w.isVisible && w.frame.width > 400 && !w.isSheet {
-            w.setContentSize(size)
-            w.setFrameOrigin(NSPoint(x: 20, y: 20))
+            let visible = (w.screen ?? NSScreen.main)?.visibleFrame ?? NSRect(origin: .zero, size: size)
+            let width = min(size.width, visible.width), height = min(size.height, visible.height)
+            w.setFrame(NSRect(x: visible.minX, y: visible.maxY - height, width: width, height: height), display: true)
+        }
+    }
+
+    /// The window and its sheet as the screen shows them, or nil where this
+    /// Mac doesn't allow screen capture.
+    private static func screenImage(of window: NSWindow) async -> CGImage? {
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+            let ids = Set([window.windowNumber] + (window.attachedSheet.map { [$0.windowNumber] } ?? []))
+            let mine = content.windows.filter { ids.contains(Int($0.windowID)) }
+            guard let main = mine.first(where: { Int($0.windowID) == window.windowNumber }),
+                  let display = content.displays.first(where: { $0.frame.intersects(main.frame) }) ?? content.displays.first
+            else { return nil }
+            let config = SCStreamConfiguration()
+            config.sourceRect = main.frame.offsetBy(dx: -display.frame.minX, dy: -display.frame.minY)
+            config.width = Int(main.frame.width * window.backingScaleFactor)
+            config.height = Int(main.frame.height * window.backingScaleFactor)
+            config.showsCursor = false
+            return try await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(display: display, including: mine),
+                                                              configuration: config)
+        } catch {
+            print("snapshot: no screen capture here (\(error.localizedDescription)), so the window's views are drawn instead")
+            return nil
         }
     }
 
     private static func capture(_ session: OOOSession) {
-        guard let path = arg("--snapshot") else { exit(1) }
-        let candidates = NSApp.windows.filter { $0.isVisible && !$0.isSheet && $0.contentView != nil && $0.frame.width > 400 }
-        guard let window = candidates.first else {
+        guard let window = NSApp.windows.first(where: { $0.isVisible && !$0.isSheet && $0.contentView != nil && $0.frame.width > 400 })
+        else {
             print("snapshot: no window")
             exit(1)
         }
+        // A Mac that would ask about screen capture waits for an answer no
+        // one gives: after a few seconds the views are drawn instead.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+            guard !written else { return }
+            print("snapshot: screen capture didn't answer, so the window's views are drawn instead")
+            write(drawn(window), session: session, via: "views")
+        }
+        Task { @MainActor in
+            let image = await screenImage(of: window)
+            guard !written else { return }
+            if let image {
+                write(NSBitmapImageRep(cgImage: image), session: session, via: "screen")
+            } else {
+                write(drawn(window), session: session, via: "views")
+            }
+        }
+    }
+
+    /// Set once the PNG is written, so a late capture doesn't write it again.
+    static var written = false
+
+    /// The window drawn from its views, its sheet over it.
+    private static func drawn(_ window: NSWindow) -> NSBitmapImageRep? {
         func render(_ w: NSWindow) -> NSBitmapImageRep? {
             guard let view = w.contentView?.superview ?? w.contentView,
                   let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
             view.cacheDisplay(in: view.bounds, to: rep)
             return rep
         }
-        guard let base = render(window) else { exit(1) }
+        guard let base = render(window) else { return nil }
         var output = base
         if let sheet = window.attachedSheet, let sheetRep = render(sheet) {
             // The sheet drawn where it sits over its window.
@@ -148,7 +201,12 @@ public enum OOOSnapshot {
             image.unlockFocus()
             if let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) { output = rep }
         }
-        guard let data = output.representation(using: .png, properties: [:]) else { exit(1) }
+        return output
+    }
+
+    private static func write(_ output: NSBitmapImageRep?, session: OOOSession, via method: String) {
+        written = true
+        guard let path = arg("--snapshot"), let output, let data = output.representation(using: .png, properties: [:]) else { exit(1) }
         do {
             try data.write(to: URL(fileURLWithPath: path))
         } catch {
@@ -159,7 +217,7 @@ public enum OOOSnapshot {
         print(String(format: "snapshot %@ %dx%d slide \"%@\" shots %d time %.2f of %.2f",
                      path, output.pixelsWide, output.pixelsHigh, p.slide.name, p.shots.count,
                      session.clock.time, session.clock.duration)
-              + " message \(session.message.map { "\"\($0)\"" } ?? "none")")
+              + " message \(session.message.map { "\"\($0)\"" } ?? "none") via \(method)")
         exit(0)
     }
 }
