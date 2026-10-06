@@ -51,6 +51,9 @@ public enum OOOSnapshot {
         args["appearance"] = arg("--scheme") == "light" ? AppearanceChoice.light.rawValue : AppearanceChoice.dark.rawValue
         args["showSafeAreas"] = flag("--safe-areas")
         args["ApplePersistenceIgnoreState"] = true
+        // A value after a flag that takes none (`--draw --time 6`) is not a
+        // document to open: AppKit would say it can't open "6" and wait for OK.
+        args["NSTreatUnknownArgumentsAsOpen"] = false
         UserDefaults.standard.setVolatileDomain(args, forName: UserDefaults.argumentDomain)
         DispatchQueue.main.asyncAfter(deadline: .now() + 120) {
             print("snapshot: timed out")

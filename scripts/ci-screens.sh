@@ -70,7 +70,7 @@ shot standard-title --slide "$STANDARD" --title 'A $4.2B market nobody designs f
 echo "== Slides, marks, and room for you"
 shot slides --slide "$FIX/cover-2576x1080.png" --more "$WIDE,$FIX/wide-revised-2576x1080.png" --melt 2 --home --time 4.5 --size 1440x1500
 shot marks --slide "$WIDE" --more "$STANDARD" --marks demo --time 6 --size 1440x1500
-shot pen --slide "$WIDE" --marks demo --draw --time 6 --size 1440x900
+shot pen --slide "$WIDE" --marks demo --time 6 --size 1440x900 --draw
 shot room --slide "$WIDE" --lift whole --title 'How we grew 3.1× in nine months' --kicker 'pitch.dog' --time 9 --size 1440x1500
 shot room-light --scheme light --slide "$WIDE" --lift 5-12,16- --time 8 --size 1440x900
 
