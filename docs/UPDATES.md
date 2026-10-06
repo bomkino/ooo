@@ -32,6 +32,8 @@ On `main`, raise `VERSION` in `scripts/build-app.sh` (always upwards) and give i
 4. publishes `vx.y.z`, marked Latest, with the disk image, the ZIP, the signed `appcast.xml`, `SHA256SUMS.txt` and notes in the shape of Drift's, and waits until `releases/latest/download/appcast.xml` names the new version;
 5. runs `scripts/test-live-update.sh`: it downloads the release before, opens it against the live feed with `STUDIO_UPDATE_TEST=1`, and waits for it to update itself to the new version, as every installed copy will.
 
+**Rehearse** (a box in Run workflow) does steps 1 to 3 without publishing: the way to check the key and the workflow without releasing anything.
+
 **Sign** (in Run workflow, a version like `v1.0.0`) signs the update of a release that is already out, without rebuilding it: `scripts/sign-release.sh v1.0.0` downloads the release's ZIP, checks it against `SHA256SUMS.txt`, signs it, uploads the feed and waits for the live feed to name it, then the live update test runs. Releases published before automatic signing (1.0.0) carried the previous release's feed and need this once, or simply the next release.
 
 On a Mac that holds the key, Sparkle's tools and a signed-in GitHub CLI, `bash scripts/sign-release.sh vx.y.z` does the same by hand; `SPARKLE_BIN` and `SPARKLE_KEY` point elsewhere. Add `--only` to make it the only release once its update is live: it then deletes every other release (their tags stay).

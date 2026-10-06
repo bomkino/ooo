@@ -9,7 +9,7 @@
 # runner can read, used by Sparkle's generate_appcast, and deleted.
 #
 # "Sign" (a version like v1.0.0) signs the update of a release that is already
-# out instead, without rebuilding it.
+# out instead, without rebuilding it. "Rehearse" does everything but publish.
 name: release
 
 on:
@@ -19,6 +19,10 @@ on:
         description: Only sign the update of a release that is already out (like v1.0.0). Leave empty to publish a new release.
         type: string
         default: ''
+      rehearse:
+        description: Rehearse (test, build, pack and sign, but don't publish)
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -33,6 +37,8 @@ jobs:
     runs-on: macos-26
     environment: release
     timeout-minutes: 45
+    env:
+      REHEARSE: ${{ inputs.rehearse }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -44,12 +50,13 @@ jobs:
           [ "$GITHUB_REF_NAME" = main ] || { echo "::error::Run this on main."; exit 1; }
           VERSION="$(sed -n 's/^VERSION="\${VERSION_OVERRIDE:-\(.*\)}"$/\1/p' scripts/build-app.sh)"
           [ -n "$VERSION" ] || { echo "::error::No version in scripts/build-app.sh"; exit 1; }
-          if gh release view "v$VERSION" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "::error::v$VERSION is published already. Raise VERSION in scripts/build-app.sh."; exit 1
-          fi
           LATEST="$(gh release list -R "$GITHUB_REPOSITORY" --json tagName,isLatest --jq '.[] | select(.isLatest) | .tagName')"
           build() { echo "$1" | awk -F. '{ printf "%d", $1 * 10000 + $2 * 100 + $3 }'; }
-          if [ -n "$LATEST" ] && [ "$(build "$VERSION")" -le "$(build "${LATEST#v}")" ]; then
+          if [ "$REHEARSE" = true ]; then
+            echo "Rehearsing $VERSION: nothing will be published"
+          elif gh release view "v$VERSION" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::v$VERSION is published already. Raise VERSION in scripts/build-app.sh."; exit 1
+          elif [ -n "$LATEST" ] && [ "$(build "$VERSION")" -le "$(build "${LATEST#v}")" ]; then
             echo "::error::$VERSION isn't newer than the Latest release, $LATEST."; exit 1
           fi
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
@@ -127,6 +134,7 @@ jobs:
           cat notes.md
           ls -l release
       - name: Publish the release, marked Latest
+        if: ${{ !inputs.rehearse }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -142,6 +150,8 @@ jobs:
           done
           echo "::error::releases/latest/download/appcast.xml doesn't offer $VERSION"; exit 1
       - name: Update a copy of the release before from the live feed
+        # A rehearsal publishes nothing, and OOO's live feed can lag the Latest release (1.0.0's names 0.2.0).
+        if: ${{ !inputs.rehearse }}
         timeout-minutes: 10
         env:
           GH_TOKEN: ${{ github.token }}
