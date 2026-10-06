@@ -339,8 +339,8 @@ public final class StageRenderer {
                 enc.drawIndexedPrimitives(type: .triangle, indexCount: gridIndexCount, indexType: .uint32, indexBuffer: gridIndices, indexBufferOffset: 0)
             }
             // Glazed ink twice: the slide seen through it, then its body over that.
-            let draws: [(MTLRenderPipelineState, Float)] = card.ink.z > 0.5 && card.ink.w > 0.5
-                ? [(p.glaze, 1), (p.body, 2)] : [(p.card, 0)]
+            var draws: [(MTLRenderPipelineState, Float)] = [(p.card, 0)]
+            if card.ink.z > 0.5 && card.ink.w > 0.5 { draws = [(p.glaze, 1), (p.body, 2)] }
             for (pipeline, step) in draws {
                 if card.ink.z > 0.5 { cu.ink.w = step }
                 enc.setRenderPipelineState(pipeline)

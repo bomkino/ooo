@@ -38,9 +38,10 @@ public struct SlideScene: @unchecked Sendable {
         self.project = project
         // A slide still being drawn shows the first in its place for now.
         self.bases = (0..<project.slideCount).map { $0 < bases.count ? bases[$0] : bases[0] }
-        self.details = (0..<project.slideCount).map { $0 < details.count && $0 < bases.count ? details[$0] : nil }
+        let shownDetails = (0..<project.slideCount).map { $0 < details.count && $0 < bases.count ? details[$0] : nil }
+        self.details = shownDetails
         self.inks = (project.marks ?? []).indices.map { $0 < inks.count ? inks[$0] : nil }
-        let sources = self.details.map { $0?.source }
+        let sources = shownDetails.map { $0?.source }
         self.inkBodies = (project.marks ?? []).map { m in
             let p = project.pageIndex(m.page)
             let ground = p < sources.count ? sources[p].flatMap { InkCache.shared.ground(under: m, on: $0) } : nil
@@ -551,7 +552,7 @@ public struct SlideScene: @unchecked Sendable {
             // is a glaze with some body, or 1.0.1's flat ink.
             let soft = Float(min(max(0.05 / m.inkLength, 0.01), 0.2))
             let body = i < inkBodies.count ? inkBodies[i] : 0.5
-            ink.ink = SIMD4(head * (1 + soft), soft, 1 + body, flatInk ? 0 : 1)
+            ink.ink = SIMD4<Float>(head * (1 + soft), soft, 1 + body, flatInk ? 0 : 1)
             let c = m.color.srgb
             let linear = RGB(c.r, c.g, c.b).linear
             ink.color = SIMD4(linear.x, linear.y, linear.z, light)
