@@ -25,7 +25,17 @@ final class CoreTests: XCTestCase {
     func testAFileFromANewerOOOIsRefusedNotMisread() throws {
         let data = try ProjectPackage.encode(.sample)
         var json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        XCTAssertEqual(json["minimumReaderVersion"] as? Int, OOOProject.readerVersion)
+        XCTAssertEqual(json["minimumReaderVersion"] as? Int, 1, "a file 0.2 can draw still opens there")
+        // One that uses what 0.2 can't draw says so, and 0.2 refuses it with a message.
+        var woven = OOOProject.sample
+        woven.arrive = Arrive(kind: .weave)
+        var typed = OOOProject.sample
+        typed.title = OpeningTitle(text: "One slide", kicker: "pitch.dog", kickerCaps: false)
+        for p in [woven, typed] {
+            let j = try XCTUnwrap(JSONSerialization.jsonObject(with: ProjectPackage.encode(p)) as? [String: Any])
+            XCTAssertEqual(j["minimumReaderVersion"] as? Int, 2)
+            XCTAssertEqual(try ProjectPackage.decode(ProjectPackage.encode(p)), p)
+        }
         json["minimumReaderVersion"] = OOOProject.readerVersion + 1
         json["arrive"] = ["kind": "somethingNew"]
         XCTAssertThrowsError(try ProjectPackage.decode(JSONSerialization.data(withJSONObject: json))) { error in
@@ -74,6 +84,30 @@ final class CoreTests: XCTestCase {
         p.format = .reel
         p.adaptOverview(fromSlideAspect: A2, canvasAspect: C2)
         XCTAssertEqual(p.overview.yaw, -5, "an opening set by hand stays")
+    }
+
+    func testReplacingTheSlideKeepsTheTourOnItsWords() {
+        let wide = SlideRef(kind: .image, aspect: 2576.0 / 1080, name: "wide", pixelWidth: 2576, pixelHeight: 1080)
+        var p = OOOProject(slide: wide)
+        let headline = SlideDetail(frame: ShotFrame(center: Vec2(0.3, 0.22), size: Vec2(0.4, 0.08)), text: "Revenue grew 3.1× this year.")
+        let footnote = SlideDetail(frame: ShotFrame(center: Vec2(0.8, 0.93), size: Vec2(0.3, 0.02)), text: "Source: billing export. Unaudited.")
+        let close = Shot(time: 3, frame: ShotFrame(center: Vec2(0.3, 0.22), size: Vec2(0.5, 0.3)), label: "Revenue grew 3.1× this year.",
+                         focus: headline.frame)
+        let mine = Shot(time: 6, frame: ShotFrame(center: Vec2(0.6, 0.6), size: Vec2(0.3, 0.3)), label: "Mine")
+        p.shots = [close, mine]
+        p.reading = [headline, footnote]
+        var moved = headline
+        moved.text = "Revenue grew 3.4× this year."
+        moved.frame.center.y += 0.1
+        let fixed = SlideRef(kind: .image, aspect: 2576.0 / 1080, name: "wide v2", pixelWidth: 2576, pixelHeight: 1080)
+        p.replaceSlide(with: fixed, reading: [moved, footnote], from: [headline, footnote])
+        XCTAssertEqual(p.slide, fixed)
+        XCTAssertEqual(p.reading, [moved, footnote])
+        XCTAssertEqual(p.shots.map(\.id), [close.id, mine.id])
+        XCTAssertEqual(p.shots.map(\.time), [3, 6])
+        XCTAssertEqual(p.shots[0].frame.center.y, 0.32, accuracy: 1e-4, "the close-up follows its headline")
+        XCTAssertEqual(p.shots[0].label, "Revenue grew 3.4× this year.", "a label that was the headline's words takes the new ones")
+        XCTAssertEqual(p.shots[1], mine, "a framing about no one detail stays")
     }
 
     func testTheOpeningTitleClearsForTheTourAndReturnsForThePullBack() throws {

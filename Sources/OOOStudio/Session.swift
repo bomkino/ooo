@@ -20,7 +20,18 @@ public final class PlaybackClock {
     public var duration: Double = 10
     /// True while the person types in a text field; single-key shortcuts stand down.
     public var typing = false
-    public init() {}
+    public init() {
+        playing = !Self.reduceMotion
+    }
+
+    /// With Reduce Motion on, the editor never starts playing by itself; the
+    /// film it exports moves as it always does.
+    static var reduceMotion: Bool { MainActor.assumeIsolated { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion } }
+
+    /// Plays from here, unless Reduce Motion asks the editor to keep still.
+    public func autoplay() {
+        playing = !Self.reduceMotion
+    }
 }
 
 /// What the inspector is showing.
@@ -113,12 +124,19 @@ public final class OOOSession {
     public private(set) var pageCount = 1
     /// The timeline's length while something on it is dragged (see `timelineLength`).
     public private(set) var heldTimelineLength: Double?
+    /// True while \ is held: the stage shows the slide in the Original look,
+    /// exactly as supplied, to compare.
+    public private(set) var comparing = false {
+        didSet {
+            guard comparing != oldValue else { return }
+            sceneCache = nil
+            version += 1
+        }
+    }
 
     @ObservationIgnored private var slideBase: SlideBase?
     @ObservationIgnored private var slideToken = 0
     @ObservationIgnored private var sceneCache: SlideScene?
-    /// The last reading of a slide, and which slide it was.
-    @ObservationIgnored private var details: (ref: SlideRef, found: [SlideDetail])?
     /// A dropped slide whose tour is still being planned: the drop and its
     /// tour become one undo step when the plan lands.
     @ObservationIgnored private var pendingDrop: (before: OOOProject, name: String)?
@@ -131,6 +149,11 @@ public final class OOOSession {
     @ObservationIgnored private var thumbs: [ShotFrame: CGImage] = [:]
     @ObservationIgnored private var pendingEditStart: OOOProject?
     @ObservationIgnored private var pendingEditName: String?
+    /// Set when Esc cancels a gesture: the rest of it changes nothing, until
+    /// it ends (or anything else is edited).
+    @ObservationIgnored private var editCancelled = false
+    /// Closes a run of key nudges as one undo step once the keys rest.
+    @ObservationIgnored private var nudgeRest: DispatchWorkItem?
 
     public init(document: OOODocument) {
         self.document = document
@@ -151,6 +174,7 @@ public final class OOOSession {
     /// Applies a change as one undoable step. A gesture still open is closed first.
     public func update(_ actionName: String, _ change: (inout OOOProject) -> Void) {
         finishDrop()
+        editCancelled = false
         let openGesture = pendingEditStart != nil ? pendingEditName : nil
         let wasOpen = pendingEditStart != nil
         if wasOpen { commitEdit(pendingEditName ?? "Edit") }
@@ -171,6 +195,7 @@ public final class OOOSession {
     /// Call at the start of a continuous gesture (a slider drag, a drag on the map).
     public func beginEdit(_ name: String? = nil) {
         finishDrop()
+        editCancelled = false
         if pendingEditStart != nil, pendingEditName != name { commitEdit(pendingEditName ?? "Edit") }
         if pendingEditStart == nil {
             pendingEditStart = project
@@ -180,17 +205,70 @@ public final class OOOSession {
 
     /// A change during a gesture: no undo step until it commits.
     public func live(_ change: (inout OOOProject) -> Void) {
+        guard !editCancelled else { return }
         var p = project
         change(&p)
         guard p != project else { return }
         set(p)
     }
 
+    /// Closes the gesture `actionName` began. A late close for a gesture
+    /// already closed (a run of nudges resting) leaves the next one open.
     public func commitEdit(_ actionName: String) {
-        guard let start = pendingEditStart else { return }
+        editCancelled = false
+        guard let start = pendingEditStart, pendingEditName == nil || pendingEditName == actionName else { return }
+        nudgeRest?.cancel()
+        nudgeRest = nil
         pendingEditStart = nil
         pendingEditName = nil
         if start != project { registerUndo(from: start, name: actionName) }
+    }
+
+    /// Esc during a drag: everything goes back to how it was when the drag
+    /// began, and the rest of the drag changes nothing. False when nothing
+    /// was being dragged.
+    @discardableResult
+    public func cancelEdit() -> Bool {
+        guard let start = pendingEditStart, !clock.typing else { return false }
+        nudgeRest?.cancel()
+        nudgeRest = nil
+        pendingEditStart = nil
+        pendingEditName = nil
+        editCancelled = true
+        if start != project { set(start) }
+        return true
+    }
+
+    /// One press of a nudge key. A run of presses is one undo step, closed
+    /// once the keys have rested for a moment.
+    public func nudge(_ name: String, _ change: (inout OOOProject) -> Void) {
+        beginEdit(name)
+        live(change)
+        nudgeRest?.cancel()
+        let rest = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.pendingEditName == name else { return }
+                self.commitEdit(name)
+            }
+        }
+        nudgeRest = rest
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: rest)
+    }
+
+    /// Keys no menu can carry. Returns true when the key was used: Esc
+    /// cancels a drag, and holding \ shows the Original look.
+    public func handleKey(_ event: NSEvent) -> Bool {
+        if event.type == .keyDown, event.keyCode == 53 { return cancelEdit() }
+        guard event.charactersIgnoringModifiers == "\\",
+              event.modifierFlags.intersection([.command, .option, .control]).isEmpty else { return false }
+        if event.type == .keyUp {
+            guard comparing else { return false }
+            comparing = false
+            return true
+        }
+        guard !clock.typing else { return false }
+        if !event.isARepeat { comparing = true }
+        return true
     }
 
     /// Closes a drop as one undo step: the slide, and its tour if it has one by now.
@@ -257,7 +335,9 @@ public final class OOOSession {
     public var scene: SlideScene? {
         if let s = sceneCache { return s }
         guard let b = slideBase else { return nil }
-        let s = SlideScene(project: project, base: b.texture, details: b.details, choreography: choreography)
+        var shown = project
+        if comparing { shown.look.surface = .original }
+        let s = SlideScene(project: shown, base: b.texture, details: b.details, choreography: choreography)
         sceneCache = s
         return s
     }
@@ -281,6 +361,10 @@ public final class OOOSession {
     private func end(_ job: Int) {
         jobs.removeAll { $0.id == job }
     }
+
+    /// A job run from a menu command, shown the same way.
+    public func beginJob(_ label: String) -> Int { begin(label) }
+    public func endJob(_ job: Int) { end(job) }
 
     func loadSlide() {
         let ref = project.slide
@@ -340,6 +424,7 @@ public final class OOOSession {
             let (A, C) = (p.slideAspect, p.canvasAspect)
             p.slide = ref
             p.shots = []
+            p.reading = nil
             p.adaptOverview(fromSlideAspect: A, canvasAspect: C)
         }
         selection = .overview
@@ -348,6 +433,50 @@ public final class OOOSession {
         clock.time = 0
         clock.playing = false
         autoDirect()
+    }
+
+    /// A corrected version of the slide: the tour stays, and each framing
+    /// follows its words to where they are now. With no tour yet, it is a
+    /// new slide.
+    public func replaceSlide(_ url: URL) {
+        guard hasSlide, !project.shots.isEmpty else { importSlide(url); return }
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        guard var ref = SlideSource.inspect(url) else {
+            message = "OOO can't read that file as a slide. Use a PDF or a picture: PNG, JPEG, HEIC or TIFF."
+            return
+        }
+        do {
+            ref.file = try document.media.importFile(url)
+        } catch {
+            message = "Couldn't copy the slide: \(error.localizedDescription)"
+            return
+        }
+        let was = project.slide, known = project.reading, now = ref
+        let media = document.media.directory
+        let job = begin("Reading the new slide")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = Result { () throws -> (old: [SlideDetail], new: [SlideDetail]) in
+                let old = try known ?? SlideAnalysis.read(SlideSource(ref: was, media: media))
+                return (old, try SlideAnalysis.read(SlideSource(ref: now, media: media)))
+            }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.end(job)
+                    // Another slide was dropped meanwhile: that one wins.
+                    guard self.project.slide == was else { return }
+                    switch result {
+                    case .success(let reading):
+                        self.update("Replace Slide") { p in
+                            p.replaceSlide(with: now, reading: reading.new, from: reading.old)
+                        }
+                    case .failure(let error):
+                        self.message = "Couldn't read the new slide: \(readable(error))"
+                    }
+                }
+            }
+        }
     }
 
     /// Takes the slide on the clipboard: a PDF or picture copied in Finder,
@@ -393,6 +522,7 @@ public final class OOOSession {
             let (A, C) = (p.slideAspect, p.canvasAspect)
             p.slide = ref
             p.shots = []
+            p.reading = nil
             p.adaptOverview(fromSlideAspect: A, canvasAspect: C)
         }
         selection = .overview
@@ -422,8 +552,8 @@ public final class OOOSession {
     public func autoDirect() {
         let ref = project.slide
         let media = document.media.directory
-        // Only this slide's own reading will do: a new slide or page is read afresh.
-        let cached = details?.ref == ref ? details?.found : nil
+        // A slide already read isn't read again; a new slide or page has no reading yet.
+        let cached = project.reading
         let job = begin("Reading the slide")
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = Result { () throws -> [SlideDetail] in
@@ -439,14 +569,18 @@ public final class OOOSession {
                     let fresh = self.pendingDrop != nil
                     switch result {
                     case .success(let found):
-                        self.details = (ref, found)
                         let shots = Director.shots(self.project.directorInput(found))
                         guard !shots.isEmpty else {
+                            if self.project.reading == nil {
+                                var p = self.project
+                                p.reading = found
+                                self.set(p)
+                            }
                             self.finishDrop()
                             if fresh {
                                 self.selection = .overview
                                 self.clock.time = 0
-                                self.clock.playing = true
+                                self.clock.autoplay()
                             }
                             self.message = "OOO found nothing to read on this slide. Draw framings on the slide map to choose what the camera visits."
                             return
@@ -454,20 +588,24 @@ public final class OOOSession {
                         if self.pendingDrop != nil {
                             var p = self.project
                             p.shots = shots
+                            p.reading = found
                             self.set(p)
                             self.finishDrop()
                         } else {
-                            self.update("Direct") { $0.shots = shots }
+                            self.update("Direct") { p in
+                                p.shots = shots
+                                p.reading = found
+                            }
                         }
                         self.selection = .overview
                         self.clock.time = 0
-                        self.clock.playing = true
+                        self.clock.autoplay()
                     case .failure(let error):
                         self.finishDrop()
                         if fresh {
                             self.selection = .overview
                             self.clock.time = 0
-                            self.clock.playing = true
+                            self.clock.autoplay()
                         }
                         self.message = "Couldn't read the slide: \(readable(error))"
                     }
@@ -498,8 +636,53 @@ public final class OOOSession {
 
     public func updateShot(_ id: UUID, _ name: String, _ change: (inout Shot) -> Void) {
         update(name) { p in
-            if let i = p.shots.firstIndex(where: { $0.id == id }) { change(&p.shots[i]) }
+            if let i = p.shots.firstIndex(where: { $0.id == id }) { Self.edit(&p.shots[i], change) }
         }
+    }
+
+    /// A change made by hand. Once its framing is yours, it stays where you put it.
+    static func edit(_ shot: inout Shot, _ change: (inout Shot) -> Void) {
+        let before = shot
+        change(&shot)
+        if shot.framesDifferently(from: before) { shot.planned = nil }
+    }
+
+    /// The selected framing (a shot, or the opening), changed by a nudge key.
+    private func nudgeSelected(_ name: String, _ change: @escaping (inout Shot) -> Void) {
+        switch selection {
+        case .shot(let id):
+            nudge(name) { p in
+                if let i = p.shots.firstIndex(where: { $0.id == id }) { Self.edit(&p.shots[i], change) }
+            }
+        case .overview:
+            nudge(name) { p in change(&p.overview) }
+        }
+    }
+
+    /// Moves the selected framing a twentieth of its size: -1 or 1 across, -1 (up) or 1 (down).
+    public func nudgeFraming(_ dx: Float, _ dy: Float) {
+        nudgeSelected("Move Framing") { s in
+            let f = s.frame
+            s.frame.center = Vec2(min(max(f.center.x + dx * 0.05 * f.size.x, 0), 1),
+                                  min(max(f.center.y + dy * 0.05 * f.size.y, 0), 1))
+        }
+    }
+
+    /// Takes the selected framing closer (`closer`) or wider by a step.
+    public func nudgeZoom(closer: Bool) {
+        nudgeSelected("Frame Shot") { s in
+            s.frame.size = s.frame.size * (closer ? 0.95 : 1 / 0.95)
+        }
+    }
+
+    /// Lands the selected shot a tenth of a second earlier (-1) or later (1).
+    public func nudgeTime(_ direction: Double) {
+        guard case .shot(let id) = selection else { return }
+        nudge("Move Shot") { p in
+            let start = p.tourStart + 0.3
+            if let i = p.shots.firstIndex(where: { $0.id == id }) { p.shots[i].time = max(start, p.shots[i].time + 0.1 * direction) }
+        }
+        select(.shot(id))
     }
 
     /// The length the timeline lays out. While a framing or the voice is
@@ -519,7 +702,7 @@ public final class OOOSession {
 
     public func liveShot(_ id: UUID, _ change: (inout Shot) -> Void) {
         live { p in
-            if let i = p.shots.firstIndex(where: { $0.id == id }) { change(&p.shots[i]) }
+            if let i = p.shots.firstIndex(where: { $0.id == id }) { Self.edit(&p.shots[i], change) }
         }
     }
 
@@ -594,11 +777,16 @@ public final class OOOSession {
         touch()
     }
 
+    /// A new canvas. The framings Direct for Me planned are framed again
+    /// for it; the ones you set stay as they are.
     public func setFormat(_ f: CanvasFormat) {
         update("Canvas") { p in
             let (A, C) = (p.slideAspect, p.canvasAspect)
             p.format = f
             p.adaptOverview(fromSlideAspect: A, canvasAspect: C)
+            if let reading = p.reading, p.shots.contains(where: \.isPlanned) {
+                p.shots = Director.reframe(p.shots, from: Director.shots(p.directorInput(reading)))
+            }
         }
     }
 

@@ -13,12 +13,35 @@ It is for the slide you spent a week on: the chart whose curve you redrew eleven
 ## How it works
 
 1. **Drop a slide, or paste one.** A PDF page or a picture, or a slide copied straight from Keynote, Figma or Preview (⇧⌘V). PDFs stay vector, so the camera can go as close as it likes and text stays razor sharp. Pictures are drawn at up to twice their size, resampled and sharpened, and the camera never goes closer than they hold.
-2. **It arrives.** Rise, Unfold, Drop, Develop, Turn or Glide: an entrance with weight, light and focus. In a tall frame a wide slide stands turned towards you, over a soft reflection, with a title above it if you give it one.
-3. **The camera tours it.** *Direct for Me* reads the slide on your Mac (the headline, the numbers, the figure, the small print) and plans a tour: the headline first, the details worth stopping on in reading order, the smallest print saved for last. Text is framed at a size that reads on a phone; a line too long for the frame is read along, the camera landing on its start and gliding to its end. Every framing sits in the part of a Reel that the profile and caption leave clear.
-4. **Talk about it.** Record your voiceover first, in any app, and drop it in. OOO listens on your Mac for the words and when you say them, and lands each move just before you name what it shows.
-5. **Export.** MP4, HEVC or ProRes, at 24, 30 or 60 fps, with real motion blur and your voice under it. Save Cover Frame (⌥⌘E) gives you the post's thumbnail.
+2. **It arrives.** Rise, Unfold, Drop, Develop, Turn, Glide or Weave: an entrance with weight, light and focus. Develop comes up like a print in the tray, darks first; Weave knits the slide together from threads, the same way in every export. In a tall frame a wide slide stands turned towards you, over a soft reflection, with a title above it if you give it one.
+3. **The camera tours it.** *Direct for Me* reads the slide on your Mac (the headline, the numbers, the figure, the small print) and plans a tour: the headline first, the details worth stopping on in reading order, the smallest print saved for last. Each hold lasts as long as its words take to read, and the slide's point holds longest. Text is framed at a size that reads on a phone; a line too long for the frame is read along, the camera landing on its start and gliding to its end. Every framing sits in the part of a Reel that the profile and caption leave clear.
+4. **Talk about it.** Record your voiceover first, in any app, and drop it in. OOO listens on your Mac for the words and when you say them, and lands each move just before you name what it shows. When your words come faster than a move can fly, the camera cuts on the word rather than rushing.
+5. **Set the room.** 35 looks from Backdrop, each with its own dials and a Shuffle, or the room in the slide's own colours (From Slide), kept at the room's lightness so the slide still stands out. The slide's surface can be Original, Print, Gloss, Satin or Foil; hold `\` to compare with the slide exactly as supplied.
+6. **Export.** MP4, HEVC or ProRes, at 24, 30 or 60 fps, with real motion blur and your voice under it. Save Cover Frame (⌥⌘E) gives you the post's thumbnail, and Save Stills (⇧⌘E) the opening and every landing as pictures, for a carousel.
 
-Every move is yours to change. The slide map in the inspector shows every framing as a viewfinder the shape of your video: drag one to move it, drag a corner to go closer, Option-drag to turn the camera, draw on the slide to add one. On the timeline, drag a framing to change when the camera lands; it snaps to your words.
+**Fixed a typo after the tour was made?** Replace Slide (⇧⌘I) swaps in the corrected slide and keeps the camera work: each framing follows its words to where they are now, and a shot named after its words takes the new ones. Change the canvas and the framings Direct for Me planned are framed again for it; the ones you set stay where you put them.
+
+## Every move is yours
+
+The slide map in the inspector shows every framing as a viewfinder the shape of your video: drag one to move it, drag a corner to go closer, Option-drag to turn the camera, draw on the slide to add one. On the timeline, drag a framing to change when the camera lands; it snaps to your words. Esc cancels a drag halfway. In the inspector, double-click any value to type it, and a run of arrow presses is one undo.
+
+| Keys | |
+|---|---|
+| ⌘I, ⇧⌘I, ⇧⌘V | Choose a slide, replace it keeping the tour, paste one |
+| ⌥⌘I | Choose a voiceover |
+| ⇧⌘D | Direct for Me |
+| ⌥⌘V | Cut moves to the voice |
+| ⇧⌘N, ⌘D, Delete | New shot at the playhead, duplicate it, delete it |
+| ⌥⌘ arrows | Move the selected framing |
+| ⌥⌘= and ⌥⌘− | Closer and wider |
+| ⌥⌘[ and ⌥⌘] | Land a tenth of a second earlier or later |
+| Space or ⌘P | Play and pause |
+| ⌘[ and ⌘] | Previous and next landing; ⌘← goes to the start |
+| hold `\` | The slide exactly as supplied (the Original surface) |
+| ⇧⌘G | Show the safe areas |
+| ⌘E, ⌥⌘E, ⇧⌘E | Export, Save Cover Frame, Save Stills |
+
+With Reduce Motion on, the editor doesn't start playing by itself, and Direct for Me's button glows without pulsing. The films you export move as they always do.
 
 ## The craft
 
@@ -30,11 +53,14 @@ The motion is the point, so it is built carefully.
 - **Composed for the canvas.** A framing seen at an angle is not the rectangle a flat view assumes, so the camera's distance and aim are solved against the framing's real outline on screen, and fitted into the part of the canvas no app interface covers.
 - **Sharp at any zoom.** The whole slide lives in one texture; when the camera needs more, the part it sees is drawn again from the slide's vectors at the resolution that frame needs, snapped to a half-octave ladder so neighbouring frames share it, and drawn half a second before the frame needs it.
 - **The slide as it is, while it is read.** When the camera holds, the surface's sheen steps back and the lens's glow stays in the room around the slide, so black type lands nearly as dark as it is on the slide. The sheen comes back as the camera moves on.
-- **A real lens.** Depth of field focuses on a plane through the framed point, as a lens does, and deepens as the camera goes in, so a close-up becomes a macro shot. Motion blur is a 180° film shutter, averaged from many moments a frame, and never smears across a cut. Each frame measures how far anything on screen moves while its shutter is open and takes only the moments that motion needs: one while the camera holds, the most in a fast move. On the review renders that saves about a third of the GPU's work at Good and over half at Best, and no frame falls below 49 dB PSNR against full sampling.
+- **A real lens.** Depth of field focuses on a plane through the framed point, as a lens does, and deepens as the camera goes in, so a close-up becomes a macro shot. Motion blur is a 180° film shutter, averaged from many moments a frame, and never smears across a cut. Each frame measures how far anything on screen moves while its shutter is open and takes only the moments that motion needs: one while the camera holds, the most in a fast move. On the review renders that saves a third or more of the GPU's work at Good and over half at Best, and no frame falls below 48 dB PSNR against full sampling.
 - **Made to loop.** A Reel plays on repeat, so the backdrop runs whole cycles over the video's length and, with the Leave ending, drifts back to where it began: the last frame leads into the first.
-- **A director that reads.** Vision reads the text, then reads the slide again in close-ups so the 4-point footnote is found too; the ink that is not text shows where the figures are. The director groups lines into blocks, gives each a role and plans the tour. With a voiceover, each shot lands 150 ms before the words that name it.
+- **Time to look.** Every move gets the time its distance needs, and a turn counts towards its speed as much as a pan does. Without a voice, the holds follow how much there is to read; with one, a move that can't make it in time becomes a cut on the word. Each emphasis fits its hold, and only one detail gets the strongest.
+- **A director that reads.** Vision reads the slide in one pass, drawn tall enough that the 4-point footnote is found too; the ink that is not text shows where the figures are. The director groups lines into blocks, gives each a role and plans the tour. With a voiceover, each shot lands 150 ms before the words that name it. The reading is kept in the document, so it is never repeated.
 
-Everything runs on your Mac. Nothing is uploaded. The only thing OOO fetches is its own updates.
+## Private
+
+Everything runs on your Mac: reading the slide, listening to your voice (on-device speech recognition only), rendering and export. Nothing is uploaded. The only thing OOO fetches is its own updates.
 
 ## Install
 
@@ -48,59 +74,15 @@ gh release download -R bomkino/ooo -p 'OOO-*-macOS-arm64.zip' && ditto -x -k OOO
 
 ## Updates
 
-From 0.2.0, OOO checks this repository's releases once a day and offers new versions itself (**Check for Updates…** in the OOO menu checks now). An update installs and relaunches in a few seconds, with no second trip to Privacy & Security. Updates are signed with pitch.dog's own EdDSA key and OOO refuses anything not signed with it; no Apple developer account is involved. Install 0.2.0 by hand once, and every version after it arrives by itself. How releases are made and signed is in [`docs/UPDATES.md`](docs/UPDATES.md).
+OOO checks this repository's releases once a day and offers new versions itself (**Check for Updates…** in the OOO menu checks now). An update installs and relaunches in a few seconds, with no second trip to Privacy & Security. Updates are signed with pitch.dog's own EdDSA key and OOO refuses anything not signed with it; no Apple developer account is involved. Install OOO by hand once (0.2.0 or later), and every version after it arrives by itself. How releases are made and signed is in [`docs/UPDATES.md`](docs/UPDATES.md).
 
-## Build
-
-Needs Xcode or the Command Line Tools on an Apple silicon Mac with macOS 14 or later.
+## Build it yourself
 
 ```bash
-swift build -c release          # everything
-swift test                      # the camera's maths, the director, documents and the renderer
-swift run -c release OOO        # the app, unbundled
-bash scripts/build-app.sh       # dist/OOO.app and dist/OOO.dmg
-bash scripts/test-update.sh     # in-app updates: a signed one installs, a tampered one is refused
+swift build -c release && swift run -c release OOO
 ```
 
-The first build fetches Sparkle 2.10.0 through Swift Package Manager. `bash scripts/make-release.sh <folder> [notes.md]` then makes a release's disk image, update ZIP, signed `appcast.xml` and checksums (see [`docs/UPDATES.md`](docs/UPDATES.md)).
-
-## Headless checks
-
-`ooo-lab` renders and checks without a window, for review and CI:
-
-```bash
-swift run -c release ooo-lab shaders                       # compile every shader and pipeline
-swift run -c release ooo-lab still --t 6.6 --out still.png # one frame
-swift run -c release ooo-lab sheet --out sheet.png         # twelve frames across the video
-swift run -c release ooo-lab render --quality draft --scale 0.5 --out draft.mp4
-swift run -c release ooo-lab analyze                       # what the director reads and plans
-swift run -c release ooo-lab landings --out dir            # a still at the opening and at every landing
-swift run -c release ooo-lab openings --out grid.png       # the opening at five angles and three floors
-swift run -c release ooo-lab titles --title "…" --out t.png # the opening title in four faces, and in time
-swift run -c release ooo-lab blurcheck --quality good      # adaptive motion blur against full sampling
-swift run -c release ooo-lab inkcheck                      # how dark the type lands at every hold, against the slide
-swift run -c release ooo-lab loopcheck --ending leave      # the step from the last frame back to the first
-swift run -c release ooo-lab path --out path.csv           # the camera's path, sampled at 120 Hz
-swift run -c release ooo-lab fixture --kind wide --out wide.png # a 2576 × 1080 test slide
-```
-
-Every command takes `--project file.ooo` (the sample by default) or `--slide file.pdf|png` (read and directed as the app does on a drop), `--format reel|portrait|square|landscape|uhd`, `--floor none|soft|mirror`, `--ending hold|pullBack|fade|leave` and `--title "…"`. `scripts/ci-renders.sh` renders the review set CI keeps for every change: pitch.dog's real case, wide slides as pictures and PDFs in a 1080 × 1920 reel.
-
-## Layout
-
-| Module | Job |
-|---|---|
-| `Sources/RenderCore` | Metal context, colour science, finishing (bloom, grade, vignette, grain, dither), readback and video writing |
-| `Sources/BackdropKit` | 35 analytic, loopable background looks (Backdrop 2.0) |
-| `Sources/StageKit` | The card renderer: bends, surfaces, depth of field, analytic shadows, motion blur |
-| `Sources/OOOMotion` | The camera's maths, the arrivals, the choreography and the director, in plain Swift that tests anywhere |
-| `Sources/OOOCore` | The slide (PDF, picture, sample), sharp detail at any zoom, the voiceover and its words, slide analysis, rendering and export |
-| `Sources/OOOStudio` | The editor: live stage, slide map, timeline, inspector, export |
-| `Sources/Updates` | In-app updates from this repository's releases (Sparkle), shared with Drift |
-| `Sources/OOOApp` | The app |
-| `Sources/OOOLab` | `ooo-lab`, headless renders and checks |
-
-RenderCore, BackdropKit and StageKit are the pitch.dog Studio engine shared with [Drift and Galileo](https://github.com/bomkino/pitchdog-drift) and [Backdrop](https://github.com/bomkino/backdrop), extended here for OOO. See `NOTICES.md`.
+Needs Xcode or the Command Line Tools on an Apple silicon Mac with macOS 14 or later. Tests, the headless renders and checks (`ooo-lab`), CI and the source layout are in [`docs/DEVELOPING.md`](docs/DEVELOPING.md).
 
 ## Rights
 

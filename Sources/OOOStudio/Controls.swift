@@ -49,7 +49,8 @@ public struct Hairline: View {
 // MARK: - Value slider
 
 /// One row: the label, a slim track, and the value. Drag anywhere on the
-/// track, double-click to reset, arrow keys to nudge.
+/// track, double-click it to reset, arrow keys to nudge (a run of presses is
+/// one undo step), double-click the value to type one.
 public struct ValueSlider: View {
     let label: String
     @Binding var value: Float
@@ -62,6 +63,11 @@ public struct ValueSlider: View {
     @State private var dragging = false
     @State private var hovering = false
     @FocusState private var focused: Bool
+    /// What is being typed into the value, while it is.
+    @State private var typed: String?
+    @FocusState private var typing: Bool
+    @State private var nudgeRest: DispatchWorkItem?
+    @Environment(PlaybackClock.self) private var clock: PlaybackClock?
 
     public init(_ label: String, value: Binding<Float>, range: ClosedRange<Float> = 0...1, defaultValue: Float? = nil,
                 format: @escaping (Float) -> String = { String(Int(($0 * 100).rounded())) },
@@ -122,9 +128,30 @@ public struct ValueSlider: View {
                 }
             }
             .frame(height: 24)
-            Text(format(value)).textStyle(.data).foregroundStyle(dragging || hovering ? .primary : .secondary)
-                .lineLimit(1)
-                .frame(width: 40, alignment: .trailing)
+            Group {
+                if typed != nil {
+                    TextField("", text: Binding(get: { typed ?? "" }, set: { typed = $0 }))
+                        .textFieldStyle(.plain)
+                        .textStyle(.data)
+                        .multilineTextAlignment(.trailing)
+                        .focused($typing)
+                        .onSubmit { applyTyped() }
+                        .onExitCommand { typed = nil }
+                        .onAppear { typing = true }
+                } else {
+                    Text(format(value)).textStyle(.data).foregroundStyle(dragging || hovering ? .primary : .secondary)
+                        .lineLimit(1)
+                        .onTapGesture(count: 2) { typed = format(value) }
+                }
+            }
+            .frame(width: 40, alignment: .trailing)
+        }
+        .onChange(of: typing) { _, on in
+            clock?.typing = on
+            if !on { applyTyped() }
+        }
+        .onChange(of: focused) { _, on in
+            if !on { restNudges() }
         }
         .frame(height: 30)
         .onHover { hovering = $0 }
@@ -143,14 +170,72 @@ public struct ValueSlider: View {
             @unknown default: break
             }
         }
-        .help(defaultValue != nil ? "\(label). Double-click the track to reset." : label)
+        .help(defaultValue != nil ? "\(label). Double-click the track to reset, or the value to type one." : "\(label). Double-click the value to type one.")
     }
 
     private func nudge(_ amount: Float) {
         onBegin()
         let span = range.upperBound - range.lowerBound
         value = min(range.upperBound, max(range.lowerBound, value + amount * span))
+        // A run of presses is one undo step, closed once the keys rest.
+        nudgeRest?.cancel()
+        let rest = DispatchWorkItem { [onCommit] in onCommit() }
+        nudgeRest = rest
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: rest)
+    }
+
+    /// Closes a run of nudges now.
+    private func restNudges() {
+        guard let rest = nudgeRest else { return }
+        nudgeRest = nil
+        rest.cancel()
         onCommit()
+    }
+
+    private func applyTyped() {
+        guard let text = typed else { return }
+        typed = nil
+        guard let v = Self.value(reading: text, in: range, format: format) else { return }
+        onBegin()
+        value = v
+        onCommit()
+    }
+
+    /// The value whose label reads as `text` does: the first number in it,
+    /// found along the slider by bisection, so it works for any label
+    /// (percent, degrees, millimetres, seconds) without knowing its maths.
+    static func value(reading text: String, in range: ClosedRange<Float>, format: (Float) -> String) -> Float? {
+        guard let target = number(in: text),
+              let a = number(in: format(range.lowerBound)), let b = number(in: format(range.upperBound)), a != b else { return nil }
+        let rising = b > a
+        if rising ? target <= a : target >= a { return range.lowerBound }
+        if rising ? target >= b : target <= b { return range.upperBound }
+        /// The least value whose label is past `target` by `past`.
+        func edge(_ past: (Double) -> Bool) -> Float {
+            var lo = range.lowerBound, hi = range.upperBound
+            for _ in 0..<40 {
+                let m = (lo + hi) / 2
+                if let y = number(in: format(m)), past(y) { hi = m } else { lo = m }
+            }
+            return hi
+        }
+        // The middle of the values that read as the number typed: 50% is 0.5, not 0.495.
+        let first = edge { rising ? $0 >= target : $0 <= target }
+        let after = edge { rising ? $0 > target : $0 < target }
+        return (first + after) / 2
+    }
+
+    /// The first number in a label: "−12°" is -12, "35 mm" is 35, "1,5 s" is 1.5.
+    static func number(in text: String) -> Double? {
+        var digits = ""
+        for ch in text.replacingOccurrences(of: "−", with: "-").replacingOccurrences(of: ",", with: ".") {
+            if ch.isASCII, ch.isNumber || ch == "." || (digits.isEmpty && (ch == "-" || ch == "+")) {
+                digits.append(ch)
+            } else if !digits.isEmpty {
+                break
+            }
+        }
+        return Double(digits)
     }
 }
 

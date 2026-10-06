@@ -152,12 +152,33 @@ public enum OOOSnapshot {
         }
     }
 
+    /// How the window and its views are sized, in the log, and a warning
+    /// when the editor needs more height than the window has (which leaves
+    /// the timeline off the bottom of a small screen).
+    private static func describeLayout(_ window: NSWindow) {
+        func s(_ r: NSRect) -> String { String(format: "%.0f,%.0f %.0f×%.0f", r.minX, r.minY, r.width, r.height) }
+        func s(_ z: NSSize) -> String { String(format: "%.0f×%.0f", z.width, z.height) }
+        let screen = window.screen ?? NSScreen.main
+        print("layout: window \(s(window.frame)), content \(s(window.contentLayoutRect)), min \(s(window.minSize)),"
+              + " screen \(s(screen?.frame ?? .zero)), visible \(s(screen?.visibleFrame ?? .zero))")
+        guard let content = window.contentView else { return }
+        for view in content.subviews {
+            print("layout:   \(type(of: view)) \(s(view.frame)) fitting \(s(view.fittingSize))")
+        }
+        let needed = content.subviews.map(\.fittingSize.height).max() ?? 0
+        if needed > window.contentLayoutRect.height + 1 {
+            print(String(format: "layout: the editor needs %.0f points of height and the window has %.0f",
+                         needed, window.contentLayoutRect.height))
+        }
+    }
+
     private static func capture(_ session: OOOSession) {
         guard let window = NSApp.windows.first(where: { $0.isVisible && !$0.isSheet && $0.contentView != nil && $0.frame.width > 400 })
         else {
             print("snapshot: no window")
             exit(1)
         }
+        describeLayout(window)
         // A Mac that would ask about screen capture waits for an answer no
         // one gives: after a few seconds the views are drawn instead.
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) {

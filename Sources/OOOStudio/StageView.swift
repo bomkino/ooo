@@ -313,7 +313,10 @@ struct StageStatus: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            if let busy = session.busy {
+            if session.comparing {
+                Text("Original").textStyle(.label).foregroundStyle(.primary)
+                Text("The slide exactly as supplied. Let go of \\ to see your look.").textStyle(.caption).foregroundStyle(.secondary)
+            } else if let busy = session.busy {
                 ProgressView().controlSize(.mini)
                 Text(busy).textStyle(.label).foregroundStyle(.primary)
             } else if session.project.slide.kind == .sample {

@@ -7,8 +7,10 @@
 # opening at five angles and three floors, how dark its type lands against
 # the slide as supplied, how its moves fly (motioncheck), and a draft video.
 # Then the titles, every backdrop look, every arrival (Weave and Develop also
-# as draft videos), export timings, and summary.txt with the numbers that
-# matter. Fails when motioncheck finds a problem in any set.
+# as draft videos), the wide tour moved onto a corrected slide (Replace
+# Slide), the stills Save Stills writes, export timings, a bench (with the
+# machine it ran on), how colour survives the encoder, and summary.txt with
+# the numbers that matter. Fails when motioncheck finds a problem in any set.
 #
 #   bash scripts/ci-renders.sh [out-dir]
 set -eo pipefail
@@ -21,6 +23,7 @@ mkdir -p "$OUT/fixtures"
 
 echo "== Test slides"
 "$LAB" fixture --kind wide --out "$OUT/fixtures/wide-2576x1080.png"
+"$LAB" fixture --kind wide-revised --out "$OUT/fixtures/wide-revised-2576x1080.png"
 "$LAB" fixture --kind standard --out "$OUT/fixtures/standard-1920x1080.png"
 "$LAB" fixture --kind wide --out "$OUT/fixtures/wide.pdf"
 "$LAB" fixture --kind wide --scale 2 --out "$OUT/fixtures/wide-5152x2160.png"
@@ -54,6 +57,15 @@ render_set standard-png --slide "$OUT/fixtures/standard-1920x1080.png"
 render_set wide-pdf --slide "$OUT/fixtures/wide.pdf"
 render_set wide-png-2x --slide "$OUT/fixtures/wide-5152x2160.png"
 
+echo "== Replace Slide: the wide tour, moved onto the corrected slide"
+mkdir -p "$OUT/replace"
+"$LAB" plan --slide "$OUT/fixtures/wide-2576x1080.png" | tee "$OUT/replace/before.txt"
+"$LAB" plan --slide "$OUT/fixtures/wide-2576x1080.png" --replace "$OUT/fixtures/wide-revised-2576x1080.png" | tee "$OUT/replace/after.txt"
+"$LAB" landings --slide "$OUT/fixtures/wide-2576x1080.png" --replace "$OUT/fixtures/wide-revised-2576x1080.png" --out "$OUT/replace/landings"
+
+echo "== Save Stills"
+"$LAB" stills --slide "$OUT/fixtures/wide-2576x1080.png" --out "$OUT/wide-png/stills"
+
 echo "== The loop back to the first frame (Leave ending)"
 "$LAB" loopcheck --slide "$OUT/fixtures/wide-2576x1080.png" --ending leave | tee "$OUT/loop.txt"
 "$LAB" render --slide "$OUT/fixtures/wide-2576x1080.png" --ending leave --quality draft --scale 0.5 --out "$OUT/wide-png/leave-draft.mp4"
@@ -65,6 +77,10 @@ TMP="$(mktemp -d)"
   "$LAB" render --slide "$OUT/fixtures/wide-2576x1080.png" --quality good --out "$OUT/wide-png/good.mp4" | tail -1 | sed "s|^|wide-png: |"
   "$LAB" render --slide "$OUT/fixtures/wide.pdf" --quality good --out "$TMP/wide-pdf.mp4" | tail -1 | sed "s|^|wide-pdf: |"
 } | tee "$OUT/timings.txt"
+
+echo "== Bench and colour, on the wide picture"
+"$LAB" bench --slide "$OUT/fixtures/wide-2576x1080.png" | tee "$OUT/bench.txt"
+"$LAB" colorcheck --slide "$OUT/fixtures/wide-2576x1080.png" | tee "$OUT/color.txt"
 
 echo "== Adaptive motion blur against full samples"
 "$LAB" blurcheck --quality good > "$OUT/sample/blur-good.txt"
@@ -94,6 +110,8 @@ echo "== Summary"
   echo "export timings (Good):"; sed 's/^/  /' "$OUT/timings.txt"
   echo "adaptive blur:"; sed 's/^/  /' "$OUT/blur.txt"
   echo "loop:"; tail -1 "$OUT/loop.txt" | sed 's/^/  /'
+  echo "bench:"; grep -v '^bench:' "$OUT/bench.txt" | sed 's/^/  /'
+  echo "colour:"; grep -v '^colorcheck:' "$OUT/color.txt" | sed 's/^/  /'
 } | tee "$OUT/summary.txt"
 
 # No planned move may fly or turn past the limits, cut an emphasis short, or jump.

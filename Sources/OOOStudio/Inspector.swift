@@ -20,7 +20,8 @@ struct InspectorPanel: View {
                 .textStyle(.caption)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
+                // Not fixed to its height: at no width at all that is a
+                // letter a line, and the window would never be shorter.
                 .padding(.horizontal, 18)
                 .padding(.top, 8)
             ChoiceRow(InspectorTab.allCases.map { ($0, $0.title) }, selection: $session.tab)
