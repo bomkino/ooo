@@ -246,7 +246,7 @@ public struct SlideScene: @unchecked Sendable {
         c.softEdge = fade * grow
         c.edgeScale = 0
         c.reflects = false
-        c.shadow = amount * 0.55
+        c.shadow = amount * 0.4
         c.shadowGround = 0
         c.layer = 2
         c.opacity = smoothstep(amount / 0.25)
