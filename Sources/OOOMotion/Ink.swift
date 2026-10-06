@@ -111,6 +111,18 @@ public struct Mark: Codable, Hashable, Sendable, Identifiable {
         return Float(min((t - time) / drawLength, 1))
     }
 
+    /// How long fresh ink takes to creep out to the edge of its fringe once
+    /// the pen has passed, in seconds.
+    public static let featherTime = 0.4
+    /// How long its ink takes to lie as it will stay: the drawing, then its
+    /// last stretch of fringe.
+    public var inkLength: Double { drawLength + Mark.featherTime }
+    /// How far its ink has come at `t`, 0…1 of `inkLength` (nil before it starts).
+    public func inkHead(at t: Double) -> Float? {
+        guard t >= time else { return nil }
+        return Float(min((t - time) / inkLength, 1))
+    }
+
     /// How much of it shows at `t` (its strokes still to come aside), 0…1:
     /// all of it once it starts, then, if it fades, gone a moment after it is
     /// drawn; if it stays, gone just before `until` (the card turning to
@@ -155,16 +167,25 @@ public struct Mark: Codable, Hashable, Sendable, Identifiable {
     }
 }
 
-/// A mark drawn into pixels: for each pixel, how much ink covers it and
-/// when (0…1 through the mark) the pen first got there.
+/// A mark drawn into pixels, as ink lies on paper: for each pixel, how much
+/// the pen laid there, how much crept out past its edge while it was wet, how
+/// deep it lies, and when it got there.
 public struct InkRaster: Sendable {
     public let width: Int
     public let height: Int
     /// The part of the slide it covers, as (u0, v0, u1, v1).
     public let region: (u0: Float, v0: Float, u1: Float, v1: Float)
-    /// Coverage, 0…1, row by row from the top.
+    /// The pen's own ink, 0…1, row by row from the top.
     public var cover: [Float]
-    /// When the pen got there, 0…1 through the mark.
+    /// Ink that crept out past the pen's edge while it was wet, 0…1: a soft,
+    /// uneven fringe, none under the pen's own ink.
+    public var halo: [Float]
+    /// How deep the pen's ink lies, 0…1: deepest along the line's edges,
+    /// where ink dries darkest, where the pen touched down and where the hand
+    /// slowed, and never quite even.
+    public var depth: [Float]
+    /// When the ink got there, 0…1 through the mark's `inkLength`: the pen's
+    /// own as the pen passed, its fringe a moment after.
     public var when: [Float]
 
     /// Draws `mark` on a slide `A` wide at `pixelsPerHeight`, no side longer than `maxSide`.
@@ -178,10 +199,20 @@ public struct InkRaster: Sendable {
         width = max(Int((wWorld * scale).rounded(.up)), 1)
         height = max(Int((hWorld * scale).rounded(.up)), 1)
         region = b
-        cover = Array(repeating: 0, count: width * height)
-        when = Array(repeating: 1, count: width * height)
-        let total = Float(mark.drawLength)
+        let count = width * height
+        cover = Array(repeating: 0, count: count)
+        halo = Array(repeating: 0, count: count)
+        depth = Array(repeating: 0, count: count)
+        when = Array(repeating: 1, count: count)
+        // Seconds, and how far each pixel lies from the nearest line's middle
+        // (1 at its edge), how long the hand lingered there, how much fringe.
+        var laidAt = [Float](repeating: .infinity, count: count)
+        var fringeAt = [Float](repeating: .infinity, count: count)
+        var middle = [Float](repeating: .infinity, count: count)
+        var linger = [Float](repeating: 0, count: count)
+        var fringe = [Float](repeating: 0, count: count)
         let half = 0.5 * mark.width * scale
+        let feather = Float(Mark.featherTime)
         // Into pixels: x across, y down.
         func px(_ p: InkPoint) -> (Float, Float) { ((p.x - b.u0) * A * scale, (p.y - b.v0) * scale) }
         for stroke in mark.strokes where !stroke.isEmpty {
@@ -194,6 +225,7 @@ public struct InkRaster: Sendable {
             }
             let length = along.last ?? 0
             var radius = [Float](repeating: half, count: n)
+            var slow = [Float](repeating: 1, count: n)
             for i in 0..<n {
                 let a = max(i - 1, 0), c = min(i + 1, n - 1)
                 let dt = max(stroke[c].t - stroke[a].t, 1e-3)
@@ -203,6 +235,7 @@ public struct InkRaster: Sendable {
                 let end = min(along[i], length - along[i])
                 let taper: Float = 0.55 + 0.45 * smoothstep(end / max(3 * half, 1))
                 radius[i] = half * pool * (n > 1 ? taper : 1)
+                slow[i] = n > 1 ? 1 - smoothstep(speed / 0.5) : 1
             }
             // Evened out, so the width never flickers point to point.
             if n > 2 {
@@ -213,8 +246,9 @@ public struct InkRaster: Sendable {
             for (i, j) in segments {
                 let (x0, y0) = pts[i], (x1, y1) = pts[j]
                 let r0 = radius[i], r1 = radius[j]
-                let t0 = stroke[i].t / max(total, 1e-3), t1 = stroke[j].t / max(total, 1e-3)
-                let reach = max(r0, r1) + 1.5
+                let t0 = stroke[i].t, t1 = stroke[j].t
+                // Wet ink creeps out a little past the pen's edge.
+                let reach = max(r0, r1) * 1.7 + 2
                 let minX = max(Int((min(x0, x1) - reach).rounded(.down)), 0)
                 let maxX = min(Int((max(x0, x1) + reach).rounded(.up)), width - 1)
                 let minY = max(Int((min(y0, y1) - reach).rounded(.down)), 0)
@@ -229,15 +263,78 @@ public struct InkRaster: Sendable {
                         let s = ll > 1e-6 ? clamp01(((cx - x0) * dx + (cy - y0) * dy) / ll) : 0
                         let d = hypotf(cx - (x0 + s * dx), cy - (y0 + s * dy))
                         let r = r0 + (r1 - r0) * s
-                        let c = clamp01(r + 0.5 - d)
-                        guard c > 0 else { continue }
-                        let k = y * width + x
-                        if c > cover[k] { cover[k] = c }
                         let at = t0 + (t1 - t0) * s
-                        if at < when[k] { when[k] = at }
+                        let k = y * width + x
+                        let c = clamp01(r + 0.5 - d)
+                        if c > 0 {
+                            if c > cover[k] { cover[k] = c }
+                            if at < laidAt[k] { laidAt[k] = at }
+                            middle[k] = min(middle[k], d / max(r, 0.5))
+                            linger[k] = max(linger[k], slow[i] + (slow[j] - slow[i]) * s)
+                        }
+                        // The fringe: fainter the further out, and later.
+                        let spread = 0.65 * r + 1
+                        let out = clamp01((d - r) / spread)
+                        guard out < 1 else { continue }
+                        let f = (1 - out) * (1 - out)
+                        if f > fringe[k] { fringe[k] = f }
+                        let wet = at + feather * powf(out, 0.8)
+                        if wet < fringeAt[k] { fringeAt[k] = wet }
+                    }
+                }
+            }
+            // Where the pen touched down, the ink pooled for a moment.
+            let (sx, sy) = pts[0], sr = radius[0] * 1.6
+            let lo = (max(Int(sx - 2 * sr), 0), max(Int(sy - 2 * sr), 0))
+            let hi = (min(Int(sx + 2 * sr), width - 1), min(Int(sy + 2 * sr), height - 1))
+            if lo.0 <= hi.0, lo.1 <= hi.1 {
+                for y in lo.1...hi.1 {
+                    for x in lo.0...hi.0 {
+                        let d = hypotf(Float(x) + 0.5 - sx, Float(y) + 0.5 - sy) / sr
+                        let k = y * width + x
+                        linger[k] = max(linger[k], expf(-d * d))
                     }
                 }
             }
         }
+        // Never quite even: a slow mottle across the line and a fine grain,
+        // the same each time the mark is drawn.
+        let seed = mark.strokes.first?.first.map { Int($0.x * 9973) &* 31 &+ Int($0.y * 7919) } ?? 0
+        let coarse = InkNoise(seed: seed, period: max(6 * half, 4))
+        let fine = InkNoise(seed: seed &+ 1, period: max(1.2 * half, 2))
+        let edge = InkNoise(seed: seed &+ 2, period: max(1.5 * half, 2.5))
+        let total = Float(mark.inkLength)
+        for y in 0..<height {
+            for x in 0..<width {
+                let k = y * width + x
+                let fx = Float(x), fy = Float(y)
+                let c = cover[k]
+                let rim = middle[k].isFinite ? smoothstep(0.3, 1.0, middle[k]) : 0
+                let mottle = 0.16 * (coarse.at(fx, fy) - 0.5) + 0.07 * (fine.at(fx, fy) - 0.5)
+                depth[k] = c > 0 ? clamp01(0.42 + 0.36 * rim + 0.28 * linger[k] + mottle) : 0
+                let h = (1 - c) * fringe[k] * 0.42 * (0.45 + 1.1 * edge.at(fx, fy))
+                halo[k] = h > 0.004 ? clamp01(h) : 0
+                let amount = c + halo[k]
+                guard amount > 0 else { continue }
+                let laid = c > 0 ? laidAt[k] : 0, wet = halo[k] > 0 ? fringeAt[k] : 0
+                when[k] = clamp01((laid * c + wet * halo[k]) / amount / total)
+            }
+        }
+    }
+}
+
+/// Smooth value noise over pixels, 0…1, for the unevenness of ink.
+struct InkNoise {
+    let seed: Int
+    let period: Float
+
+    func at(_ x: Float, _ y: Float) -> Float {
+        let u = x / period, v = y / period
+        let i = Int(floorf(u)), j = Int(floorf(v))
+        let fu = smoothstep(u - Float(i)), fv = smoothstep(v - Float(j))
+        func corner(_ a: Int, _ b: Int) -> Float { 0.5 + 0.5 * hashSigned(a &* 73856093 ^ b &* 19349663, UInt32(truncatingIfNeeded: seed)) }
+        let top = lerp(corner(i, j), corner(i + 1, j), fu)
+        let bottom = lerp(corner(i, j + 1), corner(i + 1, j + 1), fu)
+        return lerp(top, bottom, fv)
     }
 }

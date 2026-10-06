@@ -34,7 +34,7 @@ struct CardU {
     float4 spotP;       // spotlight dim (+ outside, − inside), feather, own shadow ground (1), its z
     float4 soft;        // x: width (world) over which the card's edges fade out; 0 = crisp, y: surface amount, z: develop
     float4 melt;        // a melt through the card: centre x, centre y, radius, front (+ washing in, − washing away, 0 none)
-    float4 ink;         // ink drawn by hand: how far drawn, head softness, on, unused
+    float4 ink;         // ink drawn by hand: how far come, head softness, 1 + body (0: none), 0 flat / 1 glaze / 2 its body
 };
 
 // How much of a card a melt leaves showing at world point `wp`: inside its
@@ -338,14 +338,34 @@ fragment float4 card_fragment(CardVOut in [[stage_in]], bool facing [[front_faci
     m *= inside;
 
     if (c.ink.z > 0.5) {
-        // Ink: it shows where the pen has been by now, its head soft, in the
-        // pen's colour, lying flat on the card.
-        float cover = m.g;
-        float when = cover > 1e-4 ? m.r / cover : 1.0;
+        // Ink, lying on the card where it has come by now, the pen's head soft.
+        float cover = m.g, fringe = m.b;
+        float when = cover + fringe > 1e-4 ? m.r / (cover + fringe) : 1.0;
         float drawn = 1.0 - smoothstep(c.ink.x - c.ink.y, c.ink.x, when);
-        float ia = cover * drawn * mask * c.sizeCorner.w * c.color.a;
-        if (ia <= 0.0) discard_fragment();
-        return float4(c.color.rgb * ia, ia);
+        float shown = drawn * mask * c.sizeCorner.w;
+        float3 lit = c.color.rgb * c.color.a;
+        int pass = int(c.ink.w + 0.5);
+        if (pass == 0) {
+            // 1.0.1's flat ink: a felt-tip's colour laid over the slide.
+            float ia = cover * shown;
+            if (ia <= 0.0) discard_fragment();
+            return float4(lit * ia, ia);
+        }
+        // A glaze, as watercolour lies: the slide shows through it, deepest
+        // along the line's edges and where the pen rested, a faint fringe
+        // where it crept out while wet. Its depth is how many layers of the
+        // pen's colour the light passes through.
+        float lie = cover > 1e-4 ? saturate(m.a / cover) : 0.5;
+        float depth = (cover * mix(0.55, 1.35, lie) + fringe * 0.6) * shown;
+        if (depth <= 1e-4) discard_fragment();
+        if (pass == 1) {
+            // Multiplied into the slide under it (Beer–Lambert).
+            return float4(pow(max(c.color.rgb, float3(1e-3)), float3(depth)), 1.0);
+        }
+        // Its body, screened over: on a dark slide, where a glaze vanishes,
+        // the ink still shows.
+        float body = saturate(c.ink.z - 1.0);
+        return float4(lit * saturate(depth) * body, 0.0);
     }
 
     int surface = int(c.fx.w + 0.5);

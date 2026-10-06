@@ -77,6 +77,8 @@ public final class StageRenderer {
 
     struct Pipelines {
         let card: MTLRenderPipelineState
+        let glaze: MTLRenderPipelineState
+        let body: MTLRenderPipelineState
         let shadow: MTLRenderPipelineState
         let accumulate: MTLRenderPipelineState
         let copy: MTLRenderPipelineState
@@ -90,6 +92,8 @@ public final class StageRenderer {
         let fmt = Self.hdrFormat
         let p = Pipelines(
             card: try gpu.renderPipeline(.init(library: "stage", vertex: "card_vertex", fragment: "card_fragment", color: fmt, blend: .over), library: library),
+            glaze: try gpu.renderPipeline(.init(library: "stage", vertex: "card_vertex", fragment: "card_fragment", color: fmt, blend: .multiply), library: library),
+            body: try gpu.renderPipeline(.init(library: "stage", vertex: "card_vertex", fragment: "card_fragment", color: fmt, blend: .screen), library: library),
             shadow: try gpu.renderPipeline(.init(library: "stage", vertex: "shadow_vertex", fragment: "shadow_fragment", color: fmt, blend: .darken), library: library),
             accumulate: try gpu.renderPipeline(.init(library: "stage", vertex: "fs_vertex", fragment: "accumulate_fragment", color: fmt, blend: .add), library: library),
             copy: try gpu.renderPipeline(.init(library: "stage", vertex: "fs_vertex", fragment: "copy_fragment", color: fmt), library: library),
@@ -334,12 +338,18 @@ public final class StageRenderer {
                 enc.setFragmentSamplerState(sampler, index: 0)
                 enc.drawIndexedPrimitives(type: .triangle, indexCount: gridIndexCount, indexType: .uint32, indexBuffer: gridIndices, indexBufferOffset: 0)
             }
-            enc.setRenderPipelineState(p.card)
-            enc.setVertexBytes(&cu, length: MemoryLayout<CardUniforms>.stride, index: 2)
-            enc.setFragmentBytes(&cu, length: MemoryLayout<CardUniforms>.stride, index: 2)
-            enc.setFragmentTexture(tex, index: 0)
-            enc.setFragmentSamplerState(sampler, index: 0)
-            enc.drawIndexedPrimitives(type: .triangle, indexCount: gridIndexCount, indexType: .uint32, indexBuffer: gridIndices, indexBufferOffset: 0)
+            // Glazed ink twice: the slide seen through it, then its body over that.
+            let draws: [(MTLRenderPipelineState, Float)] = card.ink.z > 0.5 && card.ink.w > 0.5
+                ? [(p.glaze, 1), (p.body, 2)] : [(p.card, 0)]
+            for (pipeline, step) in draws {
+                if card.ink.z > 0.5 { cu.ink.w = step }
+                enc.setRenderPipelineState(pipeline)
+                enc.setVertexBytes(&cu, length: MemoryLayout<CardUniforms>.stride, index: 2)
+                enc.setFragmentBytes(&cu, length: MemoryLayout<CardUniforms>.stride, index: 2)
+                enc.setFragmentTexture(tex, index: 0)
+                enc.setFragmentSamplerState(sampler, index: 0)
+                enc.drawIndexedPrimitives(type: .triangle, indexCount: gridIndexCount, indexType: .uint32, indexBuffer: gridIndices, indexBufferOffset: 0)
+            }
         }
         }
         enc.endEncoding()

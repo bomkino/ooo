@@ -23,7 +23,8 @@ import StageKit
 //                                           deck's cover, 2576 × 1080)
 //   ooo-lab changes --out grid.png          each change of slide (down), turning over or
 //                                           melting, at six moments (across)
-//   ooo-lab marks --out grid.png            each mark drawn on the card, drawing on and after
+//   ooo-lab marks --out grid.png            each mark drawn on the card, drawing on and after;
+//                                           --close c.png: each up close; --ink flat: 1.0.1's ink
 //   ooo-lab lifts --out grid.png            the stage rising to leave room for you, and a
 //                                           close-up while it is up, the room marked
 //   ooo-lab stills --out dir                the stills Save Stills writes: the opening, then
@@ -665,8 +666,11 @@ case "turns", "changes":
 
 case "marks":
     // Each mark drawing on, a row each: as it starts, a third and two thirds
-    // drawn, drawn, and a moment later (gone, if it fades).
-    let scene = loadScene()
+    // drawn, drawn, and a moment later (gone, if it fades). With --close, each
+    // mark up close at full size as well: two thirds drawn, just drawn (its
+    // wet fringe still creeping out) and settled. --ink flat draws 1.0.1's ink.
+    var scene = loadScene()
+    scene.flatInk = value("--ink") == "flat"
     let marks = project.marks ?? []
     guard !marks.isEmpty else { fail("marks needs --marks demo") }
     let out = URL(fileURLWithPath: value("--out") ?? "marks.png")
@@ -685,6 +689,39 @@ case "marks":
             }
         }
         try ImageOutput.writePNG(ctx.makeImage()!, to: out)
+        if let close = value("--close") {
+            let fw = project.format.width, fh = project.format.height, side = 420
+            let C = Float(fw) / Float(fh)
+            guard let board = CGContext(data: nil, width: side * 3, height: side * marks.count, bitsPerComponent: 8, bytesPerRow: 0,
+                                        space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { fail("no context") }
+            for (row, m) in marks.enumerated() {
+                let k = project.pageIndex(m.page)
+                guard let b = m.bounds(slideAspect: project.slide(k).aspect) else { continue }
+                let corners = [(b.u0, b.v0), (b.u1, b.v0), (b.u0, b.v1), (b.u1, b.v1)].compactMap {
+                    scene.canvasPoint($0.0, $0.1, page: k, at: m.drawn, canvasAspect: C)
+                }
+                guard !corners.isEmpty else { continue }
+                let xs = corners.map { CGFloat($0.x + 1) / 2 * CGFloat(fw) }, ys = corners.map { CGFloat(1 - $0.y) / 2 * CGFloat(fh) }
+                let cx = (xs.min()! + xs.max()!) / 2, cy = (ys.min()! + ys.max()!) / 2
+                let size = max(xs.max()! - xs.min()!, ys.max()! - ys.min()!) * 1.25
+                let crop = CGRect(x: cx - size / 2, y: cy - size / 2, width: size, height: size).integral
+                // Only what is in the frame, in its place in the square.
+                let shown = crop.intersection(CGRect(x: 0, y: 0, width: fw, height: fh))
+                guard !shown.isEmpty else { continue }
+                let k2 = CGFloat(side) / crop.width
+                let cell = CGRect(x: (shown.minX - crop.minX) * k2,
+                                  y: (crop.maxY - shown.maxY) * k2, width: shown.width * k2, height: shown.height * k2)
+                for (c, t) in [m.time + m.drawLength * 2 / 3, m.drawn + 0.08, m.drawn + 0.7].enumerated() {
+                    let img = try stage.still(scene, at: min(max(t, 0), scene.duration - 0.02), width: fw, height: fh, samples: 8)
+                    guard let part = img.cropping(to: shown) else { continue }
+                    board.interpolationQuality = .high
+                    board.draw(part, in: cell.offsetBy(dx: CGFloat(c * side), dy: CGFloat((marks.count - 1 - row) * side)))
+                }
+            }
+            try ImageOutput.writePNG(board.makeImage()!, to: URL(fileURLWithPath: close))
+            print("marks up close \(close): two thirds drawn, just drawn, settled (across)")
+        }
         print("marks \(out.path): " + marks.map { String(format: "%@ on slide %d at %.2f s, %@", $0.color.title, project.pageIndex($0.page) + 1,
                                                           $0.time, $0.fades ? "fades" : "stays") }.joined(separator: "; "))
     } catch {
@@ -828,7 +865,7 @@ default:
       shaders | still | sheet | render | analyze | plan | path | landings | stills | openings | titles | changes | marks | lifts
       backdrops | arrivals | blurcheck | inkcheck | motioncheck | loopcheck | bench | colorcheck | fixture
       --project file.ooo | --slide file.pdf|png [--replace file]  --format reel|portrait|square|landscape  --floor none|soft|mirror  --out path
-      --more file,file [--melt 2|all] [--home]  --marks demo  --lift whole|4-10,14- [--room 0.42]
+      --more file,file [--melt 2|all] [--home]  --marks demo [--ink flat]  --lift whole|4-10,14- [--room 0.42]
     """)
 }
 

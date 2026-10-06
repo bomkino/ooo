@@ -104,10 +104,13 @@ public struct CardPose: Sendable {
     /// negative one, only what lies beyond it (washing away). The front is
     /// the width of its soft, ragged edge. A zero front: none.
     public var melt: SIMD4<Float> = .zero
-    /// Ink drawn by hand, as (how far drawn 0…1, the pen head's softness, on,
-    /// unused). Its texture holds, premultiplied, when the pen reached each
-    /// texel (red, 0…1 through the drawing) and how much ink is there (green);
-    /// the ink is drawn in `color`.
+    /// Ink drawn by hand, as (how far the ink has come 0…1, the pen head's
+    /// softness, 1 + its body 0…1 (0: no ink), style: 0 flat, 1 a glaze).
+    /// Its texture holds the pen's own ink (green), the wet fringe past its
+    /// edge (blue), how deep the ink lies (alpha, premultiplied by green) and
+    /// when the ink got there (red, 0…1, premultiplied by green and blue).
+    /// The ink is `color.rgb`, lit by `color.a`. A glaze is drawn twice: the
+    /// slide seen through it, multiplied in, then its body, screened over.
     public var ink: SIMD4<Float> = .zero
 
     /// A plain surface such as a mat, ledge or wire. Colour is sRGB.

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.2 — 6 October 2026
+
+Marks that lie on the slide the way real ink does.
+
+**Draw on the slide**
+- The pen's ink is now a glaze, the way watercolour lies: the slide shows through it, so a word you underline still reads under the line, and yellow works like a highlighter. On a dark slide the ink lies thicker, so it still shows. White chalk stays solid.
+- The ink gathers darker along the edges of the line and where the pen touched down. Just after the pen passes, a faint fringe creeps out a hair past the line. And it's never quite even.
+
+**Made and checked**
+- `ooo-lab marks --close` draws each mark up close at full size, as it's drawn, just drawn and settled, and `--ink flat` draws 1.0.1's ink, so CI shows the old and new ink side by side on light and dark slides.
+
 ## 1.0.1 — 6 October 2026
 
 One card in your hand through several slides, marks drawn by hand, a scratch take recorded right in OOO, and room at the bottom of the frame for you on camera.
