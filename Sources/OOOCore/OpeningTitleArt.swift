@@ -73,6 +73,10 @@ public enum OpeningTitleArt {
             size *= 0.92
         } while size > H * 0.012
 
+        // Balanced lines: the narrowest measure that keeps the same number of
+        // lines, so a last line is never left with a word or two.
+        let titleWidth = block.title.map { balanced($0, width: maxWidth) } ?? maxWidth
+        if let t = block.title { block.titleSize = measure(t, width: titleWidth) }
         let total = block.kickerSize.height + block.gap + block.titleSize.height
         // CoreGraphics counts up from the bottom.
         var y = H - (bandTop + (bandHeight - total) / 2)
@@ -84,7 +88,7 @@ public enum OpeningTitleArt {
         }
         if let t = block.title {
             y -= block.titleSize.height
-            frame(t, in: CGRect(x: (W - maxWidth) / 2, y: y, width: maxWidth, height: block.titleSize.height + 2), ctx)
+            frame(t, in: CGRect(x: (W - titleWidth) / 2, y: y, width: titleWidth, height: block.titleSize.height + 2), ctx)
         }
         return ctx.makeImage()
     }
@@ -144,6 +148,18 @@ public enum OpeningTitleArt {
         let fit = CTFramesetterSuggestFrameSizeWithConstraints(setter, CFRange(location: 0, length: 0), nil,
                                                                CGSize(width: width, height: .greatestFiniteMagnitude), nil)
         return CGSize(width: ceil(fit.width), height: ceil(fit.height))
+    }
+
+    /// The narrowest width that sets `s` in no more lines than `width` does.
+    static func balanced(_ s: NSAttributedString, width: CGFloat) -> CGFloat {
+        let lines = lineCount(s, width: width)
+        guard lines > 1 else { return width }
+        var lo = width / CGFloat(lines) * 0.8, hi = width
+        for _ in 0..<12 {
+            let mid = (lo + hi) / 2
+            if lineCount(s, width: mid) <= lines { hi = mid } else { lo = mid }
+        }
+        return min(ceil(hi) + 2, width)
     }
 
     static func lineCount(_ s: NSAttributedString, width: CGFloat) -> Int {

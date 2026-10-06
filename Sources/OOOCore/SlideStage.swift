@@ -220,8 +220,11 @@ public struct SlideScene: @unchecked Sendable {
     static func cutOut(_ r: SIMD4<Float>, slideAspect A: Float, amount: Float, patch: DetailCache.Patch?, light: Float,
                        fade: Float) -> CardPose {
         let ru = max(r.z - r.x, 1e-4), rv = max(r.w - r.y, 1e-4)
-        let lift = amount * (0.012 + 0.16 * rv)
-        let grow = 1 + 0.018 * amount
+        // Low and barely larger: what shows through its fading margin then
+        // lines up with the slide beneath, rather than doubling the lines
+        // that cross it.
+        let lift = amount * (0.006 + 0.08 * rv)
+        let grow = 1 + 0.01 * amount
         let center = SIMD3(((r.x + r.z) / 2 - 0.5) * A, 0.5 - (r.y + r.w) / 2, lift)
         var c = CardPose(media: 0, occurrence: 2, position: center, rotation: .zero, size: SIMD2(A * ru, rv) * grow)
         // The texture holding region P shows region r when its window is the
@@ -243,7 +246,7 @@ public struct SlideScene: @unchecked Sendable {
         c.softEdge = fade * grow
         c.edgeScale = 0
         c.reflects = false
-        c.shadow = amount * 0.75
+        c.shadow = amount * 0.55
         c.shadowGround = 0
         c.layer = 2
         c.opacity = smoothstep(amount / 0.25)

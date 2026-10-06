@@ -422,7 +422,7 @@ vertex ShadowVOut shadow_vertex(uint vid [[vertex_id]],
     float centreHeight = max((c.model * float4(0.0, 0.0, 0.0, 1.0)).z - groundZ, 0.0);
     float reach = max(w, h) * 0.5;
     float sigmaMax = mode.z + mode.w * (centreHeight + reach);
-    float margin = max(max(mode.y, sigmaMax * 3.2), c.soft.x * 2.0);
+    float margin = max(max(mode.y, sigmaMax * 3.2), c.soft.x * 3.6);
     float2 local = float2((g.x - 0.5) * (w + 2.0 * margin), (0.5 - g.y) * (h + 2.0 * margin));
     float4 world = c.model * float4(local, 0.0, 1.0);
     float height = max(world.z - groundZ, 0.0);
@@ -449,11 +449,12 @@ fragment float4 shadow_fragment(ShadowVOut in [[stage_in]],
     float2 b = abs(in.local) - float2(w, h) * 0.5;
     d = max(d, max(b.x, b.y));
     float sigma = max(in.sigma, 1e-4);
-    // A card whose edges fade casts the shadow of its solid middle, as
-    // softly as it fades, so no dark rim shows through the fade.
+    // A card whose edges fade casts a diffuse shadow from inside its solid
+    // middle, softer than the fade, so neither a dark rim nor the outline of
+    // a box shows through it.
     if (c.soft.x > 0.0) {
-        d += c.soft.x * 0.8;
-        sigma = max(sigma, c.soft.x * 0.6);
+        d += c.soft.x * 1.0;
+        sigma = max(sigma, c.soft.x * 1.1);
     }
     float outside = max(d, 0.0);
     float a = exp(-outside * outside / (2.0 * sigma * sigma));

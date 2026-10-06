@@ -7,7 +7,7 @@
 - `CardPose` gains `window` (a texture that holds one region of its media, so a sharp detail can be laid exactly over its card), `edgeScale`, a soft spotlight (`spot`, `spotDim`, `spotFeather`) and `shadowGround` (a cut-out's shadow falls on the sheet it was lifted from).
 - `StageRenderer.Request.backdropUV` and the `copy_uv_fragment` shader let the background answer the camera with a touch of parallax.
 - The near plane adapts to the camera's distance, so extreme close-ups keep their depth precision.
-- `CardPose.softEdge` fades a card's edges (a detail lifted off a slide blends into it), `CardPose.reflects` keeps an overlaid detail out of the mirror floor, and `StageFrame.reflectionFade` and `reflectionBlur` make a soft floor. A soft-edged card casts the shadow of its solid middle.
+- `CardPose.softEdge` fades a card's edges (a detail lifted off a slide blends into it), `CardPose.reflects` keeps an overlaid detail out of the mirror floor, and `StageFrame.reflectionFade` and `reflectionBlur` make a soft floor. A soft-edged card casts a diffuse shadow from inside its solid middle.
 - `StageFrame.travel(to:width:height:)` measures how far anything in view moves between two frames, in pixels, so motion blur takes only the samples a frame needs.
 - `TitleCompositor` is public, with an `encode` that takes the title's opacity and rise directly, for a scene that times its own title.
 
