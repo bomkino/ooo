@@ -27,8 +27,9 @@ shot() {
   local name="$1"; shift
   "$APP" --snapshot "$OUT/$name.png" "$@" > "$OUT/$name.log" 2>&1 &
   local pid=$!
-  # The app gives up by itself after two minutes; this is the backstop.
-  ( sleep 150; kill -9 "$pid" 2>/dev/null ) &
+  # The app gives up by itself after two minutes; this is the backstop. A
+  # window that never gave up is sampled first, so its log says where it hung.
+  ( sleep 135; sample "$pid" 3 -file "$OUT/$name.sample.txt" >/dev/null 2>&1; kill -9 "$pid" 2>/dev/null ) &
   local watchdog=$!
   wait "$pid"
   local rc=$?
@@ -44,6 +45,10 @@ shot() {
   else
     echo "  $name.png FAILED (exit $rc)"
     tail -5 "$OUT/$name.log" | sed 's/^/    /'
+    if [ -s "$OUT/$name.sample.txt" ]; then
+      echo "    where its main thread was:"
+      grep -m1 -A70 'main-thread' "$OUT/$name.sample.txt" | sed 's/^/    /' || true
+    fi
     failures=$((failures + 1))
   fi
 }

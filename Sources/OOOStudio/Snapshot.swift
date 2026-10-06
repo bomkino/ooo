@@ -54,7 +54,14 @@ public enum OOOSnapshot {
         UserDefaults.standard.setVolatileDomain(args, forName: UserDefaults.argumentDomain)
         DispatchQueue.main.asyncAfter(deadline: .now() + 120) {
             print("snapshot: timed out")
-            exit(3)
+            fflush(stdout)
+            _exit(3)
+        }
+        // Only a main thread that never comes back misses the deadline above:
+        // say so, with everything printed so far, before the script samples it.
+        DispatchQueue.global().asyncAfter(deadline: .now() + 125) {
+            print("snapshot: the main thread has not answered for at least five seconds")
+            fflush(stdout)
         }
     }
 

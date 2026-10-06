@@ -398,8 +398,11 @@ struct VoiceLane: View {
             } else {
                 HStack(spacing: 8) {
                     Image(systemName: "waveform").foregroundStyle(.secondary)
-                    Text("Record your voiceover first, then drop it here. Each move will land just before you say its words.")
+                    Text("Talk it through as it plays, or drop in a recording. Each move will land just before you say its words.")
                         .textStyle(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Button(session.recorder.isActive ? "Stop" : "Record") { session.toggleRecording() }
+                        .buttonStyle(QuietButtonStyle())
+                        .help("Counts you in, then records you as the video plays from the start (⌥⌘R)")
                     Button("Choose Voiceover…") { OOOCommands.chooseVoice(session) }
                         .buttonStyle(QuietButtonStyle())
                     Spacer(minLength: 0)
