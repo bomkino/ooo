@@ -3,7 +3,7 @@
 # ZIP with pitch.dog's key and puts the signed appcast.xml on it. Nothing is
 # rebuilt. Run on the release Mac, from this repository on main:
 #
-#   bash scripts/sign-release.sh v1.0.0
+#   bash scripts/sign-release.sh v1.0.1 [--only]
 #
 #   1. downloads the release's ZIP and SHA256SUMS.txt, and checks one against the other
 #   2. checks the app inside is that version and trusts pitch.dog's key
@@ -12,6 +12,9 @@
 #   4. checks the signature with the public key inside the app, as Sparkle will
 #   5. uploads appcast.xml to the release, replacing the one CI carried over
 #   6. confirms releases/latest/download/appcast.xml now names this version
+#   7. with --only, then deletes every other release, so this one is the only
+#      version on the releases page (their tags stay). Nothing reads them once
+#      the feed names this version: installed copies update from this release.
 #
 # Tests sign a local folder instead (no download, upload or feed check):
 #
@@ -35,8 +38,10 @@ fail() { echo "sign-release: $*" >&2; exit 1; }
 case "${1:-}" in
   --dir) LOCAL="${2:?--dir needs a folder}"; TAG="" ;;
   v[0-9]*.[0-9]*.[0-9]*) LOCAL=""; TAG="$1" ;;
-  *) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
+ONLY=""
+for a in "$@"; do [ "$a" = --only ] && ONLY=1; done
 
 [ -x "$SPARKLE_BIN/generate_appcast" ] || fail "Sparkle's tools aren't at $SPARKLE_BIN (see docs/UPDATES.md)"
 [ -f "$SPARKLE_KEY" ] || fail "the signing key isn't at $SPARKLE_KEY"
@@ -116,6 +121,14 @@ echo "== 6. The feed installed copies read"
 for _ in $(seq 24); do
   if curl -fsSL "https://github.com/$REPO/releases/latest/download/appcast.xml" | grep -Eq "shortVersionString(>|=\")$VERSION[<\"]"; then
     echo "== Done: installed copies of OOO will offer $VERSION"
+    if [ -n "$ONLY" ] && [ "$LATEST" = "$TAG" ]; then
+      echo "== 7. $TAG as the only release"
+      for old in $(gh release list -R "$REPO" --limit 100 --json tagName --jq '.[].tagName'); do
+        [ "$old" = "$TAG" ] && continue
+        gh release delete "$old" -R "$REPO" -y && echo "   deleted the $old release (its tag stays)"
+      done
+    fi
+    [ -z "$ONLY" ] || [ "$LATEST" = "$TAG" ] || echo "   kept the other releases: $TAG isn't the Latest one"
     exit 0
   fi
   sleep 5

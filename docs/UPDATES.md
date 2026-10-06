@@ -25,7 +25,7 @@ A release is made in two steps: CI publishes it, then the release Mac signs its 
 
 **1. Publish, from anywhere.** On `main`, raise `VERSION` in `scripts/build-app.sh` (always upwards) and give it a section in `CHANGELOG.md`: its first paragraph becomes the notes' bold opening line, the rest their What's new. Then run **release** from the Actions tab (`.github/workflows/release.yml`) on `main`. It refuses a version that isn't higher than the Latest release, runs the tests and `scripts/test-update.sh`, packs the app with `scripts/make-release.sh` and publishes `vx.y.z`, marked Latest, with the disk image, the ZIP, `SHA256SUMS.txt` and notes in the shape of Drift's.
 
-It also carries the previous release's `appcast.xml` over unchanged, after checking it names an older version whose ZIP still downloads. So every installed copy, old and new, keeps reading "up to date" until the next step. People can already download the new version by hand.
+It also carries the previous release's `appcast.xml` over unchanged, after checking it names an older version whose ZIP still downloads. So every installed copy, old and new, keeps reading "up to date" until the next step. People can already download the new version by hand. If a release was never signed, the feed it carries still names the last signed version (1.0.0's names 0.2.0), and that is fine: the next signed release replaces it, and the unsigned one never needs signing.
 
 **2. Sign the update, on the release Mac.** From this repository on `main`:
 
@@ -34,6 +34,8 @@ bash scripts/sign-release.sh vx.y.z
 ```
 
 It downloads the release's ZIP and checks it against `SHA256SUMS.txt`, checks the app inside is that version and trusts pitch.dog's key, signs the ZIP into a new `appcast.xml` (with the version's changelog section for the update window), checks the signature with the public key inside the app, uploads the feed to the release, replacing the carried one, and waits until `releases/latest/download/appcast.xml` names the new version. From then on, installed copies offer it. Nothing is rebuilt, so the ZIP people download by hand and the one the updater installs are the same file.
+
+Add `--only` to make it the only release once its update is live: it then deletes every other release (their tags stay), which is safe only then, because a carried feed can point at an older release's ZIP.
 
 It needs the GitHub CLI signed in (`gh auth login`) and Sparkle's tools and the key in their usual places; `SPARKLE_BIN` and `SPARKLE_KEY` point elsewhere.
 

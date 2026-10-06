@@ -75,10 +75,13 @@ jobs:
             BUILD="$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" dist/OOO.app/Contents/Info.plist)"
             [ -n "$FEED_BUILD" ] && [ "$FEED_BUILD" -lt "$BUILD" ] \
               || { echo "::error::The carried feed names build '$FEED_BUILD', not one below $BUILD"; exit 1; }
+            FEED_VERSION="$(xmllint --xpath 'string(//*[local-name()="shortVersionString"][1])' release/appcast.xml)"
+            [ -n "$FEED_VERSION" ] || FEED_VERSION="$(grep -o 'shortVersionString="[^"]*"' release/appcast.xml | head -1 | cut -d'"' -f2)"
+            echo "FEED_VERSION=$FEED_VERSION" >> "$GITHUB_ENV"
             URL="$(grep -o 'url="[^"]*"' release/appcast.xml | head -1 | cut -d'"' -f2)"
             # A ranged GET: GitHub's release downloads refuse HEAD after the redirect.
             curl -fsSL -r 0-99 -o /dev/null "$URL" || { echo "::error::The carried feed's download ($URL) doesn't answer"; exit 1; }
-            echo "Carrying over $LATEST's feed: build $FEED_BUILD, $URL"
+            echo "Carrying over $LATEST's feed: $FEED_VERSION (build $FEED_BUILD), $URL"
           fi
           # The release notes, in the shape of Drift's, Galileo's and Backdrop's:
           # the changelog section's opening line, what's new, how to install,
@@ -126,13 +129,14 @@ jobs:
         run: |
           gh release create "v$VERSION" release/* --target "$GITHUB_SHA" --latest \
             --title "OOO $VERSION — Apple silicon Mac" --notes-file notes.md
-          # The feed every copy reads still names the version before this one,
-          # until scripts/sign-release.sh replaces it.
+          # The feed every copy reads is still the one carried over (it names
+          # the last version signed, which can be older than the Latest
+          # release), until scripts/sign-release.sh replaces it.
           [ -n "$LATEST" ] || exit 0
           for _ in $(seq 12); do
             FEED="$(curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/appcast.xml" || true)"
-            if echo "$FEED" | grep -Eq "shortVersionString(>|=\")${LATEST#v}[<\"]"; then
-              echo "The feed still offers ${LATEST#v}. Next, on the release Mac: bash scripts/sign-release.sh v$VERSION"
+            if echo "$FEED" | grep -Eq "shortVersionString(>|=\")${FEED_VERSION}[<\"]"; then
+              echo "The feed still offers $FEED_VERSION. Next, on the release Mac: bash scripts/sign-release.sh v$VERSION"
               exit 0
             fi
             sleep 5
