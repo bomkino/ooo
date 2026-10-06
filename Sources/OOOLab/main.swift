@@ -359,7 +359,7 @@ case "openings":
                 p.floor = floor
                 p.shots = []
                 p.length = p.arrive.end + 3
-                let scene = SlideScene(project: p, base: base.base, details: base.details)
+                let scene = SlideScene(project: p, bases: base.bases, details: base.details)
                 let img = try stage.still(scene, at: p.arrive.end + 1.2, width: cw, height: ch, samples: 4)
                 ctx.draw(img, in: CGRect(x: c * cw, y: (floors.count - 1 - r) * ch, width: cw, height: ch))
             }
@@ -393,7 +393,7 @@ case "backdrops":
                 if side == 1, let colours { p.backdrop.palette = colours.atLightness(of: look.defaults.palette) }
                 p.shots = []
                 p.length = p.arrive.end + 3
-                let scene = SlideScene(project: p, base: base.base, details: base.details)
+                let scene = SlideScene(project: p, bases: base.bases, details: base.details)
                 let img = try stage.still(scene, at: p.arrive.end + 1.2, width: cw, height: ch, samples: 4)
                 let (r, c) = (i / pairs, (i % pairs) * 2 + side)
                 ctx.draw(img, in: CGRect(x: c * cw, y: (rows - 1 - r) * ch, width: cw, height: ch))
@@ -424,7 +424,7 @@ case "arrivals":
             p.title = nil
             p.shots = []
             p.length = p.arrive.end + 3
-            let scene = SlideScene(project: p, base: base.base, details: base.details)
+            let scene = SlideScene(project: p, bases: base.bases, details: base.details)
             for (c, m) in moments.enumerated() {
                 let t = m < 1 ? p.arrive.duration * m : p.arrive.end + 0.3
                 let img = try stage.still(scene, at: t, width: cw, height: ch, samples: 6)
@@ -455,7 +455,7 @@ case "titles":
             p.title = words
             p.title?.face = face
             p.makeRoomForOpening()
-            let scene = SlideScene(project: p, base: base.base, details: base.details)
+            let scene = SlideScene(project: p, bases: base.bases, details: base.details)
             let rest = (scene.choreography.beats.first?.land ?? 2) + 1.0
             let img = try stage.still(scene, at: rest, width: cw, height: ch, samples: 4)
             ctx.draw(img, in: CGRect(x: c * cw, y: ch, width: cw, height: ch))
@@ -463,7 +463,7 @@ case "titles":
         var p = project
         p.title = words
         p.makeRoomForOpening()
-        let scene = SlideScene(project: p, base: base.base, details: base.details)
+        let scene = SlideScene(project: p, bases: base.bases, details: base.details)
         let beats = scene.choreography.beats
         let land = beats.first?.land ?? 2
         let leave = beats.count > 1 ? beats[1].depart + 0.2 : land + 2
