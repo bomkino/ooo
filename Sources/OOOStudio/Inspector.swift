@@ -577,6 +577,7 @@ struct VoiceInspector: View {
                 HStack {
                     Button("Replace…") { OOOCommands.chooseVoice(session) }
                         .buttonStyle(QuietButtonStyle())
+                    RecordButton(session: session, again: true)
                     Spacer()
                     Button("Remove Voiceover", role: .destructive) { session.removeVoice() }
                         .buttonStyle(QuietButtonStyle())
@@ -595,11 +596,14 @@ struct VoiceInspector: View {
                     }
                     .frame(height: 96)
                     Text("Talk about your slide").textStyle(.title)
-                    Text("Record your voiceover first, in any app, then drop it here. OOO hears the words on this Mac and lands each move just before you say them.")
+                    Text("Record a scratch take here, talking along as the video plays, or drop in a recording from any app. OOO hears the words on this Mac and lands each move just before you say them.")
                         .textStyle(.caption).foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
-                    Button("Choose Voiceover…") { OOOCommands.chooseVoice(session) }
-                        .buttonStyle(PrimaryButtonStyle())
+                    HStack(spacing: 8) {
+                        RecordButton(session: session, again: false)
+                        Button("Choose Voiceover…") { OOOCommands.chooseVoice(session) }
+                            .buttonStyle(QuietButtonStyle())
+                    }
                 }
                 .padding(Theme.Space.l)
                 .onDrop(of: [.fileURL], isTargeted: $targeted) { providers in
@@ -631,5 +635,28 @@ struct Transcript: View {
         .frame(maxHeight: 150)
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.well.opacity(0.5)))
+    }
+}
+
+/// Record a scratch take, or stop the one being recorded.
+struct RecordButton: View {
+    @Bindable var session: OOOSession
+    let again: Bool
+
+    var body: some View {
+        let recording = session.recorder.isActive
+        if again && !recording {
+            Button("Record Again") { session.startRecording() }
+                .buttonStyle(QuietButtonStyle())
+                .help("Record a new scratch take in place of this one")
+        } else {
+            Button {
+                session.toggleRecording()
+            } label: {
+                Label(recording ? "Stop" : "Record", systemImage: recording ? "stop.fill" : "record.circle")
+            }
+            .buttonStyle(PrimaryButtonStyle())
+            .help(recording ? "Stop, and cut the moves to what you said" : "Counts you in, then records you as the video plays from the start")
+        }
     }
 }

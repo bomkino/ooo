@@ -133,6 +133,9 @@ public struct OOOMenuCommands: Commands {
             Button("Choose Voiceover…") { if let session { OOOCommands.chooseVoice(session) } }
                 .keyboardShortcut("i", modifiers: [.command, .option])
                 .disabled(session == nil)
+            Button((session?.recorder.isActive ?? false) ? "Stop Recording" : "Record Voiceover") { session?.toggleRecording() }
+                .keyboardShortcut("r", modifiers: [.command, .option])
+                .disabled(session == nil || session?.hasSlide == false)
             Button("Add Slide…") { if let session { OOOCommands.addSlides(session) } }
                 .keyboardShortcut("i", modifiers: [.command, .control])
                 .disabled(session == nil || session?.hasSlide == false)
@@ -154,6 +157,10 @@ public struct OOOMenuCommands: Commands {
                 .disabled(session == nil || session?.hasSlide == false)
         }
         CommandMenu("Camera") {
+            Button((session?.pen.on ?? false) ? "Put the Pen Away" : "Draw on the Slide") { session?.togglePen() }
+                .keyboardShortcut("p", modifiers: [.command, .shift])
+                .disabled(session == nil || session?.hasSlide == false)
+            Divider()
             Button("Direct for Me") { session?.autoDirect() }
                 .keyboardShortcut("d", modifiers: [.command, .shift])
                 .disabled(session == nil || session?.busy != nil)

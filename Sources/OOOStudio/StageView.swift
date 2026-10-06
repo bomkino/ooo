@@ -291,6 +291,8 @@ struct StageArea: View {
                             .frame(width: fitted.width, height: fitted.height)
                             .overlay { if session.showRoom && !(session.project.lift?.isEmpty ?? true) { RoomGuide(session: session, clock: session.clock) } }
                             .overlay { if showSafeAreas { SafeAreaGuides(format: session.project.format) } }
+                            .overlay { if session.pen.on { PenOverlay(session: session, clock: session.clock) } }
+                            .overlay { if session.recorder.counting != nil || session.recorder.isRecording { RecordingOverlay(recorder: session.recorder) } }
                             .overlay {
                                 if !session.hasSlide {
                                     ProgressView().controlSize(.small)
@@ -300,7 +302,15 @@ struct StageArea: View {
                             .overlay(RoundedRectangle(cornerRadius: Theme.Radius.stage, style: .continuous)
                                 .strokeBorder(dropTargeted ? Theme.camera : Theme.hairline, lineWidth: dropTargeted ? 2 : 1))
                             .shadow(color: .black.opacity(scheme == .dark ? 0.55 : 0.18), radius: scheme == .dark ? 28 : 14, y: 4)
-                            .onTapGesture(count: 2) { session.clock.playing.toggle() }
+                            .onTapGesture(count: 2) { if !session.pen.on { session.clock.playing.toggle() } }
+                            .overlay(alignment: .top) {
+                                if session.pen.on {
+                                    PenPalette(session: session)
+                                        .padding(.top, 10)
+                                        .transition(.move(edge: .top).combined(with: .opacity))
+                                }
+                            }
+                            .animation(Theme.settle, value: session.pen.on)
                         Spacer(minLength: 0)
                     }
                 }
@@ -321,7 +331,21 @@ struct StageStatus: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            if session.comparing {
+            if session.recorder.isRecording || session.recorder.counting != nil {
+                Circle().fill(Theme.camera).frame(width: 7, height: 7)
+                Text("Recording").textStyle(.label).foregroundStyle(.primary)
+                Text("Talk it through. Click Stop when you're done.").textStyle(.caption).foregroundStyle(.secondary)
+                Button("Stop") { session.stopRecording() }
+                    .buttonStyle(QuietButtonStyle())
+            } else if session.pen.on {
+                Image(systemName: "pencil.tip").font(.system(size: 11, weight: .semibold)).foregroundStyle(session.pen.color.swatch)
+                Text("Pen").textStyle(.label).foregroundStyle(.primary)
+                if session.penCanDraw {
+                    Text("Draw on the slide. In the video it draws on as your hand did.").textStyle(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text("Move to where the slide is still to draw on it.").textStyle(.caption).foregroundStyle(.secondary)
+                }
+            } else if session.comparing {
                 Text("Original").textStyle(.label).foregroundStyle(.primary)
                 Text("The slide exactly as supplied. Let go of \\ to see your look.").textStyle(.caption).foregroundStyle(.secondary)
             } else if let busy = session.busy {
@@ -374,6 +398,9 @@ struct TransportBar: View {
             }
             .keyboardShortcut(clock.typing ? nil : KeyboardShortcut(.space, modifiers: []))
             IconButton("forward.end.fill", label: "Next Landing") { session.jump(1) }
+            IconButton("pencil.tip.crop.circle", label: session.pen.on ? "Put the Pen Away" : "Draw on the Slide",
+                       size: 15) { session.togglePen() }
+                .foregroundStyle(session.pen.on ? Theme.camera : Color.primary)
             HStack(spacing: 4) {
                 Text(timecode(clock.time)).textStyle(.data).foregroundStyle(.primary)
                 Text("/").textStyle(.data).foregroundStyle(.tertiary)

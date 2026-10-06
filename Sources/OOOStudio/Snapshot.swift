@@ -13,7 +13,7 @@ import SwiftUI
 ///         [--slide file] [--format reel|portrait|square|landscape|uhd]
 ///         [--tab camera|look|voice] [--shot n] [--time seconds]
 ///         [--title "words" [--kicker "line"]] [--safe-areas] [--show-export]
-///         [--more file,file [--melt 1,2|all] [--home]] [--marks demo]
+///         [--more file,file [--melt 1,2|all] [--home]] [--marks demo] [--draw]
 ///         [--lift whole|4-10,14-] [--settle seconds]
 ///
 /// It opens a new document window (on the sample slide unless `--slide` gives
@@ -108,6 +108,7 @@ public enum OOOSnapshot {
                 }
             }
         }
+        if flag("--draw") { session.pen.on = true }
         switch arg("--tab") {
         case "look": session.tab = .look
         case "voice": session.tab = .voice

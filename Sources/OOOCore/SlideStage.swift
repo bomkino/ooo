@@ -18,6 +18,9 @@ public struct SlideScene: @unchecked Sendable {
     public let details: [DetailCache?]
     /// The marks drawn on the card, in the project's order; nil for one not drawn yet.
     public let inks: [MTLTexture?]
+    /// Marks shown whole whenever their slide lies face up, whatever the
+    /// time: the ones the pen is drawing now, so you see what you drew.
+    public var pinned: Set<UUID> = []
 
     /// The words over the opening, when there are some.
     public private(set) var title: TitleOverlay?
@@ -217,6 +220,23 @@ public struct SlideScene: @unchecked Sendable {
         let r = Melt.radius(now.progress, start: 0.03 * view, reach: Melt.reach(farthest: far, view: view))
         return MeltState(from: c.from, to: c.to, progress: now.progress, focus: focus, radius: r,
                          front: Melt.front(r, view: view), scale: k, shift: shift, before: a)
+    }
+
+    /// Where the canvas point (x, y), in −1…1 with y up, touches the card at
+    /// `t`: the slide face up and the place on it (0…1 from the top left).
+    /// Nil while the card arrives, leaves, turns or melts: a pen draws only
+    /// on a card at rest.
+    public func touch(_ x: Float, _ y: Float, at t: Double, canvasAspect C: Float) -> (page: Int, x: Float, y: Float)? {
+        guard slidePose(at: t, canvasAspect: C) == .rest, slideShown(at: t) > 0.99, choreography.change(at: t) == nil,
+              let p = choreography.pose(at: t).hit(x, y, canvasAspect: C) else { return nil }
+        let k = page(at: t)
+        return (k, p.x / aspect(k) + 0.5, 0.5 - p.y)
+    }
+
+    /// Where the place (x, y) on slide `k` (0…1 from the top left) shows on
+    /// the canvas at `t`, in −1…1 with y up, with the card at rest.
+    public func canvasPoint(_ x: Float, _ y: Float, page k: Int, at t: Double, canvasAspect C: Float) -> SIMD2<Float>? {
+        choreography.pose(at: t).project(SIMD3((x - 0.5) * aspect(k), 0.5 - y, 0), canvasAspect: C)
     }
 
     /// The slide's own pose at `t`: arriving, resting, or leaving.
@@ -491,7 +511,8 @@ public struct SlideScene: @unchecked Sendable {
         guard hold > 0.001, let marks = project.marks else { return [] }
         var out: [CardPose] = []
         for (i, m) in marks.enumerated() where i < inks.count && inks[i] != nil {
-            guard let head = m.head(at: t) else { continue }
+            let pin = pinned.contains(m.id)
+            guard let head = pin ? 1 : m.head(at: t) else { continue }
             let p = project.pageIndex(m.page)
             let host: CardPose
             let layer: Float
@@ -507,8 +528,8 @@ public struct SlideScene: @unchecked Sendable {
             // It stays until its slide changes: gone before the card turns
             // over, or melted away with it.
             let leaves = choreography.changes.first { $0.from == p && $0.end > m.time }
-            if let leaves, t >= leaves.end { continue }
-            let presence = m.presence(at: t, until: leaves?.kind == .turn ? leaves?.start : nil)
+            if !pin, let leaves, t >= leaves.end { continue }
+            let presence = pin ? 1 : m.presence(at: t, until: leaves?.kind == .turn ? leaves?.start : nil)
             guard presence > 0.001, let r = m.bounds(slideAspect: aspect(p)) else { continue }
             var ink = Self.overlay(SIMD4(r.u0, r.v0, r.u1, r.v1), on: host)
             ink.media = inkMedia(i)

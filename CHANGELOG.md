@@ -2,20 +2,29 @@
 
 ## 1.0.1 — 6 October 2026
 
-Open on your deck's cover and turn it over to the slide, and leave room at the bottom of the frame for you on camera.
+One card in your hand through several slides, marks drawn by hand, a scratch take recorded right in OOO, and room at the bottom of the frame for you on camera.
 
-**A cover that turns**
-- **Cover** (in the opening's inspector, or File ▸ Choose Cover…): the video opens on another slide, such as your deck's cover, rests a moment, and turns it over to the slide you talk about, like a card in your hand: pressed back a touch, lifted and bowed as it swings, landing with a little give. The tour sets off once it has settled.
-- **Turn back to the cover** at the end (on by default): the camera comes back to the whole slide, settles, and the card turns back, so the video ends where it began.
-- Drag the turns on the timeline to time them to your words. With a PDF deck, **Use Page 1** takes its first page as the cover.
+**Several slides, one card**
+- **Add Slide… (⌃⌘I)**, or drop several slides at once: the video goes through them in order with the same card in your hand. Open on your deck's cover and turn it over to the slide you talk about, or follow a number from one slide to the next.
+- **Turn or Melt**, slide by slide. A turn presses the card back a touch, lifts and bows it as it swings, and lands it with a little give. A melt washes the next slide in from wherever you're looking, along a soft, ragged edge, while whatever the two slides share holds still.
+- **Turn back to the first slide** at the end, so the video ends where it began.
+- Each slide gets its own tour and its own map in the inspector. Direct for Me plans across all of them, and with a voice each slide's moves land on its own words. Drag a change on the timeline to time it; the slides after it move along.
+
+**Draw on the slide**
+- **Draw on the Slide (⇧⌘P)**, or the pen under the stage: circle a number, underline a word. One fine marker, in red, yellow, white or black. In the video the mark draws on just as your hand drew it, at your pace.
+- A mark **stays** until its slide changes, or **fades** a moment after it's drawn. Marks sit along the camera's lane in their own ink: drag one to time it, click to watch it, right-click to change or delete it.
+
+**A scratch take**
+- **Record Voiceover (⌥⌘R)**, or Record in the Voice tab: a count of three, then talk the video through as it plays. Stop, and OOO hears your words and cuts the moves to them. It's a quick way to find the beats before you record the real thing.
 
 **Room for you**
 - **Room for you** lifts the slide, its moves and its title into the top of the frame and leaves the bottom clear for your talking head, to lay over in Edits or Premiere. Choose **Whole Video**, or add stretches on the new lane under the camera's, where you talk: the stage rises and settles smoothly, and whatever the camera is doing carries on through it, every framing solved again for the space above you.
 - The stage shows where you'll be, a quiet outline that comes up as the stage rises. It is never exported.
 
 **Made and checked**
-- `ooo-lab turns` and `ooo-lab lifts` draw the turn and the rise in CI, and `motioncheck` measures how fast the picture changes while the stage rises and settles.
-- Files with a cover or room for you need OOO 1.0.1; 1.0 says so and offers the update instead of opening them without.
+- `ooo-lab changes`, `ooo-lab marks` and `ooo-lab lifts` draw every turn, melt, mark and rise in CI, and `motioncheck` measures how fast the picture changes through them.
+- Slide loading and the card shader come from Drift 2.5, so a slide is drawn sooner and its close-ups cost less.
+- Files with several slides, marks or room for you need OOO 1.0.1; 1.0 says so and offers the update instead of opening them without.
 
 ## 1.0.0 — 6 October 2026
 

@@ -138,6 +138,23 @@ public final class OOOSession {
         }
     }
 
+    /// The pen, while you draw on the card.
+    public var pen = PenState() {
+        didSet {
+            guard pen.on != oldValue.on else { return }
+            penMarks = []
+            penLast = nil
+            if pen.on { clock.playing = false }
+            version += 1
+        }
+    }
+    /// The marks drawn since the pen came out: the stage shows them whole.
+    @ObservationIgnored var penMarks: [UUID] = [] { didSet { sceneCache = nil } }
+    /// The mark the pen is adding to, and when its last stroke ended (seconds).
+    @ObservationIgnored var penLast: (id: UUID, ended: Double)?
+    /// A scratch voiceover being recorded.
+    public let recorder = VoiceRecorder()
+
     @ObservationIgnored private var slideBase: SlideBase?
     @ObservationIgnored private var slideToken = 0
     /// The slides after the first on the GPU, by id, and those being drawn.
@@ -349,9 +366,10 @@ public final class OOOSession {
         if comparing { shown.look.surface = .original }
         // A slide still being drawn shows the first in its place for a moment.
         let pages = project.morePages.map { page in pageBases[page.id].flatMap { $0.ref == page.slide ? $0 : nil } }
-        let s = SlideScene(project: shown, bases: [b.texture] + pages.map { $0?.texture ?? b.texture },
+        var s = SlideScene(project: shown, bases: [b.texture] + pages.map { $0?.texture ?? b.texture },
                            details: [b.details] + pages.map { $0?.details }, inks: InkCache.shared.textures(for: project),
                            choreography: choreography)
+        s.pinned = Set(penMarks)
         sceneCache = s
         return s
     }
@@ -911,10 +929,12 @@ public final class OOOSession {
 
     public var voiceRecording: AudioTrack? { voiceTrack }
 
-    public func importVoice(_ url: URL) {
+    /// A recording as the voiceover, starting `offset` seconds in; its words
+    /// are heard and the moves cut to them.
+    public func importVoice(_ url: URL, name given: String? = nil, offset: Double = 0.5) {
         let store = document.media
         let job = begin("Reading the recording")
-        let name = url.deletingPathExtension().lastPathComponent
+        let name = given ?? url.deletingPathExtension().lastPathComponent
         let scoped = url.startAccessingSecurityScopedResource()
         let file: String
         do {
@@ -938,7 +958,7 @@ public final class OOOSession {
                         self.voiceFile = file
                         self.waveform = Waveform(track)
                         self.update("Add Voiceover") { p in
-                            p.voice = Voiceover(file: file, name: name, offset: 0.5, duration: track.duration)
+                            p.voice = Voiceover(file: file, name: name, offset: offset, duration: track.duration)
                         }
                         self.tab = .voice
                         self.transcribe()
@@ -1044,7 +1064,7 @@ public final class OOOSession {
     /// Keeps the voice in step with playback. While it plays, its position is
     /// the clock, so the picture follows the voice and the two never drift.
     public func soundClock(playing: Bool, time: Double) -> Double? {
-        guard playing, !showExport, var key = voiceKey, voiceTrack != nil else {
+        guard playing, !showExport, !recorder.isActive, var key = voiceKey, voiceTrack != nil else {
             if player.isPlaying { player.stop() }
             lastSoundTime = nil
             return nil

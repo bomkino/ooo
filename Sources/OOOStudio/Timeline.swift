@@ -166,6 +166,11 @@ struct CameraLane: View {
                 ChangeMarker(session: session, change: change, scale: scale)
                     .offset(x: scale.x(change.start), y: TimelineView.camera - 21)
             }
+            // Marks drawn on the card, along the top, each as long as it takes to draw.
+            ForEach(session.project.marks ?? []) { mark in
+                MarkPin(session: session, mark: mark, scale: scale)
+                    .offset(x: scale.x(mark.time), y: 3)
+            }
         }
     }
 
