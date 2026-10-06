@@ -46,11 +46,21 @@ final class CoreTests: XCTestCase {
         var p = OOOProject.sample
         p.ending = .pullBack
         p.title = OpeningTitle(text: "One slide, obsessed over.")
+        let first = try XCTUnwrap(p.shots.map(\.time).min())
+        p.makeRoomForTitle()
+        // The tour waits while the title is read, and only once.
+        XCTAssertEqual(p.shots.map(\.time).min() ?? 0, p.arrive.end + OOOProject.titleHold + Director.firstLanding, accuracy: 1e-9)
+        XCTAssertGreaterThan(p.shots.map(\.time).min() ?? 0, first)
+        let moved = p.shots
+        p.makeRoomForTitle()
+        XCTAssertEqual(p.shots, moved)
         let c = p.choreography()
         let beats = c.beats
         XCTAssertGreaterThan(beats.count, 2)
         XCTAssertEqual(OpeningTitleArt.presence(c, at: 0).alpha, 0)
-        XCTAssertEqual(OpeningTitleArt.presence(c, at: beats[0].land + 1).alpha, 1, accuracy: 1e-3)
+        // Fully there for at least a second and a half before it clears.
+        XCTAssertEqual(OpeningTitleArt.presence(c, at: beats[0].land + 0.4).alpha, 1, accuracy: 1e-3)
+        XCTAssertEqual(OpeningTitleArt.presence(c, at: beats[0].land + 1.9).alpha, 1, accuracy: 1e-3)
         XCTAssertEqual(OpeningTitleArt.presence(c, at: beats[1].depart + 0.6).alpha, 0, accuracy: 1e-3)
         XCTAssertEqual(OpeningTitleArt.presence(c, at: (beats[1].land + beats[1].leave) / 2).alpha, 0, accuracy: 1e-3)
         XCTAssertEqual(OpeningTitleArt.presence(c, at: c.duration).alpha, 1, accuracy: 1e-3)

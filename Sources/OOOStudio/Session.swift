@@ -443,7 +443,7 @@ public final class OOOSession {
     public func cutToVoice() {
         guard let words = project.voice?.words, !words.isEmpty else { return }
         update("Cut to Voice") { p in
-            p.shots = Director.retime(p.shots, words: words, start: p.arrive.end)
+            p.shots = Director.retime(p.shots, words: words, start: p.tourStart)
         }
     }
 
@@ -493,7 +493,7 @@ public final class OOOSession {
     public func addShot(frame: ShotFrame? = nil, at time: Double? = nil) {
         let p = project
         var t = time ?? clock.time
-        let start = p.arrive.end + 0.6
+        let start = p.tourStart + 0.6
         let taken = p.shots.contains { abs($0.time - t) < 0.9 }
         if t < start || taken { t = max(start, (p.shots.map(\.time).max() ?? start - 2.6) + 2.6) }
         var f: ShotFrame

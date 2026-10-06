@@ -372,6 +372,7 @@ struct OverviewInspector: View {
                         var t = p.title ?? OpeningTitle()
                         t[keyPath: key] = v
                         p.title = t
+                        p.makeRoomForTitle()
                     }
                 })
     }

@@ -63,6 +63,7 @@ if let text = value("--title") {
         t.face = face
     }
     project.title = t
+    project.makeRoomForTitle()
 }
 if let f = value("--floor") {
     guard let floor = FloorKind(rawValue: f) else { fail("unknown floor \(f)") }
@@ -268,6 +269,7 @@ case "titles":
             var p = project
             p.title = words
             p.title?.face = face
+            p.makeRoomForTitle()
             let scene = SlideScene(project: p, base: base.base, details: base.details)
             let rest = (scene.choreography.beats.first?.land ?? 2) + 1.0
             let img = try stage.still(scene, at: rest, width: cw, height: ch, samples: 4)
@@ -275,6 +277,7 @@ case "titles":
         }
         var p = project
         p.title = words
+        p.makeRoomForTitle()
         let scene = SlideScene(project: p, base: base.base, details: base.details)
         let beats = scene.choreography.beats
         let land = beats.first?.land ?? 2

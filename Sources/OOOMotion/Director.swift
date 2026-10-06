@@ -540,12 +540,15 @@ public enum Director {
     /// The shortest time between two landings the voice sets.
     static let minGap = 1.3
 
+    /// How long after the tour may start its first shot lands, without a voice.
+    public static let firstLanding = 1.4
+
     /// Times for the blocks. With a voice, each block takes its strongest
     /// mention wherever it falls, so the tour follows the order things are
     /// said in, not the order they sit on the slide. Without one, blocks come
     /// `spacing` apart, plus `dwell` for any that read along a line.
     static func schedule(_ blocks: [DetailBlock], words: [SpokenWord]?, start: Double, spacing: Double, dwell: [Double]) -> [Slot?] {
-        let first = start + 1.4
+        let first = start + firstLanding
         guard let words, !words.isEmpty else {
             var t = first
             return blocks.indices.map { i in

@@ -262,7 +262,24 @@ public struct OOOProject: Codable, Hashable, Sendable {
     /// What Direct for Me plans from: the slide's reading, the voice, the canvas.
     public func directorInput(_ details: [SlideDetail]) -> DirectorInput {
         DirectorInput(details: details, words: voice?.words, slideAspect: slideAspect, canvasAspect: canvasAspect,
-                      start: arrive.end, safe: format.safeArea, minViewHeight: sharpViewHeight, overview: overview)
+                      start: tourStart, safe: format.safeArea, minViewHeight: sharpViewHeight, overview: overview)
+    }
+
+    /// How long the whole slide holds under an opening title before the tour
+    /// sets off, so the words can be read.
+    public static let titleHold = 2.0
+
+    /// When the tour may set off: as the slide lands, or once its title has been read.
+    public var tourStart: Double { arrive.end + ((title?.isEmpty ?? true) ? 0 : Self.titleHold) }
+
+    /// Gives a new opening title time to be read: without a voice to keep
+    /// time with, the whole tour moves later until the first move sets off
+    /// after it. Moves nothing when there is already room.
+    public mutating func makeRoomForTitle() {
+        guard voice == nil, !(title?.isEmpty ?? true), let first = shots.map(\.time).min() else { return }
+        let shift = tourStart + Director.firstLanding - first
+        guard shift > 0.05 else { return }
+        for i in shots.indices { shots[i].time += shift }
     }
 
     /// Follows a new slide or canvas shape with the opening, unless someone

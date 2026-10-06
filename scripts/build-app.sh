@@ -9,7 +9,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 CONFIG="${1:-release}"
-VERSION="${OOO_VERSION:-0.1.0}"
+VERSION="${OOO_VERSION:-0.2.0}"
 DIST="$ROOT/dist"
 APPDIR="$DIST/OOO.app"
 

@@ -2,7 +2,7 @@
 
 ## The pitch.dog Studio engine
 
-`Sources/RenderCore`, `Sources/BackdropKit` and `Sources/StageKit` are vendored from [bomkino/pitchdog-drift](https://github.com/bomkino/pitchdog-drift) at commit `f058788` (Drift 2.2.0), by the same authors and under the same licence (GNU AGPL 3.0). Drift's scene catalogue (`StageKit/Scenes`, `SamplePaintings.swift`) is left out. Changes for OOO:
+`Sources/RenderCore`, `Sources/BackdropKit` and `Sources/StageKit` are vendored from [bomkino/pitchdog-drift](https://github.com/bomkino/pitchdog-drift) at commit `f058788` (Drift 2.2.0), by the same authors and under the same licence (GNU AGPL 3.0). Drift's scene catalogue (`StageKit/Scenes`, `SamplePaintings.swift`) is left out. `Sources/BackdropKit` was later brought up to [bomkino/backdrop](https://github.com/bomkino/backdrop) commit `98039c7` (Backdrop 2.0.0: Solid, Linear, Radial, Conic, Caustics and Iridescence), whose RenderCore is the same. Changes for OOO:
 
 - `CardPose` gains `window` (a texture that holds one region of its media, so a sharp detail can be laid exactly over its card), `edgeScale`, a soft spotlight (`spot`, `spotDim`, `spotFeather`) and `shadowGround` (a cut-out's shadow falls on the sheet it was lifted from).
 - `StageRenderer.Request.backdropUV` and the `copy_uv_fragment` shader let the background answer the camera with a touch of parallax.
