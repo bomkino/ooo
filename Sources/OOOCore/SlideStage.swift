@@ -233,16 +233,25 @@ public final class SlideStage: @unchecked Sendable {
         self.renderer = try renderer ?? StageRenderer()
     }
 
-    /// Encodes the frame at `t` into `output`. With `waitForDetail`, close-ups
-    /// are drawn at full sharpness before the frame (export); otherwise the
-    /// best detail at hand is used and a sharper one is drawn in the background.
+    /// Most pixels between neighbouring shutter samples: closer than this,
+    /// a blur's steps can't be told from a continuous smear.
+    public static let blurStep: Float = 0.75
+
+    /// Encodes the frame at `t` into `output` and returns how many shutter
+    /// samples it took. With `waitForDetail`, close-ups are drawn at full
+    /// sharpness before the frame (export); otherwise the best detail at hand
+    /// is used and a sharper one is drawn in the background.
+    ///
+    /// `samples` is the most the frame may take. With `adaptive`, it takes
+    /// only as many as the motion across its shutter needs: one while the
+    /// camera holds, the most in a fast move.
+    @discardableResult
     public func encode(_ cb: MTLCommandBuffer, scene: SlideScene, at t: Double, output: MTLTexture, samples: Int,
-                       frameIndex: UInt32, waitForDetail: Bool, backdropScale: Float = 1, transparent: Bool = false) throws {
+                       frameIndex: UInt32, waitForDetail: Bool, backdropScale: Float = 1, transparent: Bool = false,
+                       adaptive: Bool = true) throws -> Int {
         let C = Float(output.width) / Float(max(output.height, 1))
-        let A = scene.project.slideAspect
         var patch: DetailCache.Patch?
-        if let details = scene.details, scene.slidePose(at: t, canvasAspect: C) == .rest {
-            let fp = scene.choreography.pose(at: t).footprint(slideAspect: A, canvasAspect: C, canvasHeight: output.height)
+        if let details = scene.details, let fp = footprint(scene, at: t, width: output.width, height: output.height) {
             patch = details.patch(for: fp, wait: waitForDetail)
         }
         var textures: [MTLTexture] = [scene.base]
@@ -261,21 +270,47 @@ public final class SlideStage: @unchecked Sendable {
         request.backdropUV = scene.backdropUV(at: t, canvasAspect: C)
         // Motion blur never reaches across a cut: each sample stays on its side.
         let cut = scene.choreography.cut(between: t - shutter / 2, and: t + shutter / 2)
-        let width = output.width
-        try renderer.encode(cb, output: output, request: request, textures: textures) { offset in
+        let width = output.width, height = output.height
+        let frameAt = { (offset: Float) -> StageFrame in
             var ts = t + Double(offset) * shutter
             if let c = cut { ts = t < c ? min(ts, c - 1e-4) : max(ts, c) }
             return scene.stageFrame(at: ts, canvasAspect: C, outputWidth: width, patch: patch)
         }
+        if adaptive, request.samples > 1 {
+            // The path across the shutter, open to middle to close: an upper
+            // bound on how far anything in view moves while it is open.
+            let (open, middle, close) = (frameAt(-0.5), frameAt(0), frameAt(0.5))
+            let travel = open.travel(to: middle, width: width, height: height) + middle.travel(to: close, width: width, height: height)
+            if travel.isFinite {
+                request.samples = min(request.samples, max(1, Int((travel / Self.blurStep).rounded(.up))))
+            }
+        }
+        try renderer.encode(cb, output: output, request: request, textures: textures, frameAt: frameAt)
+        return request.samples
+    }
+
+    /// What the camera sees of the slide at `t`, when the slide is at rest
+    /// (only then does a close-up lie exactly over it).
+    func footprint(_ scene: SlideScene, at t: Double, width: Int, height: Int) -> ViewFootprint? {
+        let C = Float(width) / Float(max(height, 1))
+        guard scene.slidePose(at: t, canvasAspect: C) == .rest else { return nil }
+        return scene.choreography.pose(at: t).footprint(slideAspect: scene.project.slideAspect, canvasAspect: C, canvasHeight: height)
+    }
+
+    /// Starts drawing, in the background, the close-up the frame at `t` will
+    /// need, so it is ready when the frame comes.
+    public func drawAhead(_ scene: SlideScene, at t: Double, width: Int, height: Int) {
+        guard t <= scene.duration, let details = scene.details, let fp = footprint(scene, at: t, width: width, height: height) else { return }
+        details.prepare(for: fp)
     }
 
     /// One frame as a picture.
-    public func still(_ scene: SlideScene, at t: Double, width: Int, height: Int, samples: Int = 8) throws -> CGImage {
+    public func still(_ scene: SlideScene, at t: Double, width: Int, height: Int, samples: Int = 8, adaptive: Bool = true) throws -> CGImage {
         let gpu = GPU.shared
         let out = gpu.makeTexture(width: width, height: height, format: .bgra8Unorm, usage: [.renderTarget, .shaderRead])
         guard let cb = gpu.queue.makeCommandBuffer() else { throw RenderError.io("GPU unavailable.") }
         try encode(cb, scene: scene, at: t, output: out, samples: samples, frameIndex: UInt32(max(0, t * Double(scene.project.fps))),
-                   waitForDetail: true)
+                   waitForDetail: true, adaptive: adaptive)
         cb.commit()
         cb.waitUntilCompleted()
         if let e = cb.error { throw RenderError.io("GPU error: \(e.localizedDescription)") }

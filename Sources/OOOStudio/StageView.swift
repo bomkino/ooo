@@ -69,13 +69,19 @@ final class StageCoordinator: NSObject, MTKViewDelegate {
             // Heavy backdrops render smaller while playing; paused frames are exact.
             let cost = scene.project.backdrop.styleInfo.cost
             let scale: Float = clock.playing ? (cost >= 3 ? 0.5 : (cost == 2 ? 0.75 : 1)) : 1
-            try? stage.encode(cb, scene: scene, at: clock.time, output: drawable.texture, samples: samples,
-                              frameIndex: frameIndex, waitForDetail: false, backdropScale: scale)
+            let used = (try? stage.encode(cb, scene: scene, at: clock.time, output: drawable.texture, samples: samples,
+                                          frameIndex: frameIndex, waitForDetail: false, backdropScale: scale)) ?? 1
             if clock.playing {
-                let used = scene.project.look.shutter > 0.01 ? liveSamples : 1
-                cb.addCompletedHandler { [weak self] buffer in
-                    let ms = (buffer.gpuEndTime - buffer.gpuStartTime) * 1000
-                    DispatchQueue.main.async { self?.adapt(gpuMs: ms, samples: used) }
+                // The close-up the tour needs a moment from now, drawn before it gets there.
+                let size = drawable.texture
+                stage.drawAhead(scene, at: clock.time + 0.6, width: size.width, height: size.height)
+                // Only frames in motion, which take every sample they may, tell
+                // what a sample costs; a held frame takes one.
+                if used == samples {
+                    cb.addCompletedHandler { [weak self] buffer in
+                        let ms = (buffer.gpuEndTime - buffer.gpuStartTime) * 1000
+                        DispatchQueue.main.async { self?.adapt(gpuMs: ms, samples: used) }
+                    }
                 }
             }
         } else {

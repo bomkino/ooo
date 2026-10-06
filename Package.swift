@@ -41,5 +41,6 @@ let package = Package(
         .executableTarget(name: "OOOApp", dependencies: ["OOOStudio"], swiftSettings: settings),
         .executableTarget(name: "OOOLab", dependencies: ["OOOCore"], swiftSettings: settings),
         .testTarget(name: "OOOMotionTests", dependencies: ["OOOMotion"], swiftSettings: settings),
+        .testTarget(name: "OOOCoreTests", dependencies: ["OOOCore", "OOOMotion", "RenderCore", "StageKit"], swiftSettings: settings),
     ]
 )

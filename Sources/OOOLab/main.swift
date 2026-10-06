@@ -1,6 +1,7 @@
 import BackdropKit
 import CoreGraphics
 import Foundation
+import Metal
 import OOOCore
 import OOOMotion
 import RenderCore
@@ -19,6 +20,9 @@ import StageKit
 //                                           draw a test slide: 2576 × 1080 or 1920 × 1080
 //   ooo-lab openings --out grid.png         the opening at five angles (across) and
 //                                           three floors (down: none, soft, mirror)
+//   ooo-lab blurcheck [--quality good]      adaptive motion blur against full samples:
+//                                           samples taken, GPU time, PSNR
+//   ooo-lab render --full-blur ...          every frame at the quality's full samples
 //
 // Every command takes --project <file.ooo> (default: the sample), or
 // --slide <file> (a PDF or picture, read and directed as the app would on a
@@ -144,6 +148,7 @@ case "render":
     if let q = value("--quality"), let quality = ExportQuality(rawValue: q) { options.quality = quality }
     if let s = value("--scale"), let scale = Double(s) { options.scale = scale }
     if let c = value("--codec"), let codec = VideoCodec(rawValue: c) { options.codec = codec }
+    if args.contains("--full-blur") { options.adaptiveBlur = false }
     var voice: AudioTrack?
     if let v = project.voice, let media {
         voice = try? VoiceLoader.decode(media.appendingPathComponent(v.file))
@@ -235,6 +240,62 @@ case "openings":
         fail("openings failed: \(error)")
     }
 
+case "blurcheck":
+    // Adaptive motion blur against every frame at full samples: how many
+    // samples each frame took, how long the GPU spent, and how far apart the
+    // pictures are (PSNR; above 45 dB nobody can tell).
+    let scene = loadScene()
+    let quality = ExportQuality(rawValue: value("--quality") ?? "good") ?? .good
+    let w = project.format.width, h = project.format.height
+    let step = Double(value("--step") ?? "") ?? 0.2
+    do {
+        let stage = try SlideStage()
+        let gpu = GPU.shared
+        func frame(_ t: Double, adaptive: Bool) throws -> (pixels: [UInt8], samples: Int, ms: Double) {
+            let out = gpu.makeTexture(width: w, height: h, format: .bgra8Unorm, usage: [.renderTarget, .shaderRead], storage: .shared)
+            guard let cb = gpu.queue.makeCommandBuffer() else { throw RenderError.io("GPU unavailable.") }
+            let n = try stage.encode(cb, scene: scene, at: t, output: out, samples: quality.samples,
+                                     frameIndex: UInt32(t * Double(project.fps)), waitForDetail: true, adaptive: adaptive)
+            cb.commit()
+            cb.waitUntilCompleted()
+            var px = [UInt8](repeating: 0, count: w * h * 4)
+            out.getBytes(&px, bytesPerRow: w * 4, from: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0)
+            return (px, n, (cb.gpuEndTime - cb.gpuStartTime) * 1000)
+        }
+        // Warm the pipelines and the close-ups first, so timings compare like with like.
+        _ = try frame(scene.duration / 2, adaptive: false)
+        var rows: [String] = []
+        var worst = Double.infinity, sum = 0.0, count = 0, ones = 0, taken = 0
+        var msAdaptive = 0.0, msFull = 0.0
+        for t in stride(from: 0, to: scene.duration, by: step) {
+            let full = try frame(t, adaptive: false)
+            let fast = try frame(t, adaptive: true)
+            var se = 0.0
+            for i in stride(from: 0, to: full.pixels.count, by: 4) {
+                for c in 0..<3 {
+                    let d = Double(full.pixels[i + c]) - Double(fast.pixels[i + c])
+                    se += d * d
+                }
+            }
+            let mse = se / Double(w * h * 3)
+            let psnr = mse == 0 ? 99 : 10 * log10(255 * 255 / mse)
+            worst = min(worst, psnr)
+            sum += min(psnr, 99)
+            count += 1
+            taken += fast.samples
+            if fast.samples == 1 { ones += 1 }
+            msAdaptive += fast.ms
+            msFull += full.ms
+            rows.append(String(format: "%6.2f s  %2d samples  %5.1f dB  %5.1f ms vs %5.1f ms", t, fast.samples, psnr, fast.ms, full.ms))
+        }
+        rows.forEach { print($0) }
+        print(String(format: "blur %@: %d frames, %.1f samples a frame on average (of %d), %d%% held at one; GPU %.0f ms vs %.0f ms (%.0f%% saved); PSNR worst %.1f dB, mean %.1f dB",
+                     quality.rawValue, count, Double(taken) / Double(max(count, 1)), quality.samples, 100 * ones / max(count, 1),
+                     msAdaptive, msFull, 100 * (1 - msAdaptive / max(msFull, 1e-6)), worst, sum / Double(max(count, 1))))
+    } catch {
+        fail("blurcheck failed: \(error)")
+    }
+
 case "fixture":
     guard let kind = Fixture(rawValue: value("--kind") ?? "wide") else { fail("unknown fixture; use wide or standard") }
     let out = URL(fileURLWithPath: value("--out") ?? "\(kind.rawValue).png")
@@ -266,7 +327,7 @@ case "path":
 default:
     print("""
     ooo-lab — headless renders and checks for OOO
-      shaders | still | sheet | render | analyze | path | landings | openings | fixture
+      shaders | still | sheet | render | analyze | path | landings | openings | blurcheck | fixture
       --project file.ooo | --slide file.pdf|png  --format reel|portrait|square|landscape  --floor none|soft|mirror  --out path
     """)
 }

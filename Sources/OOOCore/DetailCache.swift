@@ -65,8 +65,17 @@ public final class DetailCache: @unchecked Sendable {
             lock.unlock()
             return hit
         }
+        let drawing = pending.contains(plan.key)
         lock.unlock()
         if wait {
+            // Already being drawn ahead: wait for that rather than draw it twice.
+            if drawing {
+                queue.sync {}
+                lock.lock()
+                let hit = patches[plan.key]
+                lock.unlock()
+                if let hit { return hit }
+            }
             return draw(plan)
         }
         lock.lock()
@@ -87,6 +96,30 @@ public final class DetailCache: @unchecked Sendable {
             }
         }
         return fallback
+    }
+
+    /// Starts drawing, in the background, the detail a frame that sees
+    /// `footprint` will need, unless it is drawn or on its way.
+    public func prepare(for footprint: ViewFootprint) {
+        guard let plan = plan(for: footprint) else { return }
+        lock.lock()
+        let start = patches[plan.key] == nil && !pending.contains(plan.key)
+        if start { pending.insert(plan.key) }
+        lock.unlock()
+        guard start else { return }
+        queue.async { [weak self] in
+            guard let self else { return }
+            _ = self.draw(plan)
+            self.lock.lock()
+            self.pending.remove(plan.key)
+            self.lock.unlock()
+        }
+    }
+
+    /// Whether `patch` is all the detail a frame that sees `footprint` needs.
+    public func isSharp(_ patch: Patch?, for footprint: ViewFootprint) -> Bool {
+        guard let plan = plan(for: footprint) else { return true }
+        return patch?.key == plan.key
     }
 
     /// Forgets every detail (the slide changed).

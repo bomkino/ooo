@@ -190,6 +190,29 @@ final class DirectorTests: XCTestCase {
         }
         XCTAssertFalse(names.contains("pitch.dog"), "\(names)")
         XCTAssertFalse(names.contains { $0.hasPrefix("Monthly") }, "the chart's title is seen with the chart: \(names)")
+        XCTAssertFalse(names.contains { $0.hasPrefix("Series A") }, "a running footer is the deck's, not the slide's: \(names)")
+    }
+
+    func testCloseUpsStayOnTheSlide() {
+        let A: Float = 2576.0 / 1080, C: Float = 9.0 / 16
+        let shots = Director.shots(DirectorInput(details: wide, slideAspect: A, canvasAspect: C, start: 2.1, safe: .reel,
+                                                 minViewHeight: 1920.0 / 2160))
+        XCTAssertFalse(shots.isEmpty)
+        for s in shots {
+            let f = s.frame
+            if f.size.x < 1 {
+                XCTAssertGreaterThanOrEqual(f.minU, -1e-4, s.label ?? "")
+                XCTAssertLessThanOrEqual(f.maxU + (s.sweep?.x ?? 0), 1 + 1e-4, s.label ?? "")
+            }
+            if f.size.y < 1 {
+                XCTAssertGreaterThanOrEqual(f.minV, -1e-4, s.label ?? "")
+                XCTAssertLessThanOrEqual(f.maxV, 1 + 1e-4, s.label ?? "")
+            }
+        }
+        // One lift at a time.
+        for (a, b) in zip(shots, shots.dropFirst()) where a.emphasis == .lift {
+            XCTAssertNotEqual(b.emphasis, .lift)
+        }
     }
 
     func testSmallPrintIsASentenceNotALabel() {

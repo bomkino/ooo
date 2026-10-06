@@ -143,8 +143,12 @@ public enum Director {
             out[top].role = .headline
         }
         // Type size is judged against the body of the slide; a chart's axis
-        // labels would make every number in it look big.
-        let figs = out.filter { $0.role == .figure }.map(\.bounds)
+        // labels would make every number in it look big. They sit just
+        // outside the plot's ink, so a figure counts with a margin around it.
+        let figs = out.filter { $0.role == .figure }.map { f -> SIMD4<Float> in
+            let m = 0.12 * f.size
+            return SIMD4(f.bounds.x - m.x, f.bounds.y - m.y, f.bounds.z + m.x, f.bounds.w + m.y)
+        }
         let body = texts.filter { i in
             let c = out[i].center
             return !figs.contains { c.x > $0.x && c.x < $0.z && c.y > $0.y && c.y < $0.w }
@@ -285,8 +289,12 @@ public enum Director {
             guard b.role != .figure else { return nil }
             return figures.first { f in
                 let m = 0.12 * f.size
-                return b.center.x > f.bounds.x - m.x && b.center.x < f.bounds.z + m.x
-                    && b.center.y > f.bounds.y - m.y && b.center.y < f.bounds.w + m.y
+                let across = b.center.x > f.bounds.x - m.x && b.center.x < f.bounds.z + m.x
+                let within = across && b.center.y > f.bounds.y - m.y && b.center.y < f.bounds.w + m.y
+                // A chart's title sits a little above its plot: it is read with the chart.
+                let title = across && b.role == .text && b.lines <= 2
+                    && b.bounds.w <= f.bounds.y + 0.01 && b.bounds.w > f.bounds.y - 0.15 * f.size.y
+                return within || title
             }
         }
         func score(_ b: DetailBlock) -> Float {
@@ -301,9 +309,14 @@ public enum Director {
             }
         }
         // Running text earns a shot when it says something: a lone word (a
-        // logo, a page number) or a figure's own title is seen with its figure.
+        // logo, a page number) or a figure's own title is seen with its figure,
+        // and a running header or footer ("Series A update • Confidential")
+        // is the deck's furniture, not this slide's point.
+        func furniture(_ b: DetailBlock) -> Bool {
+            (b.center.y < 0.14 || b.center.y > 0.86) && b.lines == 1 && b.text.split(separator: " ").count < 8
+        }
         let blocks = found.filter { b in
-            keep(b) && (b.role != .text || (b.text.split(separator: " ").count >= 3 && host(b) == nil))
+            keep(b) && (b.role != .text || (b.text.split(separator: " ").count >= 3 && host(b) == nil && !furniture(b)))
         }
         let limit = max(1, maxShots)
         // The smallest print, when there is some, always gets the last shot:
@@ -412,8 +425,16 @@ public enum Director {
                 H = max(H, height(across: wide))
             }
         }
-        let frame = ShotFrame(center: center, size: Vec2(H * C * room.x / A, H * room.y))
-        return (frame, sweep)
+        // Keep the view on the slide where it fits: a detail by an edge sits
+        // off centre rather than leave a stretch of empty backdrop in the frame.
+        let size = Vec2(H * C * room.x / A, H * room.y)
+        func onSlide(_ c: Float, _ s: Float) -> Float { s >= 1 ? 0.5 : min(max(c, s / 2), 1 - s / 2) }
+        let start = Vec2(onSlide(center.x, size.x), onSlide(center.y, size.y))
+        if let s = sweep {
+            let end = onSlide(center.x + s.x, size.x)
+            sweep = end - start.x > 0.004 ? Vec2(end - start.x, 0) : nil
+        }
+        return (ShotFrame(center: start, size: size), sweep)
     }
 
     // MARK: Planning
@@ -480,7 +501,8 @@ public enum Director {
             }
             switch b.role {
             case .numbers:
-                shot.emphasis = sweep == nil ? .lift : .none
+                // One lift at a time: a second in a row reads as a tic.
+                shot.emphasis = sweep == nil && shots.last?.emphasis != .lift ? .lift : .none
             case .figure:
                 shot.emphasis = .spotlight
                 shot.aperture = 0.55

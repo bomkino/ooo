@@ -47,3 +47,17 @@ TMP="$(mktemp -d)"
   "$LAB" render --slide "$OUT/fixtures/wide-2576x1080.png" --quality good --out "$OUT/wide-png/good.mp4" | tail -1 | sed "s|^|wide-png: |"
   "$LAB" render --slide "$OUT/fixtures/wide.pdf" --quality good --out "$TMP/wide-pdf.mp4" | tail -1 | sed "s|^|wide-pdf: |"
 } | tee "$OUT/timings.txt"
+
+echo "== Adaptive motion blur against full samples"
+"$LAB" blurcheck --quality good > "$OUT/sample/blur-good.txt"
+"$LAB" blurcheck --slide "$OUT/fixtures/wide-2576x1080.png" --quality good > "$OUT/wide-png/blur-good.txt"
+"$LAB" blurcheck --slide "$OUT/fixtures/wide-2576x1080.png" --quality best > "$OUT/wide-png/blur-best.txt"
+for f in "$OUT/sample/blur-good.txt" "$OUT/wide-png/blur-good.txt" "$OUT/wide-png/blur-best.txt"; do
+  tail -1 "$f" | sed "s|^|$(basename "$(dirname "$f")"): |"
+done | tee "$OUT/blur.txt"
+
+echo "== Export timings with every frame at full samples (for comparison)"
+{
+  "$LAB" render --quality good --full-blur --out "$TMP/sample-full.mp4" | tail -1 | sed "s|^|sample: |"
+  "$LAB" render --slide "$OUT/fixtures/wide-2576x1080.png" --quality good --full-blur --out "$TMP/wide-full.mp4" | tail -1 | sed "s|^|wide-png: |"
+} | tee "$OUT/timings-full-blur.txt"

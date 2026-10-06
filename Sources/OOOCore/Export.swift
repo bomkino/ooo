@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreVideo
 import Foundation
 import Metal
 import OOOMotion
@@ -40,12 +41,17 @@ public struct ExportOptions: Sendable {
     /// Multiplies the canvas size (0.5 for a quick preview file).
     public var scale: Double = 1
     public var includeVoice = true
+    /// Each frame takes only the shutter samples its motion needs (see
+    /// `SlideStage.encode`). Off renders every frame at the quality's full count.
+    public var adaptiveBlur = true
 
-    public init(codec: VideoCodec = .h264, quality: ExportQuality = .good, scale: Double = 1, includeVoice: Bool = true) {
+    public init(codec: VideoCodec = .h264, quality: ExportQuality = .good, scale: Double = 1, includeVoice: Bool = true,
+                adaptiveBlur: Bool = true) {
         self.codec = codec
         self.quality = quality
         self.scale = scale
         self.includeVoice = includeVoice
+        self.adaptiveBlur = adaptiveBlur
     }
 }
 
@@ -86,24 +92,44 @@ public final class OOOExporter: @unchecked Sendable {
         let writer = try VideoWriter(url: url, width: w, height: h, fps: fps, codec: options.codec, audio: audio)
         let target = PixelBufferTarget(width: w, height: h)
         let gpu = GPU.shared
+        // Two frames in flight: while the GPU draws one, the next is planned
+        // and encoded, and the close-ups half a second ahead are drawn on
+        // another core.
+        let ahead = max(1, fps / 2)
+        var flying: (cb: MTLCommandBuffer, buffer: CVPixelBuffer, cvTex: CVMetalTexture, index: Int)?
+        func land(_ f: (cb: MTLCommandBuffer, buffer: CVPixelBuffer, cvTex: CVMetalTexture, index: Int)) throws {
+            f.cb.waitUntilCompleted()
+            if let e = f.cb.error { throw RenderError.io("GPU error: \(e.localizedDescription)") }
+            _ = f.cvTex
+            try writer.append(f.buffer)
+            if let preview, f.index % 15 == 0, let img = ImageOutput.cgImage(pixelBuffer: f.buffer, keepAlpha: false) { preview(img) }
+            progress(Progress(frame: f.index + 1, total: total))
+        }
         do {
             for i in 0..<total {
                 if isCancelled() { throw RenderError.cancelled }
                 let t = Double(i) / Double(fps)
+                if i == 0 {
+                    for k in stride(from: 0, through: ahead, by: max(1, ahead / 3)) {
+                        stage.drawAhead(scene, at: Double(k) / Double(fps), width: w, height: h)
+                    }
+                }
+                stage.drawAhead(scene, at: Double(i + ahead) / Double(fps), width: w, height: h)
                 let (buffer, texture, cvTex) = try target.next()
                 guard let cb = gpu.queue.makeCommandBuffer() else { throw RenderError.io("GPU unavailable.") }
                 try stage.encode(cb, scene: scene, at: t, output: texture, samples: options.quality.samples,
-                                 frameIndex: UInt32(i), waitForDetail: true)
+                                 frameIndex: UInt32(i), waitForDetail: true, adaptive: options.adaptiveBlur)
                 cb.commit()
-                cb.waitUntilCompleted()
-                if let e = cb.error { throw RenderError.io("GPU error: \(e.localizedDescription)") }
-                _ = cvTex
-                try writer.append(buffer)
-                if let preview, i % 15 == 0, let img = ImageOutput.cgImage(pixelBuffer: buffer, keepAlpha: false) { preview(img) }
-                progress(Progress(frame: i + 1, total: total))
+                if let f = flying { try land(f) }
+                flying = (cb, buffer, cvTex, i)
+            }
+            if let f = flying {
+                flying = nil
+                try land(f)
             }
             try await writer.finish()
         } catch {
+            flying?.cb.waitUntilCompleted()
             writer.cancel()
             throw error
         }

@@ -509,3 +509,69 @@ public extension StageCamera {
         return abs(c.x / c.w) <= 1 + r / aspect && abs(c.y / c.w) <= 1 + r
     }
 }
+
+public extension StageFrame {
+    /// How far anything in view moves on a `width` × `height` canvas between
+    /// this frame and `other`, in pixels: the most any visible point of any
+    /// card travels, from its corners and from where a grid of sight lines
+    /// meets it. Infinity when the frames can't be compared that way (cards
+    /// come or go, or bend, unfold or wipe in between).
+    ///
+    /// Motion blur needs about one shutter sample per pixel of this; a held
+    /// frame needs one.
+    func travel(to other: StageFrame, width: Int, height: Int) -> Float {
+        guard cards.count == other.cards.count else { return .infinity }
+        let aspect = Float(width) / Float(max(height, 1))
+        let vpA = camera.viewProjection(aspect: aspect), vpB = other.camera.viewProjection(aspect: aspect)
+        let half = SIMD2<Float>(Float(width), Float(height)) / 2
+        let eye = camera.eye
+        func screen(_ vp: simd_float4x4, _ p: SIMD4<Float>) -> SIMD2<Float>? {
+            let c = vp * p
+            guard c.w > 1e-5 else { return nil }
+            return SIMD2(c.x, c.y) / c.w * half
+        }
+        func inView(_ s: SIMD2<Float>) -> Bool { abs(s.x) <= half.x * 1.05 && abs(s.y) <= half.y * 1.05 }
+        // Sight lines through a 5 × 5 grid across the canvas, for a card that fills the view.
+        let unproject = vpA.inverse
+        let steps: [Float] = [-0.95, -0.5, 0, 0.5, 0.95]
+        var rays: [SIMD3<Float>] = []
+        for y in steps {
+            for x in steps {
+                let q = unproject * SIMD4<Float>(x, y, 0.5, 1)
+                rays.append(simd_normalize(SIMD3(q.x, q.y, q.z) / q.w - eye))
+            }
+        }
+        var most: Float = 0
+        for i in cards.indices {
+            let a = cards[i], b = other.cards[i]
+            if a.opacity < 0.001 && b.opacity < 0.001 { continue }
+            guard a.media == b.media, a.crop == b.crop, a.band == b.band,
+                  abs(a.curl - b.curl) < 1e-4, abs(a.fold - b.fold) < 1e-4, abs(a.foldPhase - b.foldPhase) < 1e-4,
+                  abs(a.reveal - b.reveal) < 1e-4 else { return .infinity }
+            let mA = Matrix.translation(a.position) * Matrix.rotationEuler(a.rotation)
+            let mB = Matrix.translation(b.position) * Matrix.rotationEuler(b.rotation)
+            let h = a.size / 2
+            var points: [SIMD2<Float>] = [SIMD2(-h.x, -h.y), SIMD2(h.x, -h.y), SIMD2(-h.x, h.y), SIMD2(h.x, h.y), .zero]
+            let normal = simd_normalize(SIMD3(mA.columns.2.x, mA.columns.2.y, mA.columns.2.z))
+            let toLocal = mA.inverse
+            for r in rays {
+                let facing = simd_dot(r, normal)
+                guard abs(facing) > 1e-5 else { continue }
+                let t = simd_dot(a.position - eye, normal) / facing
+                guard t > 0 else { continue }
+                let l = toLocal * SIMD4(eye + r * t, 1)
+                if abs(l.x) <= h.x, abs(l.y) <= h.y { points.append(SIMD2(l.x, l.y)) }
+            }
+            for p in points {
+                let local = SIMD4<Float>(p.x, p.y, 0, 1)
+                guard let sa = screen(vpA, mA * local), let sb = screen(vpB, mB * local) else {
+                    // Behind the camera in one of them: count it only if it shows in the other.
+                    if let s = screen(vpA, mA * local) ?? screen(vpB, mB * local), inView(s) { return .infinity }
+                    continue
+                }
+                if inView(sa) || inView(sb) { most = max(most, simd_length(sa - sb)) }
+            }
+        }
+        return most
+    }
+}
