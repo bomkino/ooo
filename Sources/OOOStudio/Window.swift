@@ -172,6 +172,7 @@ public struct OOORoot: View {
                 }
             }
             .onChange(of: undoManager) { _, um in session.undoManager = um }
+            .modifier(SnapshotHost(session: session))
             .focusedSceneValue(\.oooSession, session)
             .preferredColorScheme(AppearanceChoice(rawValue: appearance)?.colorScheme)
     }
@@ -324,6 +325,7 @@ public enum OOOLaunch {
             // Open on a new window, already moving, rather than on the Open panel.
             "NSShowAppCentricOpenPanelInsteadOfUntitledFile": false,
         ])
+        OOOSnapshot.configure()
         DispatchQueue.global(qos: .utility).async {
             // Compile every shader before the first frame needs it.
             if let r = try? StageRenderer() { r.warmUp() }

@@ -250,6 +250,17 @@ struct StageArea: View {
     @AppStorage("showSafeAreas") private var showSafeAreas = false
     @Environment(\.colorScheme) private var scheme
     @State private var dropTargeted = false
+    @Environment(\.snapshotStill) private var snapshotStill
+
+    /// The live stage, or during a snapshot the exported frame in its place.
+    @ViewBuilder
+    private func stage(_ px: CGSize) -> some View {
+        if let still = snapshotStill {
+            Image(decorative: still, scale: 1).resizable().interpolation(.high)
+        } else {
+            StagePreview(session: session, pixelSize: px)
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -269,7 +280,7 @@ struct StageArea: View {
                     Theme.surround
                     VStack(spacing: 0) {
                         StageStatus(session: session).frame(height: top)
-                        StagePreview(session: session, pixelSize: px)
+                        stage(px)
                             .frame(width: fitted.width, height: fitted.height)
                             .overlay { if showSafeAreas { SafeAreaGuides(format: session.project.format) } }
                             .overlay {

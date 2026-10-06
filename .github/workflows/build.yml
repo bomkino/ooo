@@ -1,8 +1,9 @@
 # Builds and tests OOO on an Apple silicon runner for every pull request and
 # every change to main, renders the review set with the headless lab (test
 # slides at pitch.dog's sizes, taken through the app's journey into a 1080 ×
-# 1920 reel), packages the unsigned app as a disk image, and proves in-app
-# updates install when signed and are refused when tampered with.
+# 1920 reel), packages the unsigned app as a disk image, screenshots its
+# editor, and proves in-app updates install when signed and are refused when
+# tampered with.
 name: build
 
 on:
@@ -41,6 +42,10 @@ jobs:
           swift run -c release ooo-lab path --out renders/sample/path.csv
       - name: Package the app
         run: bash scripts/build-app.sh release
+      - name: Screenshot the editor (the real window, opened headlessly)
+        timeout-minutes: 15
+        continue-on-error: true
+        run: bash scripts/ci-screens.sh renders/screens renders/fixtures
       - name: Test in-app updates (a signed update installs, a tampered one is refused)
         timeout-minutes: 10
         run: bash scripts/test-update.sh

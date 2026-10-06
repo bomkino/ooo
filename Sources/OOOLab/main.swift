@@ -24,8 +24,10 @@ import StageKit
 //   ooo-lab blurcheck [--quality good]      adaptive motion blur against full samples:
 //                                           samples taken, GPU time, PSNR
 //   ooo-lab render --full-blur ...          every frame at the quality's full samples
-//   ooo-lab inkcheck                        at every landing, how dark the type and how
-//                                           light the paper come out against the slide
+//   ooo-lab inkcheck                        at every landing, how dark the type comes out
+//                                           against the same pixels drawn as supplied
+//   ooo-lab motioncheck [--strict]          each move's peak speed and turn, each emphasis,
+//                                           any jump (--strict: exit 2 on a problem)
 //   ooo-lab loopcheck [--ending leave]      the step from the last frame back to the
 //                                           first against the steps either side of it
 //
@@ -360,53 +362,87 @@ case "blurcheck":
     }
 
 case "inkcheck":
-    // The slide must read as it is: at every landing, the darkest ink and the
-    // lightest paper inside the frame's clear area (1st and 99th percentiles
-    // of luma, 0…255) against the same measure of the slide itself.
+    // The slide must read as it is. At every landing the frame is drawn twice:
+    // as the video draws it, and as supplied (the Original surface, no
+    // bloom, grain or vignette, on a pale room so nothing but ink is dark).
+    // The ink is the darkest pixels of the as-supplied frame inside the
+    // canvas's clear area; the check compares the same pixels in both.
     let scene = loadScene()
+    var plain = project
+    plain.look.surface = .original
+    plain.look.finish.bloom = 0
+    plain.look.finish.grain = 0
+    plain.look.finish.vignette = 0
+    plain.backdrop = BackdropCatalog.style("solid").defaults
+    plain.backdrop.palette = Palettes.named("Gallery")
+    plain.floor = FloorKind.none
+    let reference: SlideScene
+    do {
+        reference = try SlideLoader.scene(for: plain, media: media)
+    } catch {
+        fail("could not load the slide: \(error)")
+    }
     let w = project.format.width, h = project.format.height
-    func luma(_ img: CGImage, box: CGRect) -> [UInt8] {
+    func lumas(_ img: CGImage) -> [UInt8] {
         let iw = img.width, ih = img.height
         var px = [UInt8](repeating: 0, count: iw * ih * 4)
         guard let ctx = CGContext(data: &px, width: iw, height: ih, bitsPerComponent: 8, bytesPerRow: iw * 4,
                                   space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                   bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return [] }
         ctx.draw(img, in: CGRect(x: 0, y: 0, width: iw, height: ih))
-        var out: [UInt8] = []
-        for y in Int(box.minY * CGFloat(ih))..<Int(box.maxY * CGFloat(ih)) {
-            for x in Int(box.minX * CGFloat(iw))..<Int(box.maxX * CGFloat(iw)) {
-                let i = (y * iw + x) * 4
-                let r = Double(px[i]), g = Double(px[i + 1]), b = Double(px[i + 2])
-                let l: Double = 0.2126 * r + 0.7152 * g + 0.0722 * b
-                out.append(UInt8(min(255.0, l.rounded())))
-            }
+        var out = [UInt8](repeating: 0, count: iw * ih)
+        for i in 0..<(iw * ih) {
+            let r = Double(px[4 * i]), g = Double(px[4 * i + 1]), b = Double(px[4 * i + 2])
+            let l: Double = 0.2126 * r + 0.7152 * g + 0.0722 * b
+            out[i] = UInt8(min(255.0, l.rounded()))
         }
-        return out.sorted()
+        return out
     }
-    func percentile(_ v: [UInt8], _ p: Double) -> Int { v.isEmpty ? 0 : Int(v[min(v.count - 1, Int(Double(v.count) * p))]) }
+    func median(_ v: [UInt8]) -> Int { v.isEmpty ? 0 : Int(v.sorted()[v.count / 2]) }
+    let safe = project.format.safeArea
+    let x0 = Int(Float(w) * safe.left), x1 = Int(Float(w) * (1 - safe.right))
+    let y0 = Int(Float(h) * safe.top), y1 = Int(Float(h) * (1 - safe.bottom))
     do {
-        guard let whole = try SlideSource(ref: project.slide, media: media).renderWhole() else { fail("could not draw the slide") }
-        let source = luma(whole, box: CGRect(x: 0, y: 0, width: 1, height: 1))
-        let (inkSource, paperSource) = (percentile(source, 0.01), percentile(source, 0.99))
-        print("source ink \(inkSource) paper \(paperSource)")
-        let safe = project.format.safeArea
-        let box = CGRect(x: CGFloat(safe.left), y: CGFloat(safe.top), width: CGFloat(1 - safe.left - safe.right),
-                         height: CGFloat(1 - safe.top - safe.bottom))
         let stage = try SlideStage()
-        var worst = 0
+        var worst = 0, worstName = ""
         for (i, beat) in scene.choreography.beats.enumerated() where !beat.isOverview {
             let t = min(beat.land + min(0.7, beat.hold * 0.45), scene.duration - 0.02)
-            let img = try stage.still(scene, at: t, width: w, height: h, samples: 1)
-            let v = luma(img, box: box)
-            let (ink, paper) = (percentile(v, 0.01), percentile(v, 0.99))
-            worst = max(worst, ink - inkSource)
-            print(String(format: "shot-%02d t %.2f  ink %3d (%+d)  paper %3d (%+d)  surface %.2f", i, t, ink, ink - inkSource,
-                         paper, paper - paperSource, scene.surfaceAmount(at: t)))
+            let seen = lumas(try stage.still(scene, at: t, width: w, height: h, samples: 1))
+            let supplied = lumas(try stage.still(reference, at: t, width: w, height: h, samples: 1))
+            var box: [UInt8] = []
+            for y in y0..<y1 { for x in x0..<x1 { box.append(supplied[y * w + x]) } }
+            box.sort()
+            let darkest = Int(box.isEmpty ? 255 : box[box.count / 100])
+            var inkSeen: [UInt8] = [], inkSupplied: [UInt8] = []
+            if darkest < 90 {
+                for y in y0..<y1 {
+                    for x in x0..<x1 where Int(supplied[y * w + x]) <= darkest + 8 {
+                        inkSupplied.append(supplied[y * w + x])
+                        inkSeen.append(seen[y * w + x])
+                    }
+                }
+            }
+            let name = String(format: "shot-%02d", i)
+            guard inkSeen.count >= 200 else {
+                print(String(format: "%@ t %.2f  no dark ink in view", name, t))
+                continue
+            }
+            let (a, b) = (median(inkSeen), median(inkSupplied))
+            if a - b > worst { worst = a - b; worstName = name }
+            print(String(format: "%@ t %.2f  ink %3d as seen, %3d as supplied (%+d) over %d px  surface %.2f", name, t, a, b, a - b,
+                         inkSeen.count, scene.surfaceAmount(at: t)))
         }
-        print("inkcheck: ink at most \(worst) above the slide's own")
+        print("inkcheck: ink lands at most \(worst) above the slide as supplied" + (worstName.isEmpty ? "" : " (\(worstName))"))
     } catch {
         fail("inkcheck failed: \(error)")
     }
+
+case "motioncheck":
+    // How fast each move flies and turns at its peak, whether each emphasis
+    // comes all the way in, and whether the picture ever jumps.
+    let check = MotionCheck(project.choreography())
+    print(check.summary)
+    if args.contains("--strict"), !check.problems.isEmpty { exit(2) }
 
 case "loopcheck":
     // A platform plays a reel on repeat: the step from the last frame back to
@@ -478,7 +514,8 @@ case "path":
 default:
     print("""
     ooo-lab — headless renders and checks for OOO
-      shaders | still | sheet | render | analyze | path | landings | openings | titles | blurcheck | fixture
+      shaders | still | sheet | render | analyze | path | landings | openings | titles | blurcheck | inkcheck
+      motioncheck | loopcheck | fixture
       --project file.ooo | --slide file.pdf|png  --format reel|portrait|square|landscape  --floor none|soft|mirror  --out path
     """)
 }
