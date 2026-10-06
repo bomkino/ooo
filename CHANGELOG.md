@@ -10,8 +10,8 @@ OOO's first public release, made for pitch.dog's everyday case: a wide slide (25
 - **Install this version by hand once.** Every version after it arrives by itself, with no second trip to Privacy & Security.
 
 **The slide as it is**
-- **Black type stays black while it is read.** Gloss's sheen and the lens's glow used to lift black ink to a mid-grey at every hold. Now the sheen steps back while the camera holds and the glow lights the room around the slide, not its face.
-- **Close-ups are sharp to their corners:** depth of field focuses on a plane, as a lens does.
+- **Black type stays black while it is read.** Gloss's sheen and the lens's glow used to lift black ink to a mid-grey at every hold (a headline drawn at 20 of 255 landed at 97). Now the sheen steps back while the camera holds and the glow lights the room around the slide, not its face, so the same headline lands at 38.
+- **Depth of field focuses on a plane**, as a lens does, rather than on a sphere around the camera.
 - **The opening title's ink is chosen against the backdrop behind it**, so dark words never land on a dark top.
 - Titles and the sample slide keep their fonts' own kerning.
 
