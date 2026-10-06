@@ -1,0 +1,56 @@
+# Builds and tests OOO on an Apple silicon runner for every pull request and
+# every change to main, renders the review set with the headless lab (test
+# slides at pitch.dog's sizes, taken through the app's journey into a 1080 ×
+# 1920 reel), packages the unsigned app as a disk image, and proves in-app
+# updates install when signed and are refused when tampered with.
+name: build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Show the toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          system_profiler SPDisplaysDataType | sed -n '1,20p' || true
+      - name: Build
+        run: swift build -c release
+      - name: Test the camera's maths, the director, documents and the renderer
+        run: swift test
+      - name: Compile every shader
+        run: swift run -c release ooo-lab shaders
+      - name: Render the review set (test slides at 2576 × 1080 and 1920 × 1080 in a 1080 × 1920 reel)
+        run: |
+          bash scripts/ci-renders.sh renders
+          swift run -c release ooo-lab sheet --format landscape --out renders/sample/sheet-landscape.png
+          swift run -c release ooo-lab path --out renders/sample/path.csv
+      - name: Package the app
+        run: bash scripts/build-app.sh release
+      - name: Test in-app updates (a signed update installs, a tampered one is refused)
+        timeout-minutes: 10
+        run: bash scripts/test-update.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OOO-app
+          path: dist/OOO.dmg
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: renders
+          path: renders/
+          if-no-files-found: ignore
