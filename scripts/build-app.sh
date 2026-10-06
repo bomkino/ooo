@@ -3,15 +3,33 @@
 #
 #   bash scripts/build-app.sh [release|debug]
 #
-# Needs Xcode or the Command Line Tools on an Apple silicon Mac.
+# Needs Xcode or the Command Line Tools on an Apple silicon Mac. The first build
+# fetches Sparkle 2.10.0 (in-app updates) through Swift Package Manager.
+#
+# Update testing builds a copy under another name and identifier, at any
+# version, so the real app and its settings are never touched (docs/UPDATES.md):
+#   VERSION_OVERRIDE  BUNDLE_NAME_OVERRIDE  BUNDLE_ID_OVERRIDE
+#   SPARKLE_PUBLIC_KEY_OVERRIDE  a throwaway key's public half, for CI's update test only
+#   SKIP_DMG=1                   leave out the disk image
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 CONFIG="${1:-release}"
-VERSION="${OOO_VERSION:-0.2.0}"
+VERSION="${VERSION_OVERRIDE:-0.2.0}"
+NAME="${BUNDLE_NAME_OVERRIDE:-OOO}"
+BUNDLE_ID="${BUNDLE_ID_OVERRIDE:-dog.pitch.ooo}"
 DIST="$ROOT/dist"
-APPDIR="$DIST/OOO.app"
+APPDIR="$DIST/$NAME.app"
+
+# In-app updates (Sparkle): OOO trusts updates signed with pitch.dog's key, the
+# same one Drift, Galileo and Backdrop use. Its private half never enters this
+# repository (docs/UPDATES.md).
+SPARKLE_PUBLIC_KEY="${SPARKLE_PUBLIC_KEY_OVERRIDE:-P43E8I+FgVyAW3QkS4J9bnDRRhAnsS4y3dT2WDce1lQ=}"
+FEED="https://github.com/bomkino/ooo/releases/latest/download/appcast.xml"
+# Sparkle compares CFBundleVersion, so it follows the version itself:
+# 0.2.0 → 200, 1.4.2 → 10402. Versions only go up.
+BUILD="$(echo "$VERSION" | awk -F. '{ printf "%d", $1 * 10000 + $2 * 100 + $3 }')"
 
 echo "== Building OOO ($CONFIG, arm64)"
 swift build -c "$CONFIG" --arch arm64 --product OOO
@@ -22,6 +40,10 @@ rm -rf "$APPDIR"
 mkdir -p "$APPDIR/Contents/MacOS" "$APPDIR/Contents/Resources"
 cp "$BIN" "$APPDIR/Contents/MacOS/OOO"
 cp "$ROOT/NOTICES.md" "$ROOT/LICENSE" "$APPDIR/Contents/Resources/" 2>/dev/null || true
+cp -R "$ROOT/Resources/Licenses" "$APPDIR/Contents/Resources/Licenses"
+# Sparkle, as Swift Package Manager built it, keeping its own signature.
+mkdir -p "$APPDIR/Contents/Frameworks"
+ditto "$(dirname "$BIN")/Sparkle.framework" "$APPDIR/Contents/Frameworks/Sparkle.framework"
 
 # The icon, drawn from code.
 ICONS="$ROOT/.build/icon"
@@ -36,15 +58,14 @@ if [ ! -f "$ICONS/OOO.icns" ]; then
 fi
 cp "$ICONS/OOO.icns" "$APPDIR/Contents/Resources/AppIcon.icns"
 
-BUILD="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)"
 cat > "$APPDIR/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>OOO</string>
-  <key>CFBundleDisplayName</key><string>OOO</string>
-  <key>CFBundleIdentifier</key><string>dog.pitch.ooo</string>
+  <key>CFBundleName</key><string>$NAME</string>
+  <key>CFBundleDisplayName</key><string>$NAME</string>
+  <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
   <key>CFBundleExecutable</key><string>OOO</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
@@ -54,6 +75,9 @@ cat > "$APPDIR/Contents/Info.plist" <<PLIST
   <key>LSArchitecturePriority</key><array><string>arm64</string></array>
   <key>LSApplicationCategoryType</key><string>public.app-category.video</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>SUFeedURL</key><string>$FEED</string>
+  <key>SUPublicEDKey</key><string>$SPARKLE_PUBLIC_KEY</string>
+  <key>SUEnableAutomaticChecks</key><true/>
   <key>NSHumanReadableCopyright</key><string>© 2026 pitch.dog. Free software under the GNU AGPL 3.0.</string>
   <key>NSSpeechRecognitionUsageDescription</key>
   <string>OOO listens to your voiceover on this Mac to find when you say each word, so every move lands just before you name it.</string>
@@ -82,11 +106,15 @@ cat > "$APPDIR/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-codesign --force --deep --sign - "$APPDIR"
+# Ad hoc, and not --deep: Sparkle.framework keeps the signature its makers gave it
+# (--deep would re-sign its helpers and strip their entitlements).
+codesign --force --sign - "$APPDIR"
 codesign --verify --verbose "$APPDIR"
-echo "   → $APPDIR"
+echo "   → $APPDIR ($VERSION, build $BUILD)"
 
-# A disk image with the app and a link to Applications.
+[ -n "${SKIP_DMG:-}" ] && exit 0
+# A disk image with the app and a link to Applications, for CI's artifact.
+# Releases are packed by scripts/make-release.sh.
 STAGE="$DIST/dmg"
 rm -rf "$STAGE" "$DIST/OOO.dmg"
 mkdir -p "$STAGE"
