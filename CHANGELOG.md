@@ -26,7 +26,7 @@ A milestone on the way to 1.0: every fix the 0.2.0 audit found, motion that neve
 - **The kicker** above an opening title can be set as typed, as well as in capitals.
 
 **Faster, and checked**
-- **Reading the slide** draws it once, 2160 pixels tall, and reads it in one pass, instead of reading the whole and four close-ups.
+- **Reading the slide is faster**: OOO reads the whole slide, then only its small print again, in close-ups drawn just around it, instead of every quarter of the slide.
 - The editor fits a 1024-point-wide screen. "Busy" tracks every running job.
 - CI now screenshots the real editor window (`OOO --snapshot`), fails on any `motioncheck` problem, measures ink like for like, and renders every look (`ooo-lab backdrops`), every arrival (`ooo-lab arrivals`) and the read against close-ups (`ooo-lab readcheck`).
 

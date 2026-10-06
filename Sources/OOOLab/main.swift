@@ -14,8 +14,9 @@ import StageKit
 //   ooo-lab sheet   --out sheet.png         a contact sheet across the video
 //   ooo-lab render  --out v.mp4 [--quality draft|good|best] [--scale 0.5] [--codec h264|hevc]
 //   ooo-lab analyze                         read the slide and plan a tour
-//   ooo-lab readcheck                       the one-pass read against reading the whole and
-//                                           four close-ups: time, lines found, the tour
+//   ooo-lab readcheck                       the read (the whole, then close-ups of its small
+//                                           print) against the whole and four quarters: time,
+//                                           lines found, the tour
 //   ooo-lab path    [--out path.csv]        the camera's path, sampled
 //   ooo-lab landings --out dir              a still at the opening and at every landing
 //   ooo-lab fixture --kind wide|standard --out f.png|f.pdf [--scale 2]
@@ -220,7 +221,7 @@ case "analyze":
 
 case "readcheck":
     // The reader before 0.3: the whole slide at 3200 px across, and each
-    // quarter again in a close-up for the small print, merged.
+    // quarter again in a close-up, merged.
     func closeUpRead(_ source: SlideSource) throws -> [SlideDetail] {
         let side = 3200
         let drawn = source.aspect >= 1 ? Float(side) / source.aspect : Float(side)
@@ -256,17 +257,17 @@ case "readcheck":
         let now = try SlideAnalysis.read(source)
         let nowTime = Date().timeIntervalSince(t)
         func lines(_ d: [SlideDetail]) -> Set<String> { Set(d.filter { $0.kind == .text }.map(\.text)) }
-        print(String(format: "whole and close-ups: %.2f s, %d lines, %d figures", beforeTime, lines(before).count,
+        print(String(format: "whole and quarters:    %.2f s, %d lines, %d figures", beforeTime, lines(before).count,
                      before.filter { $0.kind == .figure }.count))
-        print(String(format: "one pass:            %.2f s, %d lines, %d figures", nowTime, lines(now).count,
+        print(String(format: "whole and small print: %.2f s, %d lines, %d figures", nowTime, lines(now).count,
                      now.filter { $0.kind == .figure }.count))
-        for text in lines(before).subtracting(lines(now)).sorted() { print("  only with close-ups: \(text)") }
-        for text in lines(now).subtracting(lines(before)).sorted() { print("  only in one pass:    \(text)") }
+        for text in lines(before).subtracting(lines(now)).sorted() { print("  only with quarters:    \(text)") }
+        for text in lines(now).subtracting(lines(before)).sorted() { print("  only with small print: \(text)") }
         let tour = { (d: [SlideDetail]) in Director.shots(project.directorInput(d)).sorted { $0.time < $1.time }.map { $0.label ?? "?" } }
         let (a, b) = (tour(before), tour(now))
         print(a == b ? "the same tour: \(b.joined(separator: " / "))"
-                     : "tours differ:\n  close-ups: \(a.joined(separator: " / "))\n  one pass:  \(b.joined(separator: " / "))")
-        print(String(format: "readcheck: one pass in %.2f s (%.0f%% of the time)", nowTime, 100 * nowTime / max(beforeTime, 1e-6)))
+                     : "tours differ:\n  quarters:    \(a.joined(separator: " / "))\n  small print: \(b.joined(separator: " / "))")
+        print(String(format: "readcheck: read in %.2f s (%.0f%% of the time with quarters)", nowTime, 100 * nowTime / max(beforeTime, 1e-6)))
     } catch {
         fail("readcheck failed: \(error)")
     }
