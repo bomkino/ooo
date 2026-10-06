@@ -13,7 +13,7 @@ struct InspectorPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            SlideMap(session: session)
+            MapHost(session: session, clock: session.clock)
                 .padding(.horizontal, 14)
                 .padding(.top, 14)
             Text("Drag a framing to move it, a corner to go closer, ⌥-drag to turn. Draw on the slide to add one.")
@@ -234,11 +234,11 @@ struct ShotInspector: View {
         return Binding(
             get: {
                 guard let s = session.project.shots.first(where: { $0.id == id }) else { return 0 }
-                return log2f(max(s.frame.magnification(slideAspect: p.slideAspect, canvasAspect: p.canvasAspect), 0.5))
+                return log2f(max(s.frame.magnification(slideAspect: p.slide(p.pageIndex(s.page)).aspect, canvasAspect: p.canvasAspect), 0.5))
             },
             set: { z in
                 session.liveShot(id) { s in
-                    let now = log2f(max(s.frame.magnification(slideAspect: p.slideAspect, canvasAspect: p.canvasAspect), 0.5))
+                    let now = log2f(max(s.frame.magnification(slideAspect: p.slide(p.pageIndex(s.page)).aspect, canvasAspect: p.canvasAspect), 0.5))
                     s.frame.size *= powf(2, now - z)
                 }
             })
@@ -314,7 +314,7 @@ struct OverviewInspector: View {
                 }
             }
             Hairline()
-            CoverSection(session: session)
+            SlidesSection(session: session)
             Hairline()
             InspectorSection("Title") {
                 LiveField(session: session, placeholder: "Words over the opening", text: titleText(\.text), undo: "Title")

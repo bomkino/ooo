@@ -13,7 +13,8 @@ import SwiftUI
 ///         [--slide file] [--format reel|portrait|square|landscape|uhd]
 ///         [--tab camera|look|voice] [--shot n] [--time seconds]
 ///         [--title "words" [--kicker "line"]] [--safe-areas] [--show-export]
-///         [--cover file [--no-turn-back]] [--lift whole|4-10,14-] [--settle seconds]
+///         [--more file,file [--melt 1,2|all] [--home]] [--marks demo]
+///         [--lift whole|4-10,14-] [--settle seconds]
 ///
 /// It opens a new document window (on the sample slide unless `--slide` gives
 /// one), waits until the slide is drawn and its tour planned, sets the window
@@ -67,9 +68,8 @@ public enum OOOSnapshot {
         if let text = arg("--title") {
             session.update("Title") { $0.title = OpeningTitle(text: text, kicker: arg("--kicker") ?? "") }
         }
-        if let path = arg("--cover") {
-            session.chooseCover(URL(fileURLWithPath: path))
-            if flag("--no-turn-back") { session.update("Don't Turn Back") { $0.cover?.turnBack = false } }
+        if let list = arg("--more") {
+            session.addSlides(list.split(separator: ",").map { URL(fileURLWithPath: String($0)) })
         }
         if let spec = arg("--lift"), let lift = Lift(spec: spec) {
             session.update("Room for You") { $0.lift = lift }
@@ -77,8 +77,8 @@ public enum OOOSnapshot {
         let began = Date()
         func ready() -> Bool {
             // The slide drawn, its reading done, and (for a slide of your own) its tour planned.
-            let planned = arg("--slide") == nil || !session.project.shots.isEmpty
-            return session.hasSlide && session.coverReady && session.busy == nil && planned && Date().timeIntervalSince(began) > 1
+            let planned = (arg("--slide") == nil && arg("--more") == nil) || !session.project.shots.isEmpty
+            return session.hasSlide && session.pagesReady && session.busy == nil && planned && Date().timeIntervalSince(began) > 1
         }
         func poll() {
             if !ready() && Date().timeIntervalSince(began) < 60 {
@@ -92,6 +92,22 @@ public enum OOOSnapshot {
 
     private static func stage(_ session: OOOSession, still: @escaping (CGImage?) -> Void) {
         sizeWindows()
+        // How the card changes to each added slide, then a mark or two, now the tour is planned.
+        let melts = arg("--melt") ?? ""
+        for k in 1..<max(session.project.slideCount, 1) where melts == "all" || melts.split(separator: ",").contains(where: { Int($0) == k }) {
+            session.setChange(k, .melt)
+        }
+        if flag("--home") { session.setHome(true) }
+        if arg("--marks") == "demo" {
+            session.update("Draw") { p in
+                p.marks = (0..<p.slideCount).compactMap { k in
+                    guard let shot = p.shots.filter({ p.pageIndex($0.page) == k && $0.focus != nil }).min(by: { $0.time < $1.time }),
+                          let focus = shot.focus else { return nil }
+                    return Mark(page: p.pageID(k), time: shot.time + 0.25, strokes: [Mark.loop(around: focus, slideAspect: p.slide(k).aspect, seed: k)],
+                                color: k % 2 == 0 ? .red : .yellow, fades: k > 0)
+                }
+            }
+        }
         switch arg("--tab") {
         case "look": session.tab = .look
         case "voice": session.tab = .voice

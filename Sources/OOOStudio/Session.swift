@@ -89,21 +89,6 @@ final class SlideBase: @unchecked Sendable {
     }
 }
 
-/// The cover on the GPU.
-final class CoverBase: @unchecked Sendable {
-    let ref: SlideRef
-    let texture: MTLTexture
-    let preview: CGImage?
-
-    init(ref: SlideRef, media: URL?) throws {
-        self.ref = ref
-        let source = try SlideSource(ref: ref, media: media)
-        guard let whole = source.renderWhole() else { throw RenderError.io("Could not draw the cover.") }
-        texture = try MediaLoader.texture(from: whole).texture
-        preview = SlideBase.downscaled(whole, side: 480)
-    }
-}
-
 /// Editor state for one window.
 @Observable
 @MainActor
@@ -128,8 +113,8 @@ public final class OOOSession {
     private var lastJob = 0
     /// The slide drawn small, for the map and the timeline.
     public private(set) var slidePreview: CGImage?
-    /// The cover drawn small, for the inspector and the timeline.
-    public private(set) var coverPreview: CGImage?
+    /// Every slide after the first drawn small, by its id, for the inspector and the timeline.
+    public private(set) var pagePreviews: [UUID: CGImage] = [:]
     /// Shows on the stage where you will be while the stage is up for you.
     public var showRoom = true
     /// The slide's main colours, for a room in them.
@@ -155,8 +140,9 @@ public final class OOOSession {
 
     @ObservationIgnored private var slideBase: SlideBase?
     @ObservationIgnored private var slideToken = 0
-    @ObservationIgnored private var coverBase: CoverBase?
-    @ObservationIgnored private var coverToken = 0
+    /// The slides after the first on the GPU, by id, and those being drawn.
+    @ObservationIgnored private var pageBases: [UUID: SlideBase] = [:]
+    @ObservationIgnored private var pagesDrawing: Set<UUID> = []
     @ObservationIgnored private var sceneCache: SlideScene?
     /// A dropped slide whose tour is still being planned: the drop and its
     /// tour become one undo step when the plan lands.
@@ -167,7 +153,7 @@ public final class OOOSession {
     @ObservationIgnored private var pendingVoice: (key: VoiceKey, since: Double)?
     @ObservationIgnored private let player = VoicePlayer()
     @ObservationIgnored private var lastSoundTime: Double?
-    @ObservationIgnored private var thumbs: [ShotFrame: CGImage] = [:]
+    @ObservationIgnored private var thumbs: [ThumbKey: CGImage] = [:]
     @ObservationIgnored private var pendingEditStart: OOOProject?
     @ObservationIgnored private var pendingEditName: String?
     /// Set when Esc cancels a gesture: the rest of it changes nothing, until
@@ -187,7 +173,7 @@ public final class OOOSession {
     /// and discard sessions whenever it rebuilds the view).
     public func start() {
         loadSlide()
-        loadCover()
+        loadPages()
         loadVoice()
     }
 
@@ -301,7 +287,7 @@ public final class OOOSession {
     }
 
     /// A new slide (or page) and its tour, undone together.
-    private func drop(_ name: String, _ change: (inout OOOProject) -> Void) {
+    func drop(_ name: String, _ change: (inout OOOProject) -> Void) {
         if pendingEditStart != nil { commitEdit(pendingEditName ?? "Edit") }
         finishDrop()
         let before = project
@@ -315,8 +301,8 @@ public final class OOOSession {
     private func set(_ p: OOOProject) {
         let slideChanged = p.slide != project.slide
         let voiceChanged = p.voice?.file != project.voice?.file
-        let coverChanged = p.cover?.slide != project.cover?.slide
-        if slideChanged || p.format != project.format { thumbs = [:] }
+        let pagesChanged = p.morePages.map(\.id) != project.morePages.map(\.id) || p.morePages.map(\.slide) != project.morePages.map(\.slide)
+        if slideChanged || pagesChanged || p.format != project.format { thumbs = [:] }
         project = p
         document.project = p
         choreography = p.choreography()
@@ -330,7 +316,7 @@ public final class OOOSession {
         if case .shot(let id) = selection, !p.shots.contains(where: { $0.id == id }) { selection = .overview }
         if slideChanged { loadSlide() }
         if voiceChanged { loadVoice() }
-        if coverChanged { loadCover() }
+        if pagesChanged { loadPages() }
     }
 
     private func registerUndo(from old: OOOProject, name: String) {
@@ -361,26 +347,27 @@ public final class OOOSession {
         guard let b = slideBase else { return nil }
         var shown = project
         if comparing { shown.look.surface = .original }
-        let s = SlideScene(project: shown, base: b.texture, details: b.details, cover: coverTexture, choreography: choreography)
+        // A slide still being drawn shows the first in its place for a moment.
+        let pages = project.morePages.map { page in pageBases[page.id].flatMap { $0.ref == page.slide ? $0 : nil } }
+        let s = SlideScene(project: shown, bases: [b.texture] + pages.map { $0?.texture ?? b.texture },
+                           details: [b.details] + pages.map { $0?.details }, inks: InkCache.shared.textures(for: project),
+                           choreography: choreography)
         sceneCache = s
         return s
     }
 
-    /// A scene with its own detail cache, so an export never fights the live stage.
+    /// A scene with its own detail caches, so an export never fights the
+    /// live stage; nil until every slide is drawn.
     public func exportScene() -> SlideScene? {
-        guard let b = slideBase else { return nil }
-        return SlideScene(project: project, base: b.texture, details: DetailCache(source: b.source, baseDensity: b.density),
-                          cover: coverTexture, choreography: choreography)
+        guard let b = slideBase, pagesReady else { return nil }
+        let pages = project.morePages.compactMap { pageBases[$0.id] }
+        return SlideScene(project: project, bases: [b.texture] + pages.map(\.texture),
+                          details: ([b] + pages).map { DetailCache(source: $0.source, baseDensity: $0.density) },
+                          inks: InkCache.shared.textures(for: project), choreography: choreography)
     }
 
-    /// The cover on the GPU, once it is drawn.
-    private var coverTexture: MTLTexture? {
-        guard let c = coverBase, c.ref == project.cover?.slide else { return nil }
-        return c.texture
-    }
-
-    /// Whether the project's cover is drawn and ready (or there is none).
-    public var coverReady: Bool { project.cover == nil || coverTexture != nil }
+    /// Whether every slide after the first is drawn and ready.
+    public var pagesReady: Bool { project.morePages.allSatisfy { pageBases[$0.id]?.ref == $0.slide } }
 
     public var hasSlide: Bool { slideBase != nil }
 
@@ -422,33 +409,43 @@ public final class OOOSession {
         }
     }
 
-    func loadCover() {
-        guard let ref = project.cover?.slide else {
-            coverToken += 1
-            coverBase = nil
-            coverPreview = nil
-            return
+    /// Draws every slide after the first not drawn yet, and forgets those gone.
+    func loadPages() {
+        let wanted = project.morePages
+        for (id, base) in pageBases where wanted.first(where: { $0.id == id })?.slide != base.ref {
+            pageBases[id] = nil
+            pagePreviews[id] = nil
         }
-        if let c = coverBase, c.ref == ref { return }
         let media = document.media.directory
-        coverToken += 1
-        let token = coverToken
-        let job = begin("Drawing the cover")
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let result = Result { try CoverBase(ref: ref, media: media) }
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self else { return }
-                    self.end(job)
-                    guard token == self.coverToken else { return }
-                    switch result {
-                    case .success(let base):
-                        self.coverBase = base
-                        self.coverPreview = base.preview
-                        self.sceneCache = nil
-                        self.version += 1
-                    case .failure(let error):
-                        self.message = "Couldn't draw the cover: \(readable(error))"
+        for page in wanted where pageBases[page.id] == nil && !pagesDrawing.contains(page.id) {
+            let id = page.id, ref = page.slide
+            pagesDrawing.insert(id)
+            let job = begin("Drawing the slides")
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let result = Result { try SlideBase(ref: ref, media: media) }
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        self.end(job)
+                        self.pagesDrawing.remove(id)
+                        switch result {
+                        case .success(let base):
+                            guard self.project.morePages.first(where: { $0.id == id })?.slide == ref else {
+                                // Changed while it was drawn: draw what is there now.
+                                self.loadPages()
+                                return
+                            }
+                            base.details.onReady = { [weak self] in
+                                MainActor.assumeIsolated { self?.touch() }
+                            }
+                            self.pageBases[id] = base
+                            self.pagePreviews[id] = base.preview
+                            self.thumbs = [:]
+                            self.sceneCache = nil
+                            self.version += 1
+                        case .failure(let error):
+                            self.message = "Couldn't draw \(ref.name): \(readable(error))"
+                        }
                     }
                 }
             }
@@ -501,11 +498,12 @@ public final class OOOSession {
         autoDirect()
     }
 
-    /// A corrected version of the slide: the tour stays, and each framing
-    /// follows its words to where they are now. With no tour yet, it is a
-    /// new slide.
-    public func replaceSlide(_ url: URL) {
-        guard hasSlide, !project.shots.isEmpty else { importSlide(url); return }
+    /// A corrected version of slide `k`: its tour stays, and each framing
+    /// follows its words to where they are now. With no tour yet, the first
+    /// is a new slide.
+    public func replaceSlide(_ url: URL, page k: Int = 0) {
+        guard k > 0 || (hasSlide && !project.shots.isEmpty) else { importSlide(url); return }
+        guard k < project.slideCount else { return }
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         guard var ref = SlideSource.inspect(url) else {
@@ -518,7 +516,7 @@ public final class OOOSession {
             message = "Couldn't copy the slide: \(error.localizedDescription)"
             return
         }
-        let was = project.slide, known = project.reading, now = ref
+        let was = project.slide(k), known = project.reading(k), now = ref, id = project.pageID(k)
         let media = document.media.directory
         let job = begin("Reading the new slide")
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -531,11 +529,15 @@ public final class OOOSession {
                     guard let self else { return }
                     self.end(job)
                     // Another slide was dropped meanwhile: that one wins.
-                    guard self.project.slide == was else { return }
+                    guard self.project.pageIndex(id) == k, self.project.slide(k) == was else { return }
                     switch result {
                     case .success(let reading):
                         self.update("Replace Slide") { p in
-                            p.replaceSlide(with: now, reading: reading.new, from: reading.old)
+                            if let id {
+                                p.replacePage(id, with: now, reading: reading.new, from: reading.old)
+                            } else {
+                                p.replaceSlide(with: now, reading: reading.new, from: reading.old)
+                            }
                         }
                     case .failure(let error):
                         self.message = "Couldn't read the new slide: \(readable(error))"
@@ -596,52 +598,84 @@ public final class OOOSession {
         autoDirect()
     }
 
-    /// The part of the slide a framing shows, cut from the preview, for the timeline.
-    public func thumbnail(_ frame: ShotFrame) -> CGImage? {
-        if let t = thumbs[frame] { return t }
-        guard let img = slidePreview else { return nil }
-        let v = frame.visible(slideAspect: project.slideAspect, canvasAspect: project.canvasAspect)
+    struct ThumbKey: Hashable {
+        var frame: ShotFrame
+        var page: Int
+    }
+
+    /// The `k`th slide drawn small (0 is the first).
+    public func preview(_ k: Int) -> CGImage? {
+        guard let id = project.pageID(k) else { return slidePreview }
+        return pagePreviews[id]
+    }
+
+    /// The part of slide `page` a framing shows, cut from its preview, for the timeline.
+    public func thumbnail(_ frame: ShotFrame, page: Int = 0) -> CGImage? {
+        let key = ThumbKey(frame: frame, page: page)
+        if let t = thumbs[key] { return t }
+        guard let img = preview(page) else { return nil }
+        let v = frame.visible(slideAspect: project.slide(page).aspect, canvasAspect: project.canvasAspect)
         let W = CGFloat(img.width), H = CGFloat(img.height)
         let rect = CGRect(x: CGFloat(v.minU) * W, y: CGFloat(v.minV) * H, width: CGFloat(v.size.x) * W, height: CGFloat(v.size.y) * H)
             .intersection(CGRect(x: 0, y: 0, width: W, height: H)).integral
         guard !rect.isNull, rect.width >= 1, rect.height >= 1, let crop = img.cropping(to: rect) else { return nil }
         if thumbs.count > 240 { thumbs.removeAll() }
-        thumbs[frame] = crop
+        thumbs[key] = crop
         return crop
     }
 
     // MARK: Directing
 
-    /// Reads the slide and plans a tour of it: the headline, the details worth
-    /// stopping on in reading order, the small print last, cut to the voice if
-    /// there is one.
-    public func autoDirect() {
-        let ref = project.slide
+    /// Reads the slides and plans a tour of them: on each, the headline, the
+    /// details worth stopping on in reading order, the small print last, cut
+    /// to the voice if there is one. With `adding`, only those new slides
+    /// get a tour, after the one there already, unless every framing so far
+    /// was planned anyway.
+    public func autoDirect(adding: Set<UUID>? = nil) {
+        let refs = project.allSlides
         let media = document.media.directory
         // A slide already read isn't read again; a new slide or page has no reading yet.
-        let cached = project.reading
-        let job = begin("Reading the slide")
+        let cached = (0..<project.slideCount).map { project.reading($0) }
+        let job = begin(refs.count > 1 ? "Reading the slides" : "Reading the slide")
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let result = Result { () throws -> [SlideDetail] in
-                if let cached { return cached }
-                return try SlideAnalysis.read(SlideSource(ref: ref, media: media))
+            let result = Result { () throws -> [[SlideDetail]] in
+                try refs.indices.map { k in
+                    if let c = cached[k] { return c }
+                    return try SlideAnalysis.read(SlideSource(ref: refs[k], media: media))
+                }
             }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     self.end(job)
-                    guard self.project.slide == ref else { return }
+                    guard self.project.allSlides == refs else { return }
                     // A new slide waits for its tour to arrive; it arrives now either way.
                     let fresh = self.pendingDrop != nil
                     switch result {
                     case .success(let found):
-                        let shots = Director.shots(self.project.directorInput(found))
-                        guard !shots.isEmpty else {
-                            if self.project.reading == nil {
-                                var p = self.project
-                                p.reading = found
-                                self.set(p)
+                        let store: (inout OOOProject) -> Void = { p in
+                            p.reading = found.first
+                            if var pages = p.pages {
+                                for j in pages.indices where j + 1 < found.count { pages[j].reading = found[j + 1] }
+                                p.pages = pages
                             }
+                        }
+                        var planned = self.project.plannedShots(found)
+                        if let adding, self.project.shots.contains(where: { !$0.isPlanned }) {
+                            // Framings you set stay as they are; the new slides' tours follow them.
+                            let before = planned.filter { !adding.contains($0.page ?? UUID()) }.map(\.time).max() ?? 0
+                            let have = self.project.shots.map(\.time).max() ?? before
+                            planned = self.project.shots + planned.filter { adding.contains($0.page ?? UUID()) }.map {
+                                var s = $0
+                                s.time += have - before
+                                return s
+                            }
+                        }
+                        let shots = planned
+                        guard !shots.isEmpty else {
+                            var p = self.project
+                            store(&p)
+                            if p != self.project { self.set(p) }
                             self.finishDrop()
                             if fresh {
                                 self.selection = .overview
@@ -654,18 +688,20 @@ public final class OOOSession {
                         if self.pendingDrop != nil {
                             var p = self.project
                             p.shots = shots
-                            p.reading = found
+                            store(&p)
                             self.set(p)
                             self.finishDrop()
                         } else {
                             self.update("Direct") { p in
                                 p.shots = shots
-                                p.reading = found
+                                store(&p)
                             }
                         }
-                        self.selection = .overview
-                        self.clock.time = 0
-                        self.clock.autoplay()
+                        if adding == nil {
+                            self.selection = .overview
+                            self.clock.time = 0
+                            self.clock.autoplay()
+                        }
                     case .failure(let error):
                         self.finishDrop()
                         if fresh {
@@ -684,7 +720,7 @@ public final class OOOSession {
     public func cutToVoice() {
         guard let words = project.voice?.words, !words.isEmpty else { return }
         update("Cut to Voice") { p in
-            p.shots = Director.retime(p.shots, words: words, start: p.tourStart)
+            p.shots = p.retimed(to: words)
         }
     }
 
@@ -789,25 +825,40 @@ public final class OOOSession {
         }
     }
 
+    /// The slide the slide map shows: the selected shot's, or the one face up at `t`.
+    public func mapPage(at t: Double) -> Int {
+        if let s = selectedShot { return project.pageIndex(s.page) }
+        return choreography.page(at: t)
+    }
+
     /// A new framing at the playhead, or after the last shot: by default a
-    /// closer look at the middle of what the camera sees now.
-    public func addShot(frame: ShotFrame? = nil, at time: Double? = nil) {
+    /// closer look at the middle of what the camera sees now. Drawn on
+    /// another slide's map (`page`), it goes after that slide's last shot.
+    public func addShot(frame: ShotFrame? = nil, at time: Double? = nil, page: Int? = nil) {
         let p = project
         var t = time ?? clock.time
         let start = p.tourStart + 0.6
+        // On the slide face up at the playhead, unless drawn on another.
+        let k = page ?? choreography.page(at: time ?? clock.time)
+        if k != choreography.page(at: t) {
+            let mine = p.shots.filter { p.pageIndex($0.page) == k }.map(\.time)
+            let arrives = choreography.changes.first { $0.to == k && !$0.back }.map { $0.end + 1.0 } ?? start
+            t = (mine.max().map { $0 + 2.6 }) ?? arrives
+        }
         let taken = p.shots.contains { abs($0.time - t) < 0.9 }
         if t < start || taken { t = max(start, (p.shots.map(\.time).max() ?? start - 2.6) + 2.6) }
         var f: ShotFrame
         if let frame {
             f = frame
         } else {
-            f = choreography.pose(at: clock.time).frame(slideAspect: p.slideAspect, canvasAspect: p.canvasAspect)
+            f = choreography.pose(at: clock.time).frame(slideAspect: p.slide(k).aspect, canvasAspect: p.canvasAspect)
             f.size *= 0.5
         }
         f.center = Vec2(min(max(f.center.x, 0), 1), min(max(f.center.y, 0), 1))
         let yaw = clamp((f.center.x - 0.5) * 22, -12, 12)
         let pitch = clamp((0.5 - f.center.y) * 12, -7, 7)
-        let shot = Shot(time: t, frame: f, yaw: yaw, pitch: pitch, lens: 28, aperture: 0.45, label: nil)
+        var shot = Shot(time: t, frame: f, yaw: yaw, pitch: pitch, lens: 28, aperture: 0.45, label: nil)
+        shot.page = p.pageID(k)
         update("Add Shot") { $0.shots.append(shot) }
         select(.shot(shot.id))
     }
@@ -850,9 +901,7 @@ public final class OOOSession {
             let (A, C) = (p.slideAspect, p.canvasAspect)
             p.format = f
             p.adaptOverview(fromSlideAspect: A, canvasAspect: C)
-            if let reading = p.reading, p.shots.contains(where: \.isPlanned) {
-                p.shots = Director.reframe(p.shots, from: Director.shots(p.directorInput(reading)))
-            }
+            p.reframePlanned()
         }
     }
 

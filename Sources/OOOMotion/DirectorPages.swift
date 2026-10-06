@@ -190,7 +190,7 @@ extension Director {
     /// stretch that names most of what is on it, and a slide whose change is
     /// set by hand starts where it was set. With too few words to tell, the
     /// voice is shared evenly by what each slide has to show.
-    static func share(_ words: [SpokenWord], among pages: [PageReading]) -> [[SpokenWord]] {
+    public static func share(_ words: [SpokenWord], among pages: [PageReading]) -> [[SpokenWord]] {
         let n = pages.count, W = words.count
         // Words only one slide has: those place the boundaries.
         let sets = pages.map { Set(blocks($0.details).flatMap { tokens($0.text) }) }

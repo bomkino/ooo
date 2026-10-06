@@ -231,15 +231,22 @@ func loadDropped(_ providers: [NSItemProvider], _ done: @escaping @MainActor ([U
 }
 
 extension OOOSession {
-    /// A dropped recording becomes the voiceover; anything else, the slide.
+    /// A dropped recording becomes the voiceover; a slide, the slide; several
+    /// slides, a video that goes through them in name order.
     func importDropped(_ urls: [URL]) {
+        var slides: [URL] = []
         for url in urls {
             let type = UTType(filenameExtension: url.pathExtension.lowercased())
             if type?.conforms(to: .audio) == true {
                 importVoice(url)
             } else {
-                importSlide(url)
+                slides.append(url)
             }
+        }
+        if slides.count > 1 {
+            importSlides(slides)
+        } else if let one = slides.first {
+            importSlide(one)
         }
     }
 }

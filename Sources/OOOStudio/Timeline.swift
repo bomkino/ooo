@@ -160,13 +160,11 @@ struct CameraLane: View {
                     .frame(width: max(x2 - x1 - 2, 6), height: TimelineView.camera)
                     .offset(x: x1)
             }
-            // The card turning, over the framing it turns under.
-            if session.project.cover != nil {
-                // By place, not value: a turn being dragged keeps its view.
-                ForEach(Array(session.choreography.turns.enumerated()), id: \.offset) { _, turn in
-                    TurnMarker(session: session, turn: turn, scale: scale)
-                        .offset(x: scale.x(turn.start), y: TimelineView.camera - 21)
-                }
+            // The card changing slide, over the framing it changes under.
+            // By place, not value: a change being dragged keeps its view.
+            ForEach(Array(session.choreography.changes.enumerated()), id: \.offset) { _, change in
+                ChangeMarker(session: session, change: change, scale: scale)
+                    .offset(x: scale.x(change.start), y: TimelineView.camera - 21)
             }
         }
     }
@@ -253,7 +251,7 @@ struct BeatBlock: View {
             let thumbH = TimelineView.camera - 14
             let thumbW = min(thumbH * CGFloat(session.project.canvasAspect), max(w - 6, 0))
             HStack(spacing: 7) {
-                if thumbW > 8, let img = coverShows ? session.coverPreview : session.thumbnail(beat.isOverview ? session.project.overview.frame : beat.shot.frame) {
+                if thumbW > 8, let img = session.thumbnail(beat.shot.frame, page: beat.page) {
                     Image(decorative: img, scale: 1)
                         .resizable()
                         .interpolation(.medium)
@@ -289,24 +287,31 @@ struct BeatBlock: View {
         .help(beat.isOverview ? "The whole slide" : "\(title). Drag to move when the camera lands; it snaps to the words.")
     }
 
-    /// The opening and the last framing show the cover when the card turns there.
-    private var coverShows: Bool {
-        guard session.project.cover != nil, beat.isOverview else { return false }
-        return beat.shot.id == Choreography.backToCover || beat.land < (session.choreography.turns.first?.start ?? 0)
-    }
+    private var several: Bool { session.project.slideCount > 1 }
 
     private var title: String {
-        if beat.shot.id == Choreography.backToCover { return "Back to the cover" }
-        if coverShows { return "Cover" }
-        if beat.isOverview { return "Whole slide" }
+        switch beat.role {
+        case .turned: return "Slide \(beat.page + 1)"
+        case .home: return "Slide 1"
+        case .opening, .whole, .pullBack: return several ? "Slide \(beat.page + 1)" : "Whole slide"
+        case .shot: break
+        }
+        if beat.isOverview { return several ? "Slide \(beat.page + 1)" : "Whole slide" }
         return Director.spokenLabel(beat.shot.label) ?? "Shot \(number ?? 0)"
     }
 
     private var detail: String {
-        if beat.shot.id == Choreography.backToCover { return "Turns back" }
-        if coverShows { return "Turns over to the slide" }
+        switch beat.role {
+        case .turned: return "Turns over"
+        case .home: return "Turns back"
+        case .whole: return "Before it turns"
+        case .pullBack: return "Pull back"
+        case .opening: return "Overview"
+        case .shot: break
+        }
+        if beat.melts && beat.isOverview { return "Melts in" }
         if beat.isOverview { return session.project.ending == .pullBack && beat.land > 1 ? "Pull back" : "Overview" }
-        var parts = [beat.shot.move.title]
+        var parts = [beat.melts ? "Melts in" : beat.shot.move.title]
         if beat.shot.emphasis != .none { parts.append(beat.shot.emphasis.title) }
         if let cue = beat.shot.cue, !cue.isEmpty { parts.append("“\(cue.split(separator: " ").prefix(3).joined(separator: " "))”") }
         return parts.joined(separator: " · ")

@@ -5,73 +5,6 @@ import SwiftUI
 
 // MARK: - Inspector
 
-/// The cover the video opens on: choose it, time its turn, and whether it
-/// turns back before the end.
-struct CoverSection: View {
-    let session: OOOSession
-
-    var body: some View {
-        let p = session.project
-        InspectorSection("Cover", accessory: {
-            if p.cover != nil {
-                Button("Watch") { session.watchTheTurn() }
-                    .buttonStyle(QuietButtonStyle())
-            }
-        }) {
-            if let cover = p.cover {
-                HStack(spacing: 10) {
-                    Group {
-                        if let img = session.coverPreview {
-                            Image(decorative: img, scale: 1).resizable().interpolation(.medium).aspectRatio(contentMode: .fit)
-                        } else {
-                            ProgressView().controlSize(.mini)
-                        }
-                    }
-                    .frame(width: 64, height: 40)
-                    .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(Theme.well.opacity(0.6)))
-                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(cover.slide.name).textStyle(.bodyCompact).lineLimit(1)
-                        Text("turns over at \(secondsLabel(session.choreography.turns.first?.start ?? cover.turn))")
-                            .textStyle(.data).foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 0)
-                }
-                Dial(session: session, label: "Turns at", value: Binding(
-                    get: { Float(session.choreography.turns.first?.start ?? cover.turn) },
-                    set: { v in session.liveTurn(back: false, to: Double(v)) }),
-                     range: Float(p.arrive.end + 0.3)...Float(max(p.arrive.end + 12, cover.turn)),
-                     defaultValue: Float(p.defaultCoverTurn), format: secondsValue, undo: "Move Turn")
-                Toggle("Turn back to the cover at the end", isOn: Binding(
-                    get: { session.project.cover?.turnBack ?? true },
-                    set: { on in session.update(on ? "Turn Back" : "Don't Turn Back") { $0.cover?.turnBack = on } }))
-                    .toggleStyle(.checkbox)
-                    .textStyle(.bodyCompact)
-                HStack(spacing: 4) {
-                    Button("Change…") { OOOCommands.chooseCover(session) }
-                    Button("Remove", role: .destructive) { session.removeCover() }
-                    Spacer(minLength: 0)
-                }
-                .buttonStyle(QuietButtonStyle())
-                Text("The video opens on the cover, turns it over like a card in your hand, and turns it back before the end. Drag the turns on the timeline to time them to your words.")
-                    .textStyle(.caption).foregroundStyle(.secondary)
-            } else {
-                Text("Open on another slide, such as your deck's cover, then turn it over to this one. It can turn back at the end.")
-                    .textStyle(.caption).foregroundStyle(.secondary)
-                HStack(spacing: 4) {
-                    Button("Choose Cover…") { OOOCommands.chooseCover(session) }
-                    if session.canUseFirstPageAsCover {
-                        Button("Use Page 1") { session.useSlidePageAsCover(0) }
-                            .help("The first page of this slide's PDF")
-                    }
-                    Spacer(minLength: 0)
-                }
-                .buttonStyle(QuietButtonStyle())
-            }
-        }
-    }
-}
-
 /// Room for you: the stage rises into the top of the frame and leaves the
 /// bottom clear, for you on camera.
 struct RoomSection: View {
@@ -118,50 +51,6 @@ struct RoomSection: View {
 }
 
 // MARK: - Timeline
-
-/// A turn of the card on the camera lane: drag it to time it.
-struct TurnMarker: View {
-    @Bindable var session: OOOSession
-    let turn: Turn
-    let scale: TimeScale
-    @State private var dragStart: Double?
-    @State private var hover = false
-
-    var body: some View {
-        let w = max(scale.x(turn.end) - scale.x(turn.start), 14)
-        HStack(spacing: 4) {
-            Image(systemName: turn.back ? "arrow.uturn.left" : "arrow.uturn.right").font(.system(size: 9, weight: .bold))
-            if w > 58 { Text(turn.back ? "Back" : "Turn").textStyle(.badge) }
-        }
-        .foregroundStyle(Theme.onAccent)
-        .frame(width: w, height: 16)
-        .background(Capsule().fill(Theme.camera.opacity(hover || dragStart != nil ? 1 : 0.85)))
-        .contentShape(Capsule())
-        .onHover { hover = $0 }
-        .gesture(DragGesture(minimumDistance: 2)
-            .onChanged { g in
-                if dragStart == nil {
-                    dragStart = turn.start
-                    session.holdTimeline(true)
-                    session.beginEdit("Move Turn")
-                }
-                let t = (dragStart ?? turn.start) + Double(g.translation.width / scale.pointsPerSecond)
-                session.liveTurn(back: turn.back, to: t)
-            }
-            .onEnded { _ in
-                dragStart = nil
-                session.commitEdit("Move Turn")
-                session.holdTimeline(false)
-            })
-        .simultaneousGesture(TapGesture().onEnded {
-            session.clock.playing = false
-            session.clock.time = max(turn.start - 1.2, 0)
-            session.clock.playing = true
-        })
-        .help(turn.back ? "The slide turns back to the cover. Drag to time it; click to watch."
-            : "The cover turns over to the slide. Drag to time it; click to watch.")
-    }
-}
 
 /// Where the stage rises to leave room for you: a stretch per span, its
 /// ends shaded where the stage is rising and settling.

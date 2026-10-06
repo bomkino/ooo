@@ -50,7 +50,7 @@ public struct PageTiming: Hashable, Sendable {
 }
 
 /// Turning back to the first slide before the end.
-public struct HomeTiming: Hashable, Sendable {
+public struct HomeTiming: Codable, Hashable, Sendable {
     /// When the turn back starts; nil places it once the tour is over.
     public var at: Double?
 

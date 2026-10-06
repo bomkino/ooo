@@ -371,6 +371,8 @@ public final class StageRenderer {
         var spot: SIMD4<Float>
         var spotP: SIMD4<Float>
         var soft: SIMD4<Float>
+        var melt: SIMD4<Float>
+        var ink: SIMD4<Float>
     }
 
     func frameUniforms(frame: StageFrame, look: StageLook, aspect: Float, width: Int, height: Int) -> FrameUniforms {
@@ -435,7 +437,9 @@ public final class StageRenderer {
             window: c.window,
             spot: c.spot,
             spotP: SIMD4(c.spotDim, c.spotFeather, c.shadowGround == nil ? 0 : 1, c.shadowGround ?? 0),
-            soft: SIMD4(c.softEdge, c.surfaceAmount, c.develop, 0))
+            soft: SIMD4(c.softEdge, c.surfaceAmount, c.develop, 0),
+            melt: c.melt,
+            ink: c.ink)
     }
 }
 
