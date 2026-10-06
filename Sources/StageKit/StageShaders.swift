@@ -416,8 +416,10 @@ fragment float4 card_fragment(CardVOut in [[stage_in]], bool facing [[front_faci
     rgb *= 1.0 + c.fx.x;
     float a = alpha * mask * c.sizeCorner.w * c.color.a;
     if (c.mirror.x > 0.5) {
-        float below = max(c.mirror.y - in.worldPos.y, 0.0);
-        a *= c.mirror.z * exp(-below * c.mirror.w);
+        // Only what stands above the floor is mirrored in it: a card coming
+        // up from beneath (Glide, Rise) leaves no upside-down ghost above it.
+        float below = c.mirror.y - in.worldPos.y;
+        a *= c.mirror.z * exp(-max(below, 0.0) * c.mirror.w) * saturate(below * 400.0 + 0.5);
     }
     return float4(rgb * a, a);
 }

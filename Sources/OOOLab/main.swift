@@ -14,6 +14,8 @@ import StageKit
 //   ooo-lab sheet   --out sheet.png         a contact sheet across the video
 //   ooo-lab render  --out v.mp4 [--quality draft|good|best] [--scale 0.5] [--codec h264|hevc]
 //   ooo-lab analyze                         read the slide and plan a tour
+//   ooo-lab readcheck                       the one-pass read against reading the whole and
+//                                           four close-ups: time, lines found, the tour
 //   ooo-lab path    [--out path.csv]        the camera's path, sampled
 //   ooo-lab landings --out dir              a still at the opening and at every landing
 //   ooo-lab fixture --kind wide|standard --out f.png|f.pdf [--scale 2]
@@ -214,6 +216,59 @@ case "analyze":
         printPlan(Director.shots(project.directorInput(details)))
     } catch {
         fail("analyze failed: \(error)")
+    }
+
+case "readcheck":
+    // The reader before 0.3: the whole slide at 3200 px across, and each
+    // quarter again in a close-up for the small print, merged.
+    func closeUpRead(_ source: SlideSource) throws -> [SlideDetail] {
+        let side = 3200
+        let drawn = source.aspect >= 1 ? Float(side) / source.aspect : Float(side)
+        let wholeHeight = min(drawn, source.densityLimit ?? drawn)
+        guard let whole = source.renderWhole(side: side) else { fail("could not draw the slide") }
+        var found = try SlideAnalysis.lines(in: whole)
+        if source.densityLimit.map({ $0 > wholeHeight * 1.25 }) ?? true {
+            var closeUps: [SlideDetail] = []
+            for (c, r) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                let u0: Float = c == 0 ? 0 : 0.44, v0: Float = r == 0 ? 0 : 0.44
+                let q = SIMD4<Float>(u0, v0, u0 + 0.56, v0 + 0.56)
+                let h = max(1, Int((Float(side) * (q.w - q.y) / ((q.z - q.x) * source.aspect)).rounded()))
+                guard let image = source.render(region: q, width: side, height: h) else { continue }
+                closeUps += try SlideAnalysis.lines(in: image).map { d in
+                    var d = d
+                    d.frame = ShotFrame(center: Vec2(q.x + d.frame.center.x * (q.z - q.x), q.y + d.frame.center.y * (q.w - q.y)),
+                                        size: Vec2(d.frame.size.x * (q.z - q.x), d.frame.size.y * (q.w - q.y)))
+                    return d
+                }
+            }
+            found = Director.merge(found, closeUps: closeUps)
+        }
+        return found + SlideAnalysis.figures(in: whole, text: found.map(\.frame.bounds))
+    }
+    do {
+        let source = try SlideSource(ref: project.slide, media: media)
+        // Vision loads its models on the first read; neither timing pays for that.
+        _ = try SlideAnalysis.read(source)
+        var t = Date()
+        let before = try closeUpRead(source)
+        let beforeTime = Date().timeIntervalSince(t)
+        t = Date()
+        let now = try SlideAnalysis.read(source)
+        let nowTime = Date().timeIntervalSince(t)
+        func lines(_ d: [SlideDetail]) -> Set<String> { Set(d.filter { $0.kind == .text }.map(\.text)) }
+        print(String(format: "whole and close-ups: %.2f s, %d lines, %d figures", beforeTime, lines(before).count,
+                     before.filter { $0.kind == .figure }.count))
+        print(String(format: "one pass:            %.2f s, %d lines, %d figures", nowTime, lines(now).count,
+                     now.filter { $0.kind == .figure }.count))
+        for text in lines(before).subtracting(lines(now)).sorted() { print("  only with close-ups: \(text)") }
+        for text in lines(now).subtracting(lines(before)).sorted() { print("  only in one pass:    \(text)") }
+        let tour = { (d: [SlideDetail]) in Director.shots(project.directorInput(d)).sorted { $0.time < $1.time }.map { $0.label ?? "?" } }
+        let (a, b) = (tour(before), tour(now))
+        print(a == b ? "the same tour: \(b.joined(separator: " / "))"
+                     : "tours differ:\n  close-ups: \(a.joined(separator: " / "))\n  one pass:  \(b.joined(separator: " / "))")
+        print(String(format: "readcheck: one pass in %.2f s (%.0f%% of the time)", nowTime, 100 * nowTime / max(beforeTime, 1e-6)))
+    } catch {
+        fail("readcheck failed: \(error)")
     }
 
 case "landings":
@@ -611,7 +666,7 @@ case "path":
 default:
     print("""
     ooo-lab — headless renders and checks for OOO
-      shaders | still | sheet | render | analyze | path | landings | openings | titles | blurcheck | inkcheck
+      shaders | still | sheet | render | analyze | readcheck | path | landings | openings | titles | blurcheck | inkcheck
       motioncheck | loopcheck | fixture
       --project file.ooo | --slide file.pdf|png  --format reel|portrait|square|landscape  --floor none|soft|mirror  --out path
     """)

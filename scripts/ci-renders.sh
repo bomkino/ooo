@@ -31,6 +31,7 @@ render_set() {
   mkdir -p "$dir"
   echo "== $name"
   "$LAB" analyze "$@" | tee "$dir/plan.txt"
+  "$LAB" readcheck "$@" | tee "$dir/read.txt"
   "$LAB" sheet "$@" --out "$dir/sheet.png"
   "$LAB" landings "$@" --out "$dir/landings"
   "$LAB" openings "$@" --out "$dir/openings.png"
@@ -87,6 +88,7 @@ echo "== Summary"
     [ -d "$dir" ] || continue
     echo "$name:"
     grep -h 'read the slide in\|^opening:\|^picture' "$dir/plan.txt" | sed 's/^/  /'
+    grep -h '^readcheck\|^tours differ\|only with close-ups' "$dir/read.txt" | sed 's/^/  /'
     sed -n '/one part left out/,$p' "$dir/ink.txt" | sed 's/^/  /'
     grep -q 'one part left out' "$dir/ink.txt" || grep -h '^inkcheck' "$dir/ink.txt" | sed 's/^/  /'
     grep -h -A20 '^motioncheck' "$dir/motion.txt" | sed 's/^/  /'

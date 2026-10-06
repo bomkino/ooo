@@ -238,7 +238,7 @@ public struct OOOWindow: View {
         } message: {
             Text(session.message ?? "")
         }
-        .frame(minWidth: 1080, minHeight: 700)
+        .frame(minWidth: 960, minHeight: 640)
     }
 
     private var subtitle: String {
