@@ -52,6 +52,12 @@ final class StageCoordinator: NSObject, MTKViewDelegate {
             let t = clock.time + dt
             clock.time = t >= clock.duration ? 0 : t
         }
+        // A stage nobody can see (minimised, behind other windows, on another
+        // Space) keeps time but draws nothing.
+        if let window = view.window, !window.occlusionState.contains(.visible) {
+            lastVersion = -1
+            return
+        }
         let version = session.version
         let needs = clock.playing || version != lastVersion || clock.time != lastDrawn || view.drawableSize != lastSize
         if !needs {

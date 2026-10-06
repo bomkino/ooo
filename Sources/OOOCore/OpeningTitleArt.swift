@@ -135,12 +135,14 @@ public enum OpeningTitleArt {
         case (false, .editorial): tracking = 0
         }
         let shown = kicker || face == .poster ? s.uppercased() : s
-        return NSAttributedString(string: shown, attributes: [
+        var attributes: [NSAttributedString.Key: Any] = [
             NSAttributedString.Key(kCTFontAttributeName as String): f,
             NSAttributedString.Key(kCTForegroundColorAttributeName as String): color,
             NSAttributedString.Key(kCTParagraphStyleAttributeName as String): style,
-            NSAttributedString.Key(kCTKernAttributeName as String): tracking,
-        ])
+        ]
+        // Tracking, not kern: a kern attribute switches the font's own kerning off.
+        if tracking != 0 { attributes[NSAttributedString.Key(kCTTrackingAttributeName as String)] = tracking }
+        return NSAttributedString(string: shown, attributes: attributes)
     }
 
     static func measure(_ s: NSAttributedString, width: CGFloat) -> CGSize {

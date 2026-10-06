@@ -104,6 +104,8 @@ public final class OOOSession {
     public private(set) var waveform: Waveform?
     /// Pages in the slide's PDF, when it has more than one.
     public private(set) var pageCount = 1
+    /// The timeline's length while something on it is dragged (see `timelineLength`).
+    public private(set) var heldTimelineLength: Double?
 
     @ObservationIgnored private var slideBase: SlideBase?
     @ObservationIgnored private var slideToken = 0
@@ -277,7 +279,7 @@ public final class OOOSession {
                     self.busy = nil
                     switch result {
                     case .success(let base): self.install(base)
-                    case .failure(let error): self.message = "\(error)"
+                    case .failure(let error): self.message = "Couldn't draw the slide: \(readable(error))"
                     }
                 }
             }
@@ -321,8 +323,10 @@ public final class OOOSession {
             p.adaptOverview(fromSlideAspect: A, canvasAspect: C)
         }
         selection = .overview
+        // The arrival plays once, when the slide has been read and its tour is
+        // planned; until then the stage holds on the room.
         clock.time = 0
-        clock.playing = true
+        clock.playing = false
         autoDirect()
     }
 
@@ -410,12 +414,21 @@ public final class OOOSession {
                 MainActor.assumeIsolated {
                     guard let self, self.project.slide == ref else { return }
                     self.busy = nil
+                    // A new slide waits for its tour to arrive; it arrives now either way.
+                    let fresh = self.pendingDrop != nil
+                    func arrive() {
+                        guard fresh else { return }
+                        self.selection = .overview
+                        self.clock.time = 0
+                        self.clock.playing = true
+                    }
                     switch result {
                     case .success(let found):
                         self.details = (ref, found)
                         let shots = Director.shots(self.project.directorInput(found))
                         guard !shots.isEmpty else {
                             self.finishDrop()
+                            arrive()
                             self.message = "OOO found nothing to read on this slide. Draw framings on the slide map to choose what the camera visits."
                             return
                         }
@@ -432,7 +445,8 @@ public final class OOOSession {
                         self.clock.playing = true
                     case .failure(let error):
                         self.finishDrop()
-                        self.message = "Couldn't read the slide: \(error)"
+                        arrive()
+                        self.message = "Couldn't read the slide: \(readable(error))"
                     }
                 }
             }
@@ -463,6 +477,21 @@ public final class OOOSession {
         update(name) { p in
             if let i = p.shots.firstIndex(where: { $0.id == id }) { change(&p.shots[i]) }
         }
+    }
+
+    /// The length the timeline lays out. While a framing or the voice is
+    /// dragged it stays put under the pointer, growing only in steps if the
+    /// video outgrows it, and it follows the video again on release.
+    public var timelineLength: Double {
+        let d = clock.duration
+        guard let held = heldTimelineLength, held > 0 else { return d }
+        guard d > held else { return held }
+        return held * pow(1.25, ceil(log(d / held) / log(1.25)))
+    }
+
+    /// Holds the timeline's scale for a drag, or lets it go.
+    public func holdTimeline(_ on: Bool) {
+        heldTimelineLength = on ? clock.duration : nil
     }
 
     public func liveShot(_ id: UUID, _ change: (inout Shot) -> Void) {
@@ -506,7 +535,7 @@ public final class OOOSession {
         f.center = Vec2(min(max(f.center.x, 0), 1), min(max(f.center.y, 0), 1))
         let yaw = clamp((f.center.x - 0.5) * 22, -12, 12)
         let pitch = clamp((0.5 - f.center.y) * 12, -7, 7)
-        let shot = Shot(time: t, frame: f, yaw: yaw, pitch: pitch, lens: 28, aperture: 0.45, label: "Shot \(p.shots.count + 1)")
+        let shot = Shot(time: t, frame: f, yaw: yaw, pitch: pitch, lens: 28, aperture: 0.45, label: nil)
         update("Add Shot") { $0.shots.append(shot) }
         select(.shot(shot.id))
     }
@@ -588,7 +617,7 @@ public final class OOOSession {
                         self.tab = .voice
                         self.transcribe()
                     case .failure(let error):
-                        self.message = "Couldn't read the recording: \(error)"
+                        self.message = "Couldn't read the recording: \(readable(error))"
                     }
                 }
             }
@@ -646,7 +675,7 @@ public final class OOOSession {
                 self.cutToVoice()
             } catch {
                 self?.busy = nil
-                self?.message = "\(error)"
+                self?.message = readable(error)
             }
         }
     }
@@ -773,4 +802,12 @@ final class VoicePlayer {
         node?.stop()
         signature = nil
     }
+}
+
+/// An error as a sentence for people: the renderer's own message or the
+/// system's description, never a type name and a code.
+func readable(_ error: Error) -> String {
+    if let e = error as? RenderError { return e.description }
+    if let e = error as? LocalizedError, let d = e.errorDescription { return d }
+    return (error as NSError).localizedDescription
 }

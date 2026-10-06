@@ -644,11 +644,20 @@ public enum Director {
     /// The shots someone framed, cut to the voice: each lands just before the
     /// words of its cue (or its label) are said. Shots the voice never names
     /// keep their order and are fitted between the ones it does.
+    /// A shot's label as words the voice might say: not the "Shot 3" earlier
+    /// versions gave a hand-made framing, which would pin it to a spoken "three".
+    public static func spokenLabel(_ label: String?) -> String? {
+        guard let label else { return nil }
+        let parts = label.split(separator: " ")
+        if parts.count == 2, parts[0] == "Shot", Int(parts[1]) != nil { return nil }
+        return label
+    }
+
     public static func retime(_ shots: [Shot], words: [SpokenWord], start: Double, spacing: Double = 2.9) -> [Shot] {
         guard !shots.isEmpty, !words.isEmpty else { return shots }
         var out = shots.sorted { $0.time < $1.time }
         let blocks = out.map { s in
-            DetailBlock(bounds: s.frame.bounds, text: s.cue ?? s.label ?? "", lineHeight: 0, lines: 1, role: .text)
+            DetailBlock(bounds: s.frame.bounds, text: s.cue ?? spokenLabel(s.label) ?? "", lineHeight: 0, lines: 1, role: .text)
         }
         let slots = schedule(blocks, words: words, start: start, spacing: spacing, dwell: [])
         var times = slots.map { $0?.time }

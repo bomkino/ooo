@@ -73,7 +73,7 @@ extension OOOCommands {
                     let image = try stage.still(scene, at: t, width: format.width, height: format.height, samples: 16)
                     try ImageOutput.writePNG(image, to: url)
                 } catch {
-                    await MainActor.run { session.message = "Couldn't save the cover frame: \(error)" }
+                    await MainActor.run { session.message = "Couldn't save the cover frame: \(readable(error))" }
                 }
             }
         }

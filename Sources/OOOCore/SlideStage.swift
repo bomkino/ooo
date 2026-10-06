@@ -18,7 +18,7 @@ public struct SlideScene: @unchecked Sendable {
     public let details: DetailCache?
 
     /// The words over the opening, when there are some.
-    public let title: TitleOverlay?
+    public private(set) var title: TitleOverlay?
 
     public init(project: OOOProject, base: MTLTexture, details: DetailCache?, choreography: Choreography? = nil) {
         self.project = project
@@ -26,9 +26,17 @@ public struct SlideScene: @unchecked Sendable {
         self.details = details
         let c = choreography ?? project.choreography()
         self.choreography = c
-        if let words = project.title, !words.isEmpty, let opening = c.beats.first?.pose {
-            let A = project.slideAspect, safe = project.format.safeArea
-            let light = project.backdrop.palette.meanLightness < 0.55
+        title = nil
+        if let words = project.title, !words.isEmpty, let first = c.beats.first {
+            let opening = first.pose
+            let A = project.slideAspect, safe = project.format.safeArea, C = project.canvasAspect
+            // The ink that stands out most from the backdrop behind the words,
+            // as it shows while they are read.
+            let shown = first.land + 0.6
+            let band = OpeningTitleArt.band(opening: opening, slideAspect: A, canvasAspect: C, safe: safe)
+            let ground = TitleGround.luminance(project.backdrop, phase: backdropPhase(at: shown),
+                                               uv: backdropUV(at: shown, canvasAspect: C), canvasAspect: C, band: band)
+            let light = ground.map(TitleGround.lightInk(onLuminance:)) ?? (project.backdrop.palette.meanLightness < 0.55)
             var h = Hasher()
             h.combine(words)
             h.combine(light)
@@ -41,8 +49,6 @@ public struct SlideScene: @unchecked Sendable {
                 let band = OpeningTitleArt.band(opening: opening, slideAspect: A, canvasAspect: C, safe: safe)
                 return OpeningTitleArt.draw(words, width: w, height: hgt, band: band, lightInk: light)
             }
-        } else {
-            title = nil
         }
     }
 
@@ -62,6 +68,27 @@ public struct SlideScene: @unchecked Sendable {
         guard let e = choreography.emphasis(at: t), choreography.beats[e.beat].shot.emphasis == .spotlight else { return 0 }
         return e.amount
     }
+
+    /// How much of the at-rest dressing (the sharp close-up) is laid over the
+    /// slide in pose `sp`: all of it at rest, none while it arrives, and over a
+    /// Leave's first moments it fades as the slide sets off, so nothing pops.
+    func restHold(at t: Double, pose sp: SlidePose) -> Float {
+        if sp == .rest { return 1 }
+        guard project.ending == .leave else { return 0 }
+        let p = choreography.endingProgress(at: t)
+        return p > 0 ? 1 - smootherstep(p / 0.2) : 0
+    }
+
+    /// How much of the surface's light shows at `t`: all of it while the slide
+    /// arrives and the camera travels, a trace while the camera holds and the
+    /// slide is read, so black type stays black.
+    public func surfaceAmount(at t: Double) -> Float {
+        let reading = choreography.settled(at: t) * (1 - choreography.endingProgress(at: t))
+        return 1 - (1 - Self.surfaceAtRest) * reading
+    }
+
+    /// The share of the surface's light left while the slide is read.
+    public static let surfaceAtRest: Float = 0.12
 
     /// How much of the picture is left as a fade ending closes (1 = all).
     public func presence(at t: Double) -> Float {
@@ -94,9 +121,28 @@ public struct SlideScene: @unchecked Sendable {
         return c
     }
 
+    /// Where the backdrop is in its loop at `t`: it runs whole cycles of about
+    /// twelve seconds over the video's length in frames, so the last frame
+    /// leads back into the first when a platform plays the video on repeat.
+    public func backdropPhase(at t: Double) -> Double {
+        let fps = Double(max(project.fps, 1))
+        let length = Double(max(1, Int((duration * fps).rounded()))) / fps
+        let cycles = max(1, (length / 12).rounded())
+        return t * cycles / length
+    }
+
     /// The background's answer to the camera: a distant plane, it shifts a
-    /// little as the camera turns and pans and comes a touch closer as it goes in.
+    /// little as the camera turns and pans and comes a touch closer as it goes
+    /// in. As a Leave ending empties the frame, it drifts back to where it
+    /// was on the first frame, so the video loops without a jump.
     public func backdropUV(at t: Double, canvasAspect C: Float) -> SIMD4<Float> {
+        let here = cameraBackdropUV(at: t, canvasAspect: C)
+        guard project.ending == .leave else { return here }
+        let back = choreography.endingProgress(at: t)
+        return back > 0 ? simd_mix(here, cameraBackdropUV(at: 0, canvasAspect: C), SIMD4(repeating: back)) : here
+    }
+
+    func cameraBackdropUV(at t: Double, canvasAspect C: Float) -> SIMD4<Float> {
         let cam = choreography.pose(at: t)
         let fovV = radians(cam.fov)
         let fovH = 2 * atanf(tanf(fovV / 2) * C)
@@ -154,6 +200,7 @@ public struct SlideScene: @unchecked Sendable {
         slide.fit = .fill
         slide.mediaAspect = A
         slide.shadow = shown
+        slide.surfaceAmount = surfaceAmount(at: t)
 
         let atRest = sp == .rest
         var cards: [CardPose] = []
@@ -182,14 +229,16 @@ public struct SlideScene: @unchecked Sendable {
                 slide.spot = Self.padded(focus.bounds, by: 1.15)
                 slide.spotDim = 0.2 * amount
                 slide.spotFeather = max(0.9 * m, 0.02) / unit
-                lifted = Self.cutOut(r, slideAspect: A, amount: amount, patch: patch, light: light, fade: 0.45 * m)
+                lifted = Self.cutOut(r, slideAspect: A, amount: amount, patch: patch, light: light, fade: 0.45 * m,
+                                     surface: slide.surfaceAmount)
             case .none:
                 break
             }
         }
         cards.append(slide)
 
-        if atRest, let patch {
+        let hold = restHold(at: t, pose: sp)
+        if hold > 0.001, let patch {
             let r = patch.region
             var detail = slide
             detail.media = 1
@@ -197,7 +246,14 @@ public struct SlideScene: @unchecked Sendable {
             detail.crop = r
             detail.window = r
             detail.size = SIMD2(A * (r.z - r.x), r.w - r.y)
-            detail.position = SIMD3(((r.x + r.z) / 2 - 0.5) * A, 0.5 - (r.y + r.w) / 2, 0)
+            // Laid over its part of the slide wherever the slide is, so it sets
+            // off with a Leave while it fades.
+            let local = SIMD3<Float>(((r.x + r.z) / 2 - 0.5) * A, 0.5 - (r.y + r.w) / 2, 0)
+            let turned = Matrix.rotationEuler(slide.rotation) * SIMD4(local, 0)
+            detail.position = slide.position + SIMD3(turned.x, turned.y, turned.z)
+            detail.curl = 0
+            detail.fold = 0
+            detail.opacity = slide.opacity * hold
             detail.edgeScale = 0
             detail.shadow = 0
             detail.layer = 1
@@ -218,7 +274,7 @@ public struct SlideScene: @unchecked Sendable {
     /// A detail lifted off the slide as a die-cut piece, its shadow falling on
     /// the slide below. It shows its region of whichever texture holds it best.
     static func cutOut(_ r: SIMD4<Float>, slideAspect A: Float, amount: Float, patch: DetailCache.Patch?, light: Float,
-                       fade: Float) -> CardPose {
+                       fade: Float, surface: Float = 1) -> CardPose {
         let ru = max(r.z - r.x, 1e-4), rv = max(r.w - r.y, 1e-4)
         // Low and barely larger: what shows through its fading margin then
         // lines up with the slide beneath, rather than doubling the lines
@@ -251,6 +307,7 @@ public struct SlideScene: @unchecked Sendable {
         c.layer = 2
         c.opacity = smoothstep(amount / 0.25)
         c.color = SIMD4(light, light, light, 1)
+        c.surfaceAmount = surface
         return c
     }
 }
@@ -295,7 +352,7 @@ public final class SlideStage: @unchecked Sendable {
         var backdrop = scene.project.backdrop
         backdrop.brightness *= scene.presence(at: t) * (1 - 0.3 * scene.spotlight(at: t))
         var request = StageRenderer.Request(
-            width: output.width, height: output.height, backdrop: backdrop, backdropPhase: t / 12, look: look,
+            width: output.width, height: output.height, backdrop: backdrop, backdropPhase: scene.backdropPhase(at: t), look: look,
             samples: look.shutter > 0.01 ? max(samples, 1) : 1, frameIndex: frameIndex, keepAlpha: transparent,
             drawBackdrop: !transparent)
         request.backdropScale = backdropScale
@@ -329,7 +386,7 @@ public final class SlideStage: @unchecked Sendable {
     /// (only then does a close-up lie exactly over it).
     func footprint(_ scene: SlideScene, at t: Double, width: Int, height: Int) -> ViewFootprint? {
         let C = Float(width) / Float(max(height, 1))
-        guard scene.slidePose(at: t, canvasAspect: C) == .rest else { return nil }
+        guard scene.restHold(at: t, pose: scene.slidePose(at: t, canvasAspect: C)) > 0.001 else { return nil }
         return scene.choreography.pose(at: t).footprint(slideAspect: scene.project.slideAspect, canvasAspect: C, canvasHeight: height)
     }
 
@@ -340,12 +397,15 @@ public final class SlideStage: @unchecked Sendable {
         details.prepare(for: fp)
     }
 
-    /// One frame as a picture.
+    /// One frame as a picture: the video's frame nearest `t`, exactly as the
+    /// export draws it.
     public func still(_ scene: SlideScene, at t: Double, width: Int, height: Int, samples: Int = 8, adaptive: Bool = true) throws -> CGImage {
         let gpu = GPU.shared
         let out = gpu.makeTexture(width: width, height: height, format: .bgra8Unorm, usage: [.renderTarget, .shaderRead])
         guard let cb = gpu.queue.makeCommandBuffer() else { throw RenderError.io("GPU unavailable.") }
-        try encode(cb, scene: scene, at: t, output: out, samples: samples, frameIndex: UInt32(max(0, t * Double(scene.project.fps))),
+        let fps = Double(max(scene.project.fps, 1))
+        let index = max(0, (t * fps).rounded())
+        try encode(cb, scene: scene, at: index / fps, output: out, samples: samples, frameIndex: UInt32(index),
                    waitForDetail: true, adaptive: adaptive)
         cb.commit()
         cb.waitUntilCompleted()

@@ -219,11 +219,13 @@ enum Fixture: String, CaseIterable {
     }
 
     static func attributed(_ s: String, font: CTFont, color: CGColor, tracking: CGFloat) -> NSAttributedString {
-        NSAttributedString(string: s, attributes: [
+        var attributes: [NSAttributedString.Key: Any] = [
             NSAttributedString.Key(kCTFontAttributeName as String): font,
             NSAttributedString.Key(kCTForegroundColorAttributeName as String): color,
-            NSAttributedString.Key(kCTKernAttributeName as String): tracking,
-        ])
+        ]
+        // Tracking, not kern: a kern attribute switches the font's own kerning off.
+        if tracking != 0 { attributes[NSAttributedString.Key(kCTTrackingAttributeName as String)] = tracking }
+        return NSAttributedString(string: s, attributes: attributes)
     }
 
     static func width(_ s: String, font: CTFont, tracking: CGFloat = 0) -> CGFloat {

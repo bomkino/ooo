@@ -155,7 +155,9 @@ vertex CardVOut card_vertex(uint vid [[vertex_id]],
     // the shade follows only where the surface is free to fold.
     float pin = smoothstep(0.0, 0.18, sin(PI * g.x)) * smoothstep(0.0, 0.18, sin(PI * g.y));
     o.cavity = clamp(lap * min(w, h) * 0.15, 0.0, 1.0) * pin;
-    o.viewDist = length(world.xyz - f.eye.xyz);
+    // Depth along the view, not distance from the eye: a lens focuses on a
+    // plane, so a card square to the camera is sharp to its corners.
+    o.viewDist = o.position.w;
     return o;
 }
 
@@ -316,6 +318,7 @@ fragment float4 card_fragment(CardVOut in [[stage_in]], bool facing [[front_faci
         rgb = mix(stock, rgb * 0.25, 0.18);
         alpha = 1.0;
     } else if (surface >= 1) {
+        float3 unlit = rgb;
         float ndl = dot(N, L);
         float wrap = clamp((ndl + 0.35) / 1.35, 0.0, 1.0);
         float shade = mix(0.80, 1.06, wrap);
@@ -373,6 +376,9 @@ fragment float4 card_fragment(CardVOut in [[stage_in]], bool facing [[front_faci
             rgb *= (1.0 - 0.28 * in.cavity) * 0.96;
             rgb += keep * (0.09 * band + 0.75 * float3(1.0, 0.97, 0.94) * charlie * vis * NL);
         }
+        // While a slide is read, its surface steps back and the media shows
+        // as it is: a sheen added over black type would turn it grey.
+        rgb = mix(unlit, rgb, c.soft.y);
         // Edge catch light: a hairline along the rim facing the light.
         float edge = (1.0 - smoothstep(0.0, pxWorld * 2.2, abs(d + pxWorld * 1.2)));
         float facing = clamp(dot(normalize(float3(local, 0.0)), float3(L.xy, 0.0)) * 0.5 + 0.5, 0.0, 1.0);
@@ -472,13 +478,15 @@ fragment float4 accumulate_fragment(FSOut in [[stage_in]], constant float4 &weig
     return src.sample(s, in.uv) * weight.x;
 }
 
+// The backdrop under the scene. It adds no coverage, so the scene's alpha
+// says how much of each pixel the cards cover (the finish keeps bloom off them).
 fragment float4 copy_fragment(FSOut in [[stage_in]], texture2d<float> src [[texture(0)]], sampler s [[sampler(0)]]) {
-    return src.sample(s, in.uv);
+    return float4(src.sample(s, in.uv).rgb, 0.0);
 }
 
 fragment float4 copy_uv_fragment(FSOut in [[stage_in]], constant float4 &xf [[buffer(0)]],
                                  texture2d<float> src [[texture(0)]], sampler s [[sampler(0)]]) {
-    return src.sample(s, (in.uv - 0.5) * xf.xy + 0.5 + xf.zw);
+    return float4(src.sample(s, (in.uv - 0.5) * xf.xy + 0.5 + xf.zw).rgb, 0.0);
 }
 """#
 

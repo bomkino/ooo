@@ -52,7 +52,7 @@ public final class SlideSource: @unchecked Sendable {
             }
             document = nil
             page = nil
-            image = SlideSource.oriented(img, source: src)
+            image = SlideSource.flattened(SlideSource.oriented(img, source: src))
             aspect = Float(image!.width) / Float(max(image!.height, 1))
         }
     }
@@ -95,6 +95,45 @@ public final class SlideSource: @unchecked Sendable {
                                       kCGImageSourceCreateThumbnailWithTransform: true,
                                       kCGImageSourceThumbnailMaxPixelSize: max(img.width, img.height)]
         return CGImageSourceCreateThumbnailAtIndex(source, 0, thumb as CFDictionary) ?? img
+    }
+
+    /// A picture with transparency, laid on a sheet as a PDF page is: white,
+    /// unless its artwork is light (a white logo), which goes on near-black.
+    /// Left transparent, its clear parts would show dark fringes on the GPU
+    /// and read as black ink to the slide's analysis.
+    static func flattened(_ img: CGImage) -> CGImage {
+        switch img.alphaInfo {
+        case .none, .noneSkipFirst, .noneSkipLast: return img
+        default: break
+        }
+        let w = img.width, h = img.height
+        // How light the artwork is, judged small, by coverage.
+        let sw = min(w, 256), sh = max(1, Int((Double(h) * Double(sw) / Double(max(w, 1))).rounded()))
+        var px = [UInt8](repeating: 0, count: sw * sh * 4)
+        var light = false
+        if let small = CGContext(data: &px, width: sw, height: sh, bitsPerComponent: 8, bytesPerRow: sw * 4,
+                                 space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
+            small.draw(img, in: CGRect(x: 0, y: 0, width: sw, height: sh))
+            var ink = 0.0, cover = 0.0, clear = 0.0
+            for i in stride(from: 0, to: px.count, by: 4) {
+                let a = Double(px[i + 3]) / 255
+                // Premultiplied: luminance times coverage.
+                ink += (0.2126 * Double(px[i]) + 0.7152 * Double(px[i + 1]) + 0.0722 * Double(px[i + 2])) / 255
+                cover += a
+                if a < 0.5 { clear += 1 }
+            }
+            // Only a picture that is mostly see-through counts as artwork on nothing.
+            if clear < Double(sw * sh) * 0.02 { return img }
+            light = cover > 0 && ink / cover > 0.72
+        }
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return img }
+        ctx.setFillColor(light ? CGColor(srgbRed: 0.07, green: 0.07, blue: 0.08, alpha: 1) : CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+        ctx.interpolationQuality = .none
+        ctx.draw(img, in: CGRect(x: 0, y: 0, width: w, height: h))
+        return ctx.makeImage() ?? img
     }
 
     /// A picture's own pixels per slide height; nil for vectors.

@@ -171,6 +171,13 @@ public struct OpeningTitle: Codable, Hashable, Sendable {
 /// One OOO document: a slide, the moves over it, and how it all looks.
 public struct OOOProject: Codable, Hashable, Sendable {
     public var version: Int = 1
+    /// The oldest OOO file reader that understands everything in this file.
+    /// A build whose `readerVersion` is lower refuses the file rather than
+    /// quietly exporting it without the settings it can't read.
+    public var minimumReaderVersion: Int? = OOOProject.readerVersion
+    /// The newest files this build reads in full. Raise it, and write it as
+    /// `minimumReaderVersion`, when a setting older builds would drop arrives.
+    public static let readerVersion = 1
     public var slide: SlideRef
     /// The establishing framing the slide arrives into.
     public var overview: Shot
@@ -322,7 +329,25 @@ public enum ProjectPackage {
     }
 
     public static func decode(_ data: Data) throws -> OOOProject {
-        try JSONDecoder().decode(OOOProject.self, from: data)
+        // Read the version first: a newer file may not decode at all here.
+        struct Header: Decodable { var minimumReaderVersion: Int? }
+        if let needs = (try? JSONDecoder().decode(Header.self, from: data))?.minimumReaderVersion, needs > OOOProject.readerVersion {
+            throw PackageError.newer
+        }
+        var project = try JSONDecoder().decode(OOOProject.self, from: data)
+        project.minimumReaderVersion = OOOProject.readerVersion
+        return project
+    }
+
+    public enum PackageError: LocalizedError {
+        /// The file needs a newer OOO.
+        case newer
+
+        public var errorDescription: String? {
+            switch self {
+            case .newer: return "This project was made with a newer OOO. Choose Check for Updates… in the OOO menu, then open it again."
+            }
+        }
     }
 
     /// Reads a package from disk, returning the project and its media folder.

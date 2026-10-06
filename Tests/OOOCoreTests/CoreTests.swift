@@ -21,6 +21,39 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(try ProjectPackage.decode(ProjectPackage.encode(chosen)).floorKind, FloorKind.none)
     }
 
+    func testAFileFromANewerOOOIsRefusedNotMisread() throws {
+        let data = try ProjectPackage.encode(.sample)
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(json["minimumReaderVersion"] as? Int, OOOProject.readerVersion)
+        json["minimumReaderVersion"] = OOOProject.readerVersion + 1
+        json["arrive"] = ["kind": "somethingNew"]
+        XCTAssertThrowsError(try ProjectPackage.decode(JSONSerialization.data(withJSONObject: json))) { error in
+            XCTAssertNotNil(error as? ProjectPackage.PackageError)
+        }
+        // Files from before the guard still open.
+        json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        json.removeValue(forKey: "minimumReaderVersion")
+        XCTAssertNoThrow(try ProjectPackage.decode(JSONSerialization.data(withJSONObject: json)))
+    }
+
+    func testTheSurfaceStepsBackWhileTheSlideIsRead() throws {
+        let scene = try SlideLoader.scene(for: .sample, media: nil)
+        let c = scene.choreography
+        guard c.beats.count > 2 else { return XCTFail() }
+        let b = c.beats[1]
+        XCTAssertEqual(scene.surfaceAmount(at: b.land + min(0.6, b.hold / 2)), SlideScene.surfaceAtRest, accuracy: 0.05)
+        XCTAssertEqual(scene.surfaceAmount(at: (b.depart + b.land) / 2), 1, accuracy: 1e-4)
+    }
+
+    func testTheBackdropLoopsInWholeCycles() throws {
+        let scene = try SlideLoader.scene(for: .sample, media: nil)
+        let fps = Double(scene.project.fps)
+        let n = Int((scene.duration * fps).rounded())
+        let end = scene.backdropPhase(at: Double(n) / fps)
+        XCTAssertEqual(end, end.rounded(), accuracy: 1e-9)
+        XCTAssertGreaterThanOrEqual(end, 1)
+    }
+
     func testAPictureIsSharpToTwiceItsPixels() {
         let ref = SlideRef(kind: .image, aspect: 2576.0 / 1080, name: "wide", pixelWidth: 2576, pixelHeight: 1080)
         // 1080 px drawn at 2160 fills a 1920 px canvas when the view is 0.89 slide heights tall.

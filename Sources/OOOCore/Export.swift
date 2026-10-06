@@ -1,3 +1,4 @@
+import AVFoundation
 import CoreGraphics
 import CoreVideo
 import Foundation
@@ -89,7 +90,16 @@ public final class OOOExporter: @unchecked Sendable {
         if options.includeVoice, let voice, let v = project.voice {
             audio = VoiceLoader.placed(voice, offset: v.offset, gain: v.gain, duration: Double(total) / Double(fps))
         }
-        let writer = try VideoWriter(url: url, width: w, height: h, fps: fps, codec: options.codec, audio: audio)
+        // The new video is written aside and swapped in only once it is whole
+        // and checked: cancelling or failing never costs the last good file.
+        let fm = FileManager.default
+        let scratch = (try? fm.url(for: .itemReplacementDirectory, in: .userDomainMask,
+                                   appropriateFor: url.deletingLastPathComponent(), create: true))
+            ?? fm.temporaryDirectory.appendingPathComponent("OOO-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: scratch) }
+        let file = scratch.appendingPathComponent(url.lastPathComponent)
+        let writer = try VideoWriter(url: file, width: w, height: h, fps: fps, codec: options.codec, audio: audio)
         let target = PixelBufferTarget(width: w, height: h)
         let gpu = GPU.shared
         // Two frames in flight: while the GPU draws one, the next is planned
@@ -132,6 +142,26 @@ public final class OOOExporter: @unchecked Sendable {
             flying?.cb.waitUntilCompleted()
             writer.cancel()
             throw error
+        }
+        try await Self.check(file, frames: total, fps: fps, sound: audio != nil)
+        if fm.fileExists(atPath: url.path) {
+            _ = try fm.replaceItemAt(url, withItemAt: file)
+        } else {
+            try fm.moveItem(at: file, to: url)
+        }
+    }
+
+    /// Checks a finished video before it replaces anything: it has its
+    /// pictures, its sound if it should, and the length it was meant to.
+    static func check(_ file: URL, frames: Int, fps: Int, sound: Bool) async throws {
+        let asset = AVURLAsset(url: file)
+        let expected = Double(frames) / Double(fps)
+        let duration = try await asset.load(.duration).seconds
+        let pictures = try await asset.loadTracks(withMediaType: .video)
+        let voice = try await asset.loadTracks(withMediaType: .audio)
+        guard !pictures.isEmpty, duration.isFinite, abs(duration - expected) <= 1.5 / Double(fps), !sound || !voice.isEmpty else {
+            throw RenderError.io(String(format: "The video didn't come out whole (%.2f s of %.2f s), so nothing was replaced.",
+                                        duration.isFinite ? duration : 0, expected))
         }
     }
 }

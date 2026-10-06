@@ -310,4 +310,35 @@ final class ChoreographyTests: XCTestCase {
         guard let back = c.beats.last, back.isOverview else { return XCTFail() }
         XCTAssertGreaterThanOrEqual(c.duration - back.land, 1.0)
     }
+
+    func testSettledWhileHoldingAndNotWhileTravelling() {
+        let c = sample()
+        for b in c.beats.dropFirst() where b.hold > 1.2 {
+            XCTAssertEqual(c.settled(at: b.land + 0.6), 1, accuracy: 1e-4)
+            XCTAssertEqual(c.settled(at: b.land - 0.01), 0, accuracy: 1e-4, "travelling into a beat")
+            XCTAssertEqual(c.settled(at: b.leave - 0.001), 0, accuracy: 0.01, "about to leave")
+        }
+        // No jumps: it eases in and out.
+        var prev = c.settled(at: 0)
+        for t in stride(from: 0.0, to: c.duration, by: 1.0 / 120) {
+            let v = c.settled(at: t)
+            XCTAssertLessThan(abs(v - prev), 0.1, "jump at \(t)")
+            prev = v
+        }
+    }
+
+    func testEmphasisFallsBeforeALeaveSetsOff() {
+        var shots = sample(ending: .leave).beats.dropFirst().map(\.shot)
+        shots[shots.count - 1].emphasis = .spotlight
+        let input = ChoreographyInput(overview: .overview(), shots: shots, arrive: Arrive(kind: .rise), ending: .leave,
+                                      duration: 16, slideAspect: A, canvasAspect: C, style: MotionStyle())
+        let c = Choreography(input)
+        let leave = c.duration - Choreography.leaveLength
+        XCTAssertGreaterThan(c.emphasis(at: leave - 1.0)?.amount ?? 0, 0.9)
+        XCTAssertLessThan(c.emphasis(at: leave)?.amount ?? 0, 0.01)
+        // Held to the end, it stays.
+        let held = Choreography(ChoreographyInput(overview: .overview(), shots: shots, arrive: Arrive(kind: .rise), ending: .hold,
+                                                  duration: 16, slideAspect: A, canvasAspect: C, style: MotionStyle()))
+        XCTAssertGreaterThan(held.emphasis(at: held.duration - 0.05)?.amount ?? 0, 0.9)
+    }
 }

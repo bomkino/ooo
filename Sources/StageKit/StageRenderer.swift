@@ -8,6 +8,10 @@ import simd
 /// blur accumulation and the finishing pass.
 public final class StageRenderer {
     public static let hdrFormat: MTLPixelFormat = .rgba16Float
+    /// The share of bloom that falls on the cards themselves: it lights the
+    /// room around them but keeps off their faces, where it would grey the
+    /// type. The scene's alpha is the cards' coverage, the backdrop adding none.
+    public static let bloomOnCards: Float = 0.15
 
     private let gpu = GPU.shared
     private let library: MTLLibrary
@@ -171,7 +175,7 @@ public final class StageRenderer {
             try encodeScene(cb, target: sceneTex, backdropTex: background, backdropUV: r.backdropUV, frame: frameAt(0),
                             look: r.look, textures: textures, pipelines: p, width: r.width, height: r.height)
             try finisher.encode(cb, input: sceneTex, output: output, settings: r.look.finish,
-                                frame: FinishFrame(frameIndex: r.frameIndex, keepAlpha: r.keepAlpha))
+                                frame: FinishFrame(frameIndex: r.frameIndex, keepAlpha: r.keepAlpha, bloomOnSubject: Self.bloomOnCards))
             return
         }
 
@@ -202,7 +206,7 @@ public final class StageRenderer {
             enc.endEncoding()
         }
         try finisher.encode(cb, input: accumTex, output: output, settings: r.look.finish,
-                            frame: FinishFrame(frameIndex: r.frameIndex, keepAlpha: r.keepAlpha))
+                            frame: FinishFrame(frameIndex: r.frameIndex, keepAlpha: r.keepAlpha, bloomOnSubject: Self.bloomOnCards))
     }
 
     // MARK: - Scene pass
@@ -431,7 +435,7 @@ public final class StageRenderer {
             window: c.window,
             spot: c.spot,
             spotP: SIMD4(c.spotDim, c.spotFeather, c.shadowGround == nil ? 0 : 1, c.shadowGround ?? 0),
-            soft: SIMD4(c.softEdge, 0, 0, 0))
+            soft: SIMD4(c.softEdge, c.surfaceAmount, 0, 0))
     }
 }
 

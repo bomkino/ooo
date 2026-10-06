@@ -24,11 +24,16 @@ import StageKit
 //   ooo-lab blurcheck [--quality good]      adaptive motion blur against full samples:
 //                                           samples taken, GPU time, PSNR
 //   ooo-lab render --full-blur ...          every frame at the quality's full samples
+//   ooo-lab inkcheck                        at every landing, how dark the type and how
+//                                           light the paper come out against the slide
+//   ooo-lab loopcheck [--ending leave]      the step from the last frame back to the
+//                                           first against the steps either side of it
 //
 // Every command takes --project <file.ooo> (default: the sample), or
 // --slide <file> (a PDF or picture, read and directed as the app would on a
-// drop), --format reel|portrait|square|landscape, --floor none|soft|mirror and
-// --title "words" [--kicker "line above"] [--face modern|grotesk|editorial|poster].
+// drop), --format reel|portrait|square|landscape, --floor none|soft|mirror,
+// --ending hold|pullBack|fade|leave and --title "words" [--kicker "line above"]
+// [--face modern|grotesk|editorial|poster].
 
 let args = CommandLine.arguments
 func value(_ name: String) -> String? {
@@ -69,6 +74,10 @@ if let f = value("--floor") {
     guard let floor = FloorKind(rawValue: f) else { fail("unknown floor \(f)") }
     project.floor = floor
 }
+if let e = value("--ending") {
+    guard let ending = Ending(rawValue: e) else { fail("unknown ending \(e)") }
+    project.ending = ending
+}
 if let path = value("--slide") {
     // The app's drop: copy the file in, read it, plan a tour.
     let url = URL(fileURLWithPath: path)
@@ -82,10 +91,11 @@ if let path = value("--slide") {
         fail("could not copy \(path): \(error)")
     }
     ref.file = file
-    let (format, floor, title) = (project.format, project.floor, project.title)
+    let (format, floor, title, ending) = (project.format, project.floor, project.title, project.ending)
     project = OOOProject(slide: ref, format: format)
     project.floor = floor
     project.title = title
+    project.ending = ending
     media = dir
     do {
         let details = try SlideAnalysis.read(SlideSource(ref: ref, media: dir))
@@ -347,6 +357,92 @@ case "blurcheck":
                      msAdaptive, msFull, 100 * (1 - msAdaptive / max(msFull, 1e-6)), worst, sum / Double(max(count, 1))))
     } catch {
         fail("blurcheck failed: \(error)")
+    }
+
+case "inkcheck":
+    // The slide must read as it is: at every landing, the darkest ink and the
+    // lightest paper inside the frame's clear area (1st and 99th percentiles
+    // of luma, 0…255) against the same measure of the slide itself.
+    let scene = loadScene()
+    let w = project.format.width, h = project.format.height
+    func luma(_ img: CGImage, box: CGRect) -> [UInt8] {
+        let iw = img.width, ih = img.height
+        var px = [UInt8](repeating: 0, count: iw * ih * 4)
+        guard let ctx = CGContext(data: &px, width: iw, height: ih, bitsPerComponent: 8, bytesPerRow: iw * 4,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return [] }
+        ctx.draw(img, in: CGRect(x: 0, y: 0, width: iw, height: ih))
+        var out: [UInt8] = []
+        for y in Int(box.minY * CGFloat(ih))..<Int(box.maxY * CGFloat(ih)) {
+            for x in Int(box.minX * CGFloat(iw))..<Int(box.maxX * CGFloat(iw)) {
+                let i = (y * iw + x) * 4
+                out.append(UInt8(min(255, (0.2126 * Double(px[i]) + 0.7152 * Double(px[i + 1]) + 0.0722 * Double(px[i + 2])).rounded())))
+            }
+        }
+        return out.sorted()
+    }
+    func percentile(_ v: [UInt8], _ p: Double) -> Int { v.isEmpty ? 0 : Int(v[min(v.count - 1, Int(Double(v.count) * p))]) }
+    do {
+        guard let whole = try SlideSource(ref: project.slide, media: media).renderWhole() else { fail("could not draw the slide") }
+        let source = luma(whole, box: CGRect(x: 0, y: 0, width: 1, height: 1))
+        let (inkSource, paperSource) = (percentile(source, 0.01), percentile(source, 0.99))
+        print("source ink \(inkSource) paper \(paperSource)")
+        let safe = project.format.safeArea
+        let box = CGRect(x: CGFloat(safe.left), y: CGFloat(safe.top), width: CGFloat(1 - safe.left - safe.right),
+                         height: CGFloat(1 - safe.top - safe.bottom))
+        let stage = try SlideStage()
+        var worst = 0
+        for (i, beat) in scene.choreography.beats.enumerated() where !beat.isOverview {
+            let t = min(beat.land + min(0.7, beat.hold * 0.45), scene.duration - 0.02)
+            let img = try stage.still(scene, at: t, width: w, height: h, samples: 1)
+            let v = luma(img, box: box)
+            let (ink, paper) = (percentile(v, 0.01), percentile(v, 0.99))
+            worst = max(worst, ink - inkSource)
+            print(String(format: "shot-%02d t %.2f  ink %3d (%+d)  paper %3d (%+d)  surface %.2f", i, t, ink, ink - inkSource,
+                         paper, paper - paperSource, scene.surfaceAmount(at: t)))
+        }
+        print("inkcheck: ink at most \(worst) above the slide's own")
+    } catch {
+        fail("inkcheck failed: \(error)")
+    }
+
+case "loopcheck":
+    // A platform plays a reel on repeat: the step from the last frame back to
+    // the first should be no bigger than the steps between neighbouring frames.
+    project.look.finish.grain = 0
+    let scene = loadScene()
+    let w = project.format.width / 2, h = project.format.height / 2
+    let fps = Double(max(project.fps, 1))
+    let n = max(2, Int((scene.duration * fps).rounded()))
+    do {
+        let stage = try SlideStage()
+        func pixels(_ i: Int) throws -> [UInt8] {
+            let img = try stage.still(scene, at: Double(i) / fps, width: w, height: h, samples: 1)
+            var px = [UInt8](repeating: 0, count: w * h * 4)
+            guard let ctx = CGContext(data: &px, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return px }
+            ctx.draw(img, in: CGRect(x: 0, y: 0, width: w, height: h))
+            return px
+        }
+        func psnr(_ a: [UInt8], _ b: [UInt8]) -> Double {
+            var se = 0.0
+            for i in stride(from: 0, to: a.count, by: 4) {
+                for c in 0..<3 {
+                    let d = Double(a[i + c]) - Double(b[i + c])
+                    se += d * d
+                }
+            }
+            let mse = se / Double(w * h * 3)
+            return mse == 0 ? 99 : 10 * log10(255 * 255 / mse)
+        }
+        let frames = try [n - 2, n - 1, 0, 1].map(pixels)
+        let before = psnr(frames[0], frames[1]), wrap = psnr(frames[1], frames[2]), after = psnr(frames[2], frames[3])
+        print(String(format: "loop %@, %d frames: last two %.1f dB, last to first %.1f dB, first two %.1f dB",
+                     project.ending.rawValue, n, before, wrap, after))
+        print(wrap >= min(before, after) - 3 ? "loopcheck: closes" : "loopcheck: jumps")
+    } catch {
+        fail("loopcheck failed: \(error)")
     }
 
 case "fixture":

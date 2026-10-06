@@ -211,10 +211,10 @@ struct ExportSheet: View {
                                           })
                 await MainActor.run { model.phase = .done(url) }
             } catch RenderError.cancelled {
-                try? FileManager.default.removeItem(at: url)
+                // The file that was there is untouched: nothing replaces it until a video is whole.
                 await MainActor.run { model.phase = .settings }
             } catch {
-                await MainActor.run { model.phase = .failed(String(describing: error)) }
+                await MainActor.run { model.phase = .failed(readable(error)) }
             }
         }
     }

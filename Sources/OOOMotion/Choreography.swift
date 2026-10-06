@@ -351,11 +351,26 @@ public struct Choreography: Sendable {
             let b = beats[j]
             guard b.shot.emphasis != .none, !b.isOverview else { continue }
             let rise = smootherstep(Float((t - (b.land - 0.15)) / 0.55))
-            let fall: Float = b.leave >= duration - 1e-6 ? 1 : 1 - smootherstep(Float((t - (b.leave - 0.45)) / 0.45))
+            // It falls before the camera leaves, and before a Leave ending sets
+            // the slide off, so the slide goes as it is.
+            let end: Double? = b.leave < duration - 1e-6 ? b.leave : (ending == .leave ? duration - Self.leaveLength : nil)
+            let fall: Float = end.map { 1 - smootherstep(Float((t - ($0 - 0.45)) / 0.45)) } ?? 1
             let amount = rise * fall
             if amount > 0.001 { return (j, amount) }
         }
         return nil
+    }
+
+    /// How settled the camera is at `t`, 0…1: 1 while it holds on a framing
+    /// (reading along included), 0 while it travels, easing between the two
+    /// over the first half-second of a hold and the last third of one.
+    public func settled(at t: Double) -> Float {
+        guard !beats.isEmpty else { return 0 }
+        let b = beats[beatIndex(at: t)]
+        guard t >= b.land else { return 0 }
+        let rise = smootherstep(Float((t - b.land) / 0.5))
+        let fall: Float = b.leave >= duration - 1e-6 ? 1 : 1 - smootherstep(Float((t - (b.leave - 0.3)) / 0.3))
+        return rise * fall
     }
 
     /// How far the ending has come at `t` (0 before it starts, 1 at the end).
@@ -363,9 +378,12 @@ public struct Choreography: Sendable {
         switch ending {
         case .hold, .pullBack: return 0
         case .fade: return smootherstep(Float((t - (duration - 1.1)) / 1.1))
-        case .leave: return smootherstep(Float((t - (duration - 1.6)) / 1.6))
+        case .leave: return smootherstep(Float((t - (duration - Self.leaveLength)) / Self.leaveLength))
         }
     }
+
+    /// How long a Leave ending takes, in seconds.
+    public static let leaveLength = 1.6
 
     /// How long a read-along rests on the start of its line before gliding.
     public static let readLead = 0.4

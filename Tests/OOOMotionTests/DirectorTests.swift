@@ -319,6 +319,22 @@ final class DirectorTests: XCTestCase {
         XCTAssertGreaterThan(out[1].time, out[0].time + 0.89)
         XCTAssertLessThan(out[1].time, out[2].time - 0.89)
     }
+
+    func testANumberedShotIsNotPinnedToASpokenNumber() {
+        XCTAssertNil(Director.spokenLabel("Shot 3"))
+        XCTAssertEqual(Director.spokenLabel("Revenue"), "Revenue")
+        XCTAssertEqual(Director.spokenLabel("Shot of the team"), "Shot of the team")
+        let frame = ShotFrame(center: Vec2(0.5, 0.5), size: Vec2(0.2, 0.2))
+        let shots = [
+            Shot(time: 3, frame: frame, label: "Headline", cue: "Every pixel"),
+            Shot(time: 5, frame: frame, label: "Shot 3"),
+        ]
+        let words = ["three", "things", "and", "then", "every", "pixel"]
+            .enumerated().map { SpokenWord(text: $0.element, start: 2 + Double($0.offset) * 0.8, end: 2.5 + Double($0.offset) * 0.8) }
+        let out = Director.retime(shots, words: words, start: 1.5)
+        // The hand-made shot isn't landed on "three" ahead of the headline.
+        XCTAssertEqual(out.first?.label, "Headline")
+    }
 }
 
 final class FigureFinderTests: XCTestCase {

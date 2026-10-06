@@ -89,6 +89,9 @@ public struct CardPose: Sendable {
     /// Width (world units) over which the card's edges fade out; 0 = crisp.
     /// A detail lifted off a slide fades into it rather than cutting a box.
     public var softEdge: Float = 0
+    /// How much of the surface's light (Print's tooth, Gloss's sheen, Foil,
+    /// Satin) shows, 0…1. At 0 the card shows its media exactly as it is.
+    public var surfaceAmount: Float = 1
     /// Whether the card shows in a mirror floor. A detail laid exactly over
     /// its card is already reflected with it.
     public var reflects = true
