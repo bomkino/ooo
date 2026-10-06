@@ -282,6 +282,7 @@ struct StageArea: View {
                         StageStatus(session: session).frame(height: top)
                         stage(px)
                             .frame(width: fitted.width, height: fitted.height)
+                            .overlay { if session.showRoom && !(session.project.lift?.isEmpty ?? true) { RoomGuide(session: session, clock: session.clock) } }
                             .overlay { if showSafeAreas { SafeAreaGuides(format: session.project.format) } }
                             .overlay {
                                 if !session.hasSlide {

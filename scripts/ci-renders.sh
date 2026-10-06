@@ -7,7 +7,9 @@
 # opening at five angles and three floors, how dark its type lands against
 # the slide as supplied, how its moves fly (motioncheck), and a draft video.
 # Then the titles, every backdrop look, every arrival (Weave and Develop also
-# as draft videos), the wide tour moved onto a corrected slide (Replace
+# as draft videos), a cover turning over to the wide slide and back, the
+# stage rising to leave room for a talking head (both also as full sets and a
+# Good video), the wide tour moved onto a corrected slide (Replace
 # Slide), the stills Save Stills writes, export timings, a bench (with the
 # machine it ran on), how colour survives the encoder, and summary.txt with
 # the numbers that matter. Fails when motioncheck finds a problem in any set.
@@ -27,6 +29,7 @@ echo "== Test slides"
 "$LAB" fixture --kind standard --out "$OUT/fixtures/standard-1920x1080.png"
 "$LAB" fixture --kind wide --out "$OUT/fixtures/wide.pdf"
 "$LAB" fixture --kind wide --scale 2 --out "$OUT/fixtures/wide-5152x2160.png"
+"$LAB" fixture --kind cover --out "$OUT/fixtures/cover-2576x1080.png"
 
 render_set() {
   local name="$1"; shift
@@ -52,6 +55,19 @@ mkdir -p "$OUT/looks"
 "$LAB" arrivals --slide "$OUT/fixtures/wide-2576x1080.png" --out "$OUT/looks/arrivals.png"
 "$LAB" render --slide "$OUT/fixtures/wide-2576x1080.png" --arrive weave --quality draft --scale 0.5 --out "$OUT/looks/weave-draft.mp4"
 "$LAB" render --slide "$OUT/fixtures/wide-2576x1080.png" --arrive develop --quality draft --scale 0.5 --out "$OUT/looks/develop-draft.mp4"
+echo "== A cover that turns over to the slide, and room for you"
+WIDE="$OUT/fixtures/wide-2576x1080.png"
+COVER="$OUT/fixtures/cover-2576x1080.png"
+TITLE="How we grew 3.1× in nine months"
+mkdir -p "$OUT/cover" "$OUT/room"
+"$LAB" turns --slide "$WIDE" --cover "$COVER" --out "$OUT/cover/turns.png"
+"$LAB" turns --slide "$OUT/fixtures/standard-1920x1080.png" --cover "$COVER" --out "$OUT/cover/turns-standard.png"
+"$LAB" lifts --slide "$WIDE" --lift 5-12,16- --title "$TITLE" --kicker "pitch.dog · Series A" --out "$OUT/room/lifts.png"
+"$LAB" landings --slide "$WIDE" --lift whole --title "$TITLE" --kicker "pitch.dog · Series A" --out "$OUT/room/whole"
+"$LAB" render --slide "$WIDE" --cover "$COVER" --lift 9-16 --title "$TITLE" --kicker "pitch.dog · Series A" --quality good \
+  --out "$OUT/cover/cover-and-room-good.mp4"
+render_set wide-cover --slide "$WIDE" --cover "$COVER"
+render_set wide-room --slide "$WIDE" --lift 5-12,16- --title "$TITLE" --kicker "pitch.dog · Series A"
 render_set wide-png --slide "$OUT/fixtures/wide-2576x1080.png"
 render_set standard-png --slide "$OUT/fixtures/standard-1920x1080.png"
 render_set wide-pdf --slide "$OUT/fixtures/wide.pdf"
@@ -98,7 +114,7 @@ echo "== Export timings with every frame at full samples (for comparison)"
 
 echo "== Summary"
 {
-  for name in sample wide-png standard-png wide-pdf wide-png-2x; do
+  for name in sample wide-png standard-png wide-pdf wide-png-2x wide-cover wide-room; do
     dir="$OUT/$name"
     [ -d "$dir" ] || continue
     echo "$name:"

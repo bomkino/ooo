@@ -89,6 +89,21 @@ final class SlideBase: @unchecked Sendable {
     }
 }
 
+/// The cover on the GPU.
+final class CoverBase: @unchecked Sendable {
+    let ref: SlideRef
+    let texture: MTLTexture
+    let preview: CGImage?
+
+    init(ref: SlideRef, media: URL?) throws {
+        self.ref = ref
+        let source = try SlideSource(ref: ref, media: media)
+        guard let whole = source.renderWhole() else { throw RenderError.io("Could not draw the cover.") }
+        texture = try MediaLoader.texture(from: whole).texture
+        preview = SlideBase.downscaled(whole, side: 480)
+    }
+}
+
 /// Editor state for one window.
 @Observable
 @MainActor
@@ -113,6 +128,10 @@ public final class OOOSession {
     private var lastJob = 0
     /// The slide drawn small, for the map and the timeline.
     public private(set) var slidePreview: CGImage?
+    /// The cover drawn small, for the inspector and the timeline.
+    public private(set) var coverPreview: CGImage?
+    /// Shows on the stage where you will be while the stage is up for you.
+    public var showRoom = true
     /// The slide's main colours, for a room in them.
     private var slideColours: Palette?
 
@@ -136,6 +155,8 @@ public final class OOOSession {
 
     @ObservationIgnored private var slideBase: SlideBase?
     @ObservationIgnored private var slideToken = 0
+    @ObservationIgnored private var coverBase: CoverBase?
+    @ObservationIgnored private var coverToken = 0
     @ObservationIgnored private var sceneCache: SlideScene?
     /// A dropped slide whose tour is still being planned: the drop and its
     /// tour become one undo step when the plan lands.
@@ -166,6 +187,7 @@ public final class OOOSession {
     /// and discard sessions whenever it rebuilds the view).
     public func start() {
         loadSlide()
+        loadCover()
         loadVoice()
     }
 
@@ -293,6 +315,7 @@ public final class OOOSession {
     private func set(_ p: OOOProject) {
         let slideChanged = p.slide != project.slide
         let voiceChanged = p.voice?.file != project.voice?.file
+        let coverChanged = p.cover?.slide != project.cover?.slide
         if slideChanged || p.format != project.format { thumbs = [:] }
         project = p
         document.project = p
@@ -307,6 +330,7 @@ public final class OOOSession {
         if case .shot(let id) = selection, !p.shots.contains(where: { $0.id == id }) { selection = .overview }
         if slideChanged { loadSlide() }
         if voiceChanged { loadVoice() }
+        if coverChanged { loadCover() }
     }
 
     private func registerUndo(from old: OOOProject, name: String) {
@@ -337,7 +361,7 @@ public final class OOOSession {
         guard let b = slideBase else { return nil }
         var shown = project
         if comparing { shown.look.surface = .original }
-        let s = SlideScene(project: shown, base: b.texture, details: b.details, choreography: choreography)
+        let s = SlideScene(project: shown, base: b.texture, details: b.details, cover: coverTexture, choreography: choreography)
         sceneCache = s
         return s
     }
@@ -346,8 +370,17 @@ public final class OOOSession {
     public func exportScene() -> SlideScene? {
         guard let b = slideBase else { return nil }
         return SlideScene(project: project, base: b.texture, details: DetailCache(source: b.source, baseDensity: b.density),
-                          choreography: choreography)
+                          cover: coverTexture, choreography: choreography)
     }
+
+    /// The cover on the GPU, once it is drawn.
+    private var coverTexture: MTLTexture? {
+        guard let c = coverBase, c.ref == project.cover?.slide else { return nil }
+        return c.texture
+    }
+
+    /// Whether the project's cover is drawn and ready (or there is none).
+    public var coverReady: Bool { project.cover == nil || coverTexture != nil }
 
     public var hasSlide: Bool { slideBase != nil }
 
@@ -383,6 +416,39 @@ public final class OOOSession {
                     switch result {
                     case .success(let base): self.install(base)
                     case .failure(let error): self.message = "Couldn't draw the slide: \(readable(error))"
+                    }
+                }
+            }
+        }
+    }
+
+    func loadCover() {
+        guard let ref = project.cover?.slide else {
+            coverToken += 1
+            coverBase = nil
+            coverPreview = nil
+            return
+        }
+        if let c = coverBase, c.ref == ref { return }
+        let media = document.media.directory
+        coverToken += 1
+        let token = coverToken
+        let job = begin("Drawing the cover")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = Result { try CoverBase(ref: ref, media: media) }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.end(job)
+                    guard token == self.coverToken else { return }
+                    switch result {
+                    case .success(let base):
+                        self.coverBase = base
+                        self.coverPreview = base.preview
+                        self.sceneCache = nil
+                        self.version += 1
+                    case .failure(let error):
+                        self.message = "Couldn't draw the cover: \(readable(error))"
                     }
                 }
             }

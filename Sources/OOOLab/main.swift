@@ -17,9 +17,14 @@ import StageKit
 //   ooo-lab plan                            the tour as it stands (after --replace, as it followed)
 //   ooo-lab path    [--out path.csv]        the camera's path, sampled
 //   ooo-lab landings --out dir              a still at the opening and at every landing
-//   ooo-lab fixture --kind wide|wide-revised|standard --out f.png|f.pdf [--scale 2]
+//   ooo-lab fixture --kind wide|wide-revised|standard|cover --out f.png|f.pdf [--scale 2]
 //                                           draw a test slide: 2576 × 1080 or 1920 × 1080
-//                                           (wide-revised: the wide slide corrected)
+//                                           (wide-revised: the wide slide corrected; cover: the
+//                                           deck's cover, 2576 × 1080)
+//   ooo-lab turns --out grid.png            the cover turning over (top) and back (below), at
+//                                           six moments of each turn
+//   ooo-lab lifts --out grid.png            the stage rising to leave room for you, and a
+//                                           close-up while it is up, the room marked
 //   ooo-lab stills --out dir                the stills Save Stills writes: the opening, then
 //                                           each framing
 //   ooo-lab openings --out grid.png         the opening at five turns, 28° to 52° (across), and
@@ -45,7 +50,9 @@ import StageKit
 // drop) and --replace <file> (then Replace Slide with it: the tour follows
 // its words onto the new slide), --format reel|portrait|square|landscape, --floor none|soft|mirror,
 // --ending hold|pullBack|fade|leave, --arrive rise|unfold|drop|develop|turn|glide|weave|none and --title "words" [--kicker "line above"
-// [--kicker-as-typed]] [--face modern|grotesk|editorial|poster].
+// [--kicker-as-typed]] [--face modern|grotesk|editorial|poster], --cover <file> [--turn 3.4] [--no-turn-back]
+// [--back-at 20] (a cover that turns over to the slide), and --lift whole|4-10,14- [--room 0.42] (room for
+// you: when the stage is up, and how much of the frame it leaves clear).
 
 let args = CommandLine.arguments
 func value(_ name: String) -> String? {
@@ -84,7 +91,7 @@ if let text = value("--title") {
         t.face = face
     }
     project.title = t
-    project.makeRoomForTitle()
+    project.makeRoomForOpening()
 }
 if let f = value("--floor") {
     guard let floor = FloorKind(rawValue: f) else { fail("unknown floor \(f)") }
@@ -118,7 +125,7 @@ if let path = value("--slide") {
         let details = try SlideAnalysis.read(SlideSource(ref: ref, media: dir))
         project.shots = Director.shots(project.directorInput(details))
         project.reading = details
-        project.makeRoomForTitle()
+        project.makeRoomForOpening()
     } catch {
         fail("could not read \(path): \(error)")
     }
@@ -137,6 +144,31 @@ if let path = value("--replace") {
     } catch {
         fail("could not replace the slide with \(path): \(error)")
     }
+}
+
+if let path = value("--cover") {
+    // The app's Choose Cover: another slide on the front of the card.
+    let url = URL(fileURLWithPath: path)
+    guard var ref = SlideSource.inspect(url) else { fail("not a slide: \(path)") }
+    let dir = media ?? FileManager.default.temporaryDirectory.appendingPathComponent("ooo-lab-\(UUID().uuidString)", isDirectory: true)
+    let file = "cover-\(UUID().uuidString.prefix(8))." + url.pathExtension.lowercased()
+    do {
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: url, to: dir.appendingPathComponent(file))
+    } catch {
+        fail("could not copy \(path): \(error)")
+    }
+    ref.file = file
+    media = dir
+    project.cover = Cover(slide: ref, turn: Double(value("--turn") ?? "") ?? project.defaultCoverTurn,
+                          turnBack: !args.contains("--no-turn-back"), backAt: Double(value("--back-at") ?? ""))
+    project.makeRoomForOpening()
+}
+if let spec = value("--lift") {
+    guard let lift = Lift(spec: spec, room: Float(value("--room") ?? "") ?? Lift.defaultRoom) else {
+        fail("--lift takes whole, or start-end[,start-end…] (an empty end: to the end)")
+    }
+    project.lift = lift
 }
 
 func loadScene() -> SlideScene {
@@ -395,7 +427,7 @@ case "titles":
             var p = project
             p.title = words
             p.title?.face = face
-            p.makeRoomForTitle()
+            p.makeRoomForOpening()
             let scene = SlideScene(project: p, base: base.base, details: base.details)
             let rest = (scene.choreography.beats.first?.land ?? 2) + 1.0
             let img = try stage.still(scene, at: rest, width: cw, height: ch, samples: 4)
@@ -403,7 +435,7 @@ case "titles":
         }
         var p = project
         p.title = words
-        p.makeRoomForTitle()
+        p.makeRoomForOpening()
         let scene = SlideScene(project: p, base: base.base, details: base.details)
         let beats = scene.choreography.beats
         let land = beats.first?.land ?? 2
@@ -574,6 +606,77 @@ case "inkcheck":
         fail("inkcheck failed: \(error)")
     }
 
+case "turns":
+    // The cover turning over to the slide (top row) and back (below), each at
+    // six moments: just before, four through the turn, and settled after.
+    guard project.cover != nil else { fail("turns needs --cover") }
+    let scene = loadScene()
+    let out = URL(fileURLWithPath: value("--out") ?? "turns.png")
+    let turns = scene.choreography.turns
+    let moments: [Double] = [-0.1, 0.22, 0.4, 0.55, 0.75, 1.0]
+    let cw = project.format.width / 3, ch = project.format.height / 3
+    do {
+        let stage = try SlideStage()
+        guard let ctx = CGContext(data: nil, width: cw * moments.count, height: ch * turns.count, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { fail("no context") }
+        for (r, turn) in turns.enumerated() {
+            for (c, m) in moments.enumerated() {
+                let t = m < 1 ? turn.start + Turn.length * m : turn.end + Choreography.turnSettle
+                let img = try stage.still(scene, at: t, width: cw, height: ch, samples: 8)
+                ctx.draw(img, in: CGRect(x: c * cw, y: (turns.count - 1 - r) * ch, width: cw, height: ch))
+            }
+        }
+        try ImageOutput.writePNG(ctx.makeImage()!, to: out)
+        print("turns \(out.path): \(turns.map { String(format: "%@ at %.2f s", $0.back ? "back" : "over", $0.start) }) down; "
+            + "before, 22%, 40%, 55%, 75% and settled across")
+    } catch {
+        fail("turns failed: \(error)")
+    }
+
+case "lifts":
+    // The stage rising to leave room for you: just before, three moments of
+    // the rise, up, and the next landing while it is up. The room is marked.
+    guard let lift = project.lift, let move = lift.moves(duration: project.duration).first(where: { $0.rising })
+        ?? lift.stretches(duration: project.duration).first.map({ (start: $0.start, end: $0.start, rising: true) }) else {
+        fail("lifts needs --lift")
+    }
+    let scene = loadScene()
+    let out = URL(fileURLWithPath: value("--out") ?? "lifts.png")
+    let span = move.end - move.start
+    let next = scene.choreography.beats.first { $0.land > move.end + 0.3 && !$0.isOverview }
+    var moments = [move.start - 0.2, move.start + span * 0.3, move.start + span * 0.55, move.start + span * 0.8, move.end + 0.4]
+    if let next { moments.append(min(next.land + min(0.7, next.hold * 0.45), scene.duration - 0.05)) }
+    moments = moments.map { min(max($0, 0), scene.duration - 0.02) }
+    let cw = project.format.width / 3, ch = project.format.height / 3
+    do {
+        let stage = try SlideStage()
+        guard let ctx = CGContext(data: nil, width: cw * moments.count, height: ch, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { fail("no context") }
+        let room = CGFloat(lift.room)
+        for (c, t) in moments.enumerated() {
+            let img = try stage.still(scene, at: t, width: cw, height: ch, samples: 8)
+            ctx.draw(img, in: CGRect(x: c * cw, y: 0, width: cw, height: ch))
+            // The room, as the stage shows it: a quiet line where it starts, shaded as the stage is up.
+            let up = CGFloat(scene.choreography.liftAmount(at: t))
+            ctx.setFillColor(CGColor(srgbRed: 0.36, green: 0.42, blue: 0.51, alpha: 0.28 * up))
+            ctx.fill(CGRect(x: CGFloat(c * cw), y: 0, width: CGFloat(cw), height: CGFloat(ch) * room))
+            ctx.setStrokeColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.7))
+            ctx.setLineWidth(1)
+            ctx.setLineDash(phase: 0, lengths: [4, 3])
+            ctx.move(to: CGPoint(x: CGFloat(c * cw), y: CGFloat(ch) * room))
+            ctx.addLine(to: CGPoint(x: CGFloat((c + 1) * cw), y: CGFloat(ch) * room))
+            ctx.strokePath()
+            ctx.setLineDash(phase: 0, lengths: [])
+        }
+        try ImageOutput.writePNG(ctx.makeImage()!, to: out)
+        print("lifts \(out.path): " + moments.map { String(format: "%.2f s (up %.0f%%)", $0, scene.choreography.liftAmount(at: $0) * 100) }
+            .joined(separator: ", "))
+    } catch {
+        fail("lifts failed: \(error)")
+    }
+
 case "motioncheck":
     // How fast each move flies and turns at its peak, whether each emphasis
     // comes all the way in, and whether the picture ever jumps.
@@ -635,7 +738,7 @@ case "loopcheck":
     }
 
 case "fixture":
-    guard let kind = Fixture(rawValue: value("--kind") ?? "wide") else { fail("unknown fixture; use wide, wide-revised or standard") }
+    guard let kind = Fixture(rawValue: value("--kind") ?? "wide") else { fail("unknown fixture; use wide, wide-revised, standard or cover") }
     let out = URL(fileURLWithPath: value("--out") ?? "\(kind.rawValue).png")
     let scale = CGFloat(Double(value("--scale") ?? "") ?? 1)
     do {
@@ -665,9 +768,10 @@ case "path":
 default:
     print("""
     ooo-lab — headless renders and checks for OOO
-      shaders | still | sheet | render | analyze | plan | path | landings | stills | openings | titles
+      shaders | still | sheet | render | analyze | plan | path | landings | stills | openings | titles | turns | lifts
       backdrops | arrivals | blurcheck | inkcheck | motioncheck | loopcheck | bench | colorcheck | fixture
       --project file.ooo | --slide file.pdf|png [--replace file]  --format reel|portrait|square|landscape  --floor none|soft|mirror  --out path
+      --cover file [--turn s] [--no-turn-back]  --lift whole|4-10,14- [--room 0.42]
     """)
 }
 

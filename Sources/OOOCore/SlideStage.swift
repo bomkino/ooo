@@ -16,19 +16,26 @@ public struct SlideScene: @unchecked Sendable {
     public let base: MTLTexture
     /// Sharper copies of the parts the camera goes close to.
     public let details: DetailCache?
+    /// The cover on the front of the card, when the project has one.
+    public let cover: MTLTexture?
 
     /// The words over the opening, when there are some.
     public private(set) var title: TitleOverlay?
+    /// Whether the words were set for the stage risen above a Lift's room.
+    let titleLifted: Bool
 
-    public init(project: OOOProject, base: MTLTexture, details: DetailCache?, choreography: Choreography? = nil) {
+    public init(project: OOOProject, base: MTLTexture, details: DetailCache?, cover: MTLTexture? = nil,
+                choreography: Choreography? = nil) {
         self.project = project
         self.base = base
         self.details = details
+        self.cover = project.cover == nil ? nil : cover
         let c = choreography ?? project.choreography()
         self.choreography = c
         title = nil
+        titleLifted = Self.liftedWhileTitled(c)
         if let words = project.title, !words.isEmpty, let first = c.beats.first {
-            let opening = first.pose
+            let opening = titleLifted ? c.lifted?.first?.pose ?? first.pose : first.pose
             let A = project.slideAspect, safe = project.format.safeArea, C = project.canvasAspect
             // The ink that stands out most from the backdrop behind the words,
             // as it shows while they are read.
@@ -44,6 +51,7 @@ public struct SlideScene: @unchecked Sendable {
             h.combine(project.overview.pitch)
             h.combine(project.overview.frame.size.y)
             h.combine(A)
+            h.combine(titleLifted)
             title = TitleOverlay(key: h.finalize(), timing: .opening, scrim: 0) { w, hgt in
                 let C = Float(w) / Float(max(hgt, 1))
                 let band = OpeningTitleArt.band(opening: opening, slideAspect: A, canvasAspect: C, safe: safe)
@@ -53,6 +61,113 @@ public struct SlideScene: @unchecked Sendable {
     }
 
     public var duration: Double { choreography.duration }
+
+    /// Whether the stage is mostly up while the opening title shows, so the
+    /// words are set in the band left above it then.
+    static func liftedWhileTitled(_ c: Choreography) -> Bool {
+        guard c.lift != nil, let first = c.beats.first else { return false }
+        let until = c.beats.count > 1 ? c.beats[1].depart : c.duration
+        let samples = stride(from: max(first.land - 0.45, 0), through: max(until, first.land), by: 0.25)
+        return samples.contains { c.liftAmount(at: $0) > 0.5 }
+    }
+
+    /// How far below where they were set the title's words sit at `t`, as a
+    /// share of the frame height: they keep their place over the slide as
+    /// the stage rises or settles.
+    func titleShift(at t: Double, canvasAspect C: Float) -> Float {
+        guard let lifted = choreography.lifted?.first?.pose, let flat = choreography.beats.first?.pose else { return 0 }
+        let w = choreography.liftAmount(at: t)
+        let set = titleLifted ? lifted : flat
+        let now = CameraPose.blend(flat, lifted, w)
+        return slideTop(now, canvasAspect: C) - slideTop(set, canvasAspect: C)
+    }
+
+    /// Where the top of the slide is in the frame, as a share of its height from the top.
+    func slideTop(_ pose: CameraPose, canvasAspect C: Float) -> Float {
+        let A = project.slideAspect
+        let corners = [Vec2(0, 0), Vec2(1, 0), Vec2(0, 1), Vec2(1, 1)].map { Vec3(($0.x - 0.5) * A, 0.5 - $0.y, 0) }
+        guard let box = pose.bounds(of: corners, canvasAspect: C) else { return 0 }
+        return (1 - box.w) / 2
+    }
+
+    // MARK: Cover
+
+    /// The turn under way at `t`, and how far through it, when the card is turning.
+    public func turning(at t: Double) -> (turn: Turn, progress: Float)? {
+        guard cover != nil else { return nil }
+        for turn in choreography.turns where turn.contains(t) { return (turn, turn.progress(at: t)) }
+        return nil
+    }
+
+    /// Whether the cover is face up at `t` with the card at rest: before it
+    /// turns over, and once it has turned back.
+    public func coverUp(at t: Double) -> Bool {
+        guard cover != nil, let first = choreography.turns.first else { return false }
+        if t <= first.start { return true }
+        if let back = choreography.turns.dropFirst().first, t >= back.end { return true }
+        return false
+    }
+
+    /// How much of the slide's dressing at rest (a sharp close-up, an
+    /// emphasis) may show at `t`: none while the cover is up or the card
+    /// turns, coming in once it has turned over and going before it turns back.
+    public func slideShown(at t: Double) -> Float {
+        guard cover != nil, let first = choreography.turns.first else { return 1 }
+        var shown = smoothstep(Float((t - first.end) / 0.3))
+        if let back = choreography.turns.dropFirst().first { shown *= 1 - smoothstep(Float((t - (back.start - 0.3)) / 0.3)) }
+        return shown
+    }
+
+    /// The cover's size on the card: it fits within the slide's, so the
+    /// camera's framings hold it too.
+    public var coverSize: SIMD2<Float> {
+        let A = project.slideAspect, a = max(project.cover?.slide.aspect ?? A, 0.05)
+        return a >= A ? SIMD2(A, A / a) : SIMD2(a, 1)
+    }
+
+    /// The card at `t` with the cover on its front: the cover's own face and
+    /// size while it is up, the slide's after it has turned, and while it
+    /// turns, whichever face the camera sees, swapped as the card passes
+    /// edge-on to the eye so neither ever shows its back.
+    func dressCover(_ card: inout CardPose, at t: Double, eye: Vec3) {
+        guard let art = project.cover else { return }
+        let A = project.slideAspect
+        let front = coverSize, back = SIMD2<Float>(A, 1)
+        guard let now = turning(at: t) else {
+            if coverUp(at: t) {
+                card.media = 2
+                card.size = front
+                card.mediaAspect = art.slide.aspect
+            }
+            return
+        }
+        let tp = CardTurn.pose(now.progress, back: now.turn.back, direction: choreography.turnSign)
+        let rotation = card.rotation + SIMD3(tp.rotation.x, tp.rotation.y, tp.rotation.z)
+        let center = card.position + SIMD3(tp.offset.x, tp.offset.y, tp.offset.z)
+        let n4 = Matrix.rotationEuler(rotation) * SIMD4<Float>(0, 0, 1, 0)
+        let coverNormal = SIMD3(n4.x, n4.y, n4.z)
+        let toEye = simd_normalize(SIMD3(eye.x, eye.y, eye.z) - center)
+        let facing = simd_dot(coverNormal, toEye)
+        // The card changes shape only while it is all but edge-on.
+        let w = smoothstep((0.35 - facing) / 0.7)
+        let size = front + (back - front) * w
+        card.curl += tp.curl
+        if facing >= 0 {
+            card.media = 2
+            card.mediaAspect = art.slide.aspect
+            card.rotation = rotation
+        } else {
+            // The same card seen from behind: turned half over about its own upright.
+            card.rotation = SIMD3(-rotation.x, rotation.y - choreography.turnSign * .pi, -rotation.z)
+            card.curl = -card.curl
+        }
+        card.size = size
+        // It turns about the middle of its thickness, so its edge never jumps
+        // as the faces swap, and it lands where it started.
+        let shown = facing >= 0 ? coverNormal : -coverNormal
+        let thickness = 0.012 * min(size.x, size.y) * project.look.edge
+        card.position = center + (shown - SIMD3(0, 0, 1)) * (thickness / 2)
+    }
 
     /// The slide's own pose at `t`: arriving, resting, or leaving.
     public func slidePose(at t: Double, canvasAspect: Float) -> SlidePose {
@@ -73,17 +188,20 @@ public struct SlideScene: @unchecked Sendable {
     /// slide in pose `sp`: all of it at rest, none while it arrives, and over a
     /// Leave's first moments it fades as the slide sets off, so nothing pops.
     func restHold(at t: Double, pose sp: SlidePose) -> Float {
-        if sp == .rest { return 1 }
+        let shown = slideShown(at: t)
+        if sp == .rest { return shown }
         guard project.ending == .leave else { return 0 }
         let p = choreography.endingProgress(at: t)
-        return p > 0 ? 1 - smootherstep(p / 0.2) : 0
+        return p > 0 ? (1 - smootherstep(p / 0.2)) * shown : 0
     }
 
     /// How much of the surface's light shows at `t`: all of it while the slide
     /// arrives and the camera travels, a trace while the camera holds and the
     /// slide is read, so black type stays black.
     public func surfaceAmount(at t: Double) -> Float {
-        let reading = choreography.settled(at: t) * (1 - choreography.endingProgress(at: t))
+        var reading = choreography.settled(at: t) * (1 - choreography.endingProgress(at: t))
+        // A turning card catches the light.
+        if let turn = turning(at: t) { reading *= 1 - CardTurn.activity(turn.progress) }
         return 1 - (1 - Self.surfaceAtRest) * reading
     }
 
@@ -202,8 +320,10 @@ public struct SlideScene: @unchecked Sendable {
         slide.mediaAspect = A
         slide.shadow = shown
         slide.surfaceAmount = surfaceAmount(at: t)
+        let slideAtRest = slide
+        dressCover(&slide, at: t, eye: cam.eye)
 
-        let atRest = sp == .rest
+        let atRest = sp == .rest && slideShown(at: t) > 0.001
         var cards: [CardPose] = []
         var lifted: CardPose?
 
@@ -248,8 +368,8 @@ public struct SlideScene: @unchecked Sendable {
                 var thread = slide
                 thread.occurrence = 10 + i
                 thread.crop = SIMD4(0, Float(i) / Float(n), 1, Float(i + 1) / Float(n))
-                thread.size = SIMD2(A, 1 / Float(n))
-                let local = SIMD3<Float>(0, 0.5 - (Float(i) + 0.5) / Float(n), 0) + th.offset
+                thread.size = SIMD2(slide.size.x, slide.size.y / Float(n))
+                let local = SIMD3<Float>(0, slide.size.y * (0.5 - (Float(i) + 0.5) / Float(n)), 0) + th.offset
                 let moved = turn * SIMD4(local, 0)
                 thread.position = slide.position + SIMD3(moved.x, moved.y, moved.z)
                 thread.rotation = slide.rotation + SIMD3(0, 0, th.roll)
@@ -268,7 +388,7 @@ public struct SlideScene: @unchecked Sendable {
         let hold = restHold(at: t, pose: sp)
         if hold > 0.001, let patch {
             let r = patch.region
-            var detail = slide
+            var detail = slideAtRest
             detail.media = 1
             detail.occurrence = 1
             detail.crop = r
@@ -277,11 +397,11 @@ public struct SlideScene: @unchecked Sendable {
             // Laid over its part of the slide wherever the slide is, so it sets
             // off with a Leave while it fades.
             let local = SIMD3<Float>(((r.x + r.z) / 2 - 0.5) * A, 0.5 - (r.y + r.w) / 2, 0)
-            let turned = Matrix.rotationEuler(slide.rotation) * SIMD4(local, 0)
-            detail.position = slide.position + SIMD3(turned.x, turned.y, turned.z)
+            let turned = Matrix.rotationEuler(slideAtRest.rotation) * SIMD4(local, 0)
+            detail.position = slideAtRest.position + SIMD3(turned.x, turned.y, turned.z)
             detail.curl = 0
             detail.fold = 0
-            detail.opacity = slide.opacity * hold
+            detail.opacity = slideAtRest.opacity * hold
             detail.edgeScale = 0
             detail.shadow = 0
             detail.layer = 1
@@ -371,8 +491,9 @@ public final class SlideStage: @unchecked Sendable {
         if let details = scene.details, let fp = footprint(scene, at: t, width: output.width, height: output.height) {
             patch = details.patch(for: fp, wait: waitForDetail)
         }
-        var textures: [MTLTexture] = [scene.base]
-        if let patch { textures.append(patch.texture) }
+        // The slide, its sharp close-up, and the cover: a card's media
+        // index is its place here, so the list never closes up.
+        let textures: [MTLTexture] = [scene.base, patch?.texture ?? scene.base, scene.cover ?? scene.base]
 
         let look = scene.look(at: t, canvasAspect: C)
         let fps = max(scene.project.fps, 1)
@@ -405,7 +526,8 @@ public final class SlideStage: @unchecked Sendable {
         try renderer.encode(cb, output: output, request: request, textures: textures, frameAt: frameAt)
         if let title = scene.title {
             let p = OpeningTitleArt.presence(scene.choreography, at: t)
-            try titles.encode(cb, title, alpha: p.alpha * scene.presence(at: t), drop: p.drop, output: output)
+            try titles.encode(cb, title, alpha: p.alpha * scene.presence(at: t), drop: p.drop + scene.titleShift(at: t, canvasAspect: C),
+                              output: output)
         }
         return request.samples
     }
@@ -450,6 +572,15 @@ public enum SlideLoader {
         guard let whole = source.renderWhole() else { throw RenderError.io("Could not draw the slide.") }
         let tex = try MediaLoader.texture(from: whole)
         let details = DetailCache(source: source, baseDensity: Float(whole.height))
-        return SlideScene(project: project, base: tex.texture, details: details, choreography: choreography)
+        return SlideScene(project: project, base: tex.texture, details: details, cover: try coverTexture(for: project, media: media),
+                          choreography: choreography)
+    }
+
+    /// The project's cover on the GPU, or nil when it has none.
+    public static func coverTexture(for project: OOOProject, media: URL?) throws -> MTLTexture? {
+        guard let ref = project.cover?.slide else { return nil }
+        let source = try SlideSource(ref: ref, media: media)
+        guard let whole = source.renderWhole() else { throw RenderError.io("Could not draw the cover.") }
+        return try MediaLoader.texture(from: whole).texture
     }
 }

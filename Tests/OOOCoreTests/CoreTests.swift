@@ -4,6 +4,7 @@ import Metal
 import OOOMotion
 import RenderCore
 import StageKit
+import simd
 import XCTest
 @testable import OOOCore
 
@@ -45,6 +46,65 @@ final class CoreTests: XCTestCase {
         json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         json.removeValue(forKey: "minimumReaderVersion")
         XCTAssertNoThrow(try ProjectPackage.decode(JSONSerialization.data(withJSONObject: json)))
+    }
+
+    func testACoverOrRoomForYouNeedsOOO101() throws {
+        var covered = OOOProject.sample
+        covered.cover = Cover(slide: .sample, turn: covered.defaultCoverTurn)
+        var lifted = OOOProject.sample
+        lifted.lift = Lift(spans: [LiftSpan(start: 3, end: 9)])
+        for p in [covered, lifted] {
+            let j = try XCTUnwrap(JSONSerialization.jsonObject(with: ProjectPackage.encode(p)) as? [String: Any])
+            XCTAssertEqual(j["minimumReaderVersion"] as? Int, 3)
+            XCTAssertEqual(try ProjectPackage.decode(ProjectPackage.encode(p)), p)
+        }
+        // Room for you with no stretches left asks nothing of an older OOO.
+        lifted.lift?.spans = []
+        let j = try XCTUnwrap(JSONSerialization.jsonObject(with: ProjectPackage.encode(lifted)) as? [String: Any])
+        XCTAssertEqual(j["minimumReaderVersion"] as? Int, 1)
+    }
+
+    /// The cover is up until it turns, the slide after, and the cover again
+    /// once it has turned back; the faces swap only as the card passes
+    /// edge-on to the eye, so neither ever shows its back, and the card
+    /// lands exactly where the slide rests.
+    func testTheCoverTurnsOverEdgeOn() throws {
+        var p = OOOProject.sample
+        p.cover = Cover(slide: .sample, turn: p.defaultCoverTurn)
+        p.makeRoomForOpening()
+        let scene = try SlideLoader.scene(for: p, media: nil)
+        XCTAssertNotNil(scene.cover)
+        let c = scene.choreography
+        XCTAssertEqual(c.turns.count, 2)
+        XCTAssertGreaterThanOrEqual(c.beats[1].depart, c.turns[0].end, "the tour waits for the turn")
+        let C = p.canvasAspect
+        func card(_ t: Double) -> CardPose { scene.stageFrame(at: t, canvasAspect: C, outputWidth: 1080, patch: nil).cards[0] }
+        XCTAssertEqual(card(c.turns[0].start - 0.1).media, 2, "the cover is up before it turns")
+        XCTAssertEqual(card(c.turns[0].end + 0.5).media, 0, "the slide is up after")
+        XCTAssertEqual(card(c.turns[1].end + 0.2).media, 2, "and the cover again once it has turned back")
+        XCTAssertEqual(scene.slideShown(at: c.turns[0].start), 0)
+        XCTAssertEqual(scene.slideShown(at: c.turns[0].end + 0.5), 1, accuracy: 1e-4)
+        for turn in c.turns {
+            var last = card(turn.start + 1e-3).media
+            var swaps = 0
+            for t in stride(from: turn.start + 1e-3, to: turn.end, by: 1.0 / 480) {
+                let k = card(t)
+                if k.media != last {
+                    swaps += 1
+                    let n = Matrix.rotationEuler(k.rotation) * SIMD4<Float>(0, 0, 1, 0)
+                    let eye = c.pose(at: t).eye
+                    let to = simd_normalize(SIMD3(eye.x, eye.y, eye.z) - k.position)
+                    XCTAssertLessThan(abs(simd_dot(SIMD3(n.x, n.y, n.z), to)), 0.06, "faces swapped away from edge-on at \(t)")
+                }
+                last = k.media
+            }
+            XCTAssertEqual(swaps, 1, "one swap a turn")
+            // It lands where it rests: no step as the turn ends.
+            let a = card(turn.end - 1e-3), b = card(turn.end + 1e-3)
+            XCTAssertEqual(simd_length(a.position - b.position), 0, accuracy: 2e-3)
+            XCTAssertEqual(a.rotation.y, b.rotation.y, accuracy: 2e-3)
+            XCTAssertEqual(a.size.x, b.size.x, accuracy: 1e-4)
+        }
     }
 
     func testTheSurfaceStepsBackWhileTheSlideIsRead() throws {
@@ -115,13 +175,13 @@ final class CoreTests: XCTestCase {
         p.ending = .pullBack
         p.title = OpeningTitle(text: "One slide, obsessed over.")
         let first = try XCTUnwrap(p.shots.map(\.time).min())
-        p.makeRoomForTitle()
+        p.makeRoomForOpening()
         // The tour sets off once the title has been read, and waits only once.
         XCTAssertEqual(p.choreography().beats[1].depart, p.tourStart, accuracy: 0.05)
         XCTAssertEqual(p.titleHold, 0.7 + 0.26 * 4, accuracy: 1e-9, "four words take a little under two seconds")
         XCTAssertGreaterThan(p.shots.map(\.time).min() ?? 0, first)
         let moved = p.shots
-        p.makeRoomForTitle()
+        p.makeRoomForOpening()
         XCTAssertEqual(p.shots, moved)
         let c = p.choreography()
         let beats = c.beats

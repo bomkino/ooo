@@ -21,7 +21,16 @@ public struct MotionCheck: Sendable {
         public let emphasisPeak: Float?
     }
 
+    /// One rise or settle of a Lift, with whatever the camera is doing at the time.
+    public struct LiftReport: Sendable {
+        public let start: Double
+        public let rising: Bool
+        /// Peak zoom-and-pan rate of the picture while the stage moves, e-folds per second.
+        public let peakRate: Double
+    }
+
     public let beats: [BeatReport]
+    public let lifts: [LiftReport]
     /// Single-frame jumps outside a cut, as times.
     public let pops: [Double]
     public let problems: [String]
@@ -77,6 +86,30 @@ public struct MotionCheck: Sendable {
             }
         }
 
+        // The stage rising or settling: the camera's own move and the lift together.
+        var lifts: [LiftReport] = []
+        for m in c.lift?.moves(duration: c.duration) ?? [] {
+            var most = 0.0
+            var t = max(m.start, 0)
+            var last = c.basePose(at: t)
+            while t < min(m.end, c.duration) {
+                t += dt
+                let p = c.basePose(at: t)
+                if c.cut(between: t - dt, and: t) == nil {
+                    let h = Double(max(min(p.height, last.height), 1e-5))
+                    let pan = Double((p.target - last.target).length) / h
+                    let zoom = Double(abs(logf(max(p.height, 1e-5) / max(last.height, 1e-5))))
+                    most = max(most, max(pan, zoom) / dt)
+                }
+                last = p
+            }
+            lifts.append(LiftReport(start: m.start, rising: m.rising, peakRate: most))
+            if most > Choreography.peakRate * Self.tolerance {
+                problems.append("the stage " + (m.rising ? "rising" : "settling")
+                    + String(format: " at %.2f s: %.1f e-folds/s at its peak (limit %.1f)", m.start, most, Choreography.peakRate))
+            }
+        }
+
         // Jumps: a step between neighbouring samples far bigger than the steps around it.
         var steps: [Double] = []
         var times: [Double] = []
@@ -107,6 +140,7 @@ public struct MotionCheck: Sendable {
         }
 
         beats = reports
+        self.lifts = lifts
         self.pops = pops
         self.problems = problems
     }
@@ -122,6 +156,9 @@ public struct MotionCheck: Sendable {
             if b.peakRate > 0 { line += String(format: "  %.2f e-folds/s  %3.0f°/s", b.peakRate, b.peakTurn) }
             if let e = b.emphasisPeak { line += String(format: "  emphasis %.0f%%", e * 100) }
             lines.append(line)
+        }
+        for l in lifts {
+            lines.append("   the stage " + (l.rising ? "rises   " : "settles ") + String(format: "at %6.2f  %.2f e-folds/s", l.start, l.peakRate))
         }
         lines.append(problems.isEmpty ? "motioncheck: no problems" : "motioncheck: \(problems.count) problem(s)")
         lines.append(contentsOf: problems.map { "  " + $0 })

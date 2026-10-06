@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.0.1 — 6 October 2026
+
+Open on your deck's cover and turn it over to the slide, and leave room at the bottom of the frame for you on camera.
+
+**A cover that turns**
+- **Cover** (in the opening's inspector, or File ▸ Choose Cover…): the video opens on another slide, such as your deck's cover, rests a moment, and turns it over to the slide you talk about, like a card in your hand: pressed back a touch, lifted and bowed as it swings, landing with a little give. The tour sets off once it has settled.
+- **Turn back to the cover** at the end (on by default): the camera comes back to the whole slide, settles, and the card turns back, so the video ends where it began.
+- Drag the turns on the timeline to time them to your words. With a PDF deck, **Use Page 1** takes its first page as the cover.
+
+**Room for you**
+- **Room for you** lifts the slide, its moves and its title into the top of the frame and leaves the bottom clear for your talking head, to lay over in Edits or Premiere. Choose **Whole Video**, or add stretches on the new lane under the camera's, where you talk: the stage rises and settles smoothly, and whatever the camera is doing carries on through it, every framing solved again for the space above you.
+- The stage shows where you'll be, a quiet outline that comes up as the stage rises. It is never exported.
+
+**Made and checked**
+- `ooo-lab turns` and `ooo-lab lifts` draw the turn and the rise in CI, and `motioncheck` measures how fast the picture changes while the stage rises and settles.
+- Files with a cover or room for you need OOO 1.0.1; 1.0 says so and offers the update instead of opening them without.
+
 ## 1.0.0 — 6 October 2026
 
 OOO 1.0: a slide you corrected keeps its tour, every drag has a key, and the camera takes its time.

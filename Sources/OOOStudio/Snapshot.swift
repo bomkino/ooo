@@ -13,7 +13,7 @@ import SwiftUI
 ///         [--slide file] [--format reel|portrait|square|landscape|uhd]
 ///         [--tab camera|look|voice] [--shot n] [--time seconds]
 ///         [--title "words" [--kicker "line"]] [--safe-areas] [--show-export]
-///         [--settle seconds]
+///         [--cover file [--no-turn-back]] [--lift whole|4-10,14-] [--settle seconds]
 ///
 /// It opens a new document window (on the sample slide unless `--slide` gives
 /// one), waits until the slide is drawn and its tour planned, sets the window
@@ -67,11 +67,18 @@ public enum OOOSnapshot {
         if let text = arg("--title") {
             session.update("Title") { $0.title = OpeningTitle(text: text, kicker: arg("--kicker") ?? "") }
         }
+        if let path = arg("--cover") {
+            session.chooseCover(URL(fileURLWithPath: path))
+            if flag("--no-turn-back") { session.update("Don't Turn Back") { $0.cover?.turnBack = false } }
+        }
+        if let spec = arg("--lift"), let lift = Lift(spec: spec) {
+            session.update("Room for You") { $0.lift = lift }
+        }
         let began = Date()
         func ready() -> Bool {
             // The slide drawn, its reading done, and (for a slide of your own) its tour planned.
             let planned = arg("--slide") == nil || !session.project.shots.isEmpty
-            return session.hasSlide && session.busy == nil && planned && Date().timeIntervalSince(began) > 1
+            return session.hasSlide && session.coverReady && session.busy == nil && planned && Date().timeIntervalSince(began) > 1
         }
         func poll() {
             if !ready() && Date().timeIntervalSince(began) < 60 {
