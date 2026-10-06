@@ -53,7 +53,8 @@ public struct MotionCheck: Sendable {
                 }
             }
             var emphasis: Float?
-            if beat.shot.emphasis != .none && !beat.isOverview {
+            // An emphasis its hold has no room for is left out, not cut short.
+            if beat.shot.emphasis != .none && !beat.isOverview && c.emphasisSpan(i) != nil {
                 var most: Float = 0
                 var t = beat.land - 0.3
                 while t < min(beat.leave + 0.1, c.duration) {
@@ -133,6 +134,8 @@ extension Choreography.Beat {
     /// the view changes per second at its fastest. 0 for a cut.
     public var peakRate: Double {
         guard shot.move != .cut, travel > 1e-3 else { return 0 }
-        return path.rho * abs(path.length) * Double(curve.peakSlope) / travel
+        let span = shot.move == .push ? Choreography.span(from: from, to: pose, move: .push, rho: Float(path.rho), canvasAspect: 1)
+            : path.rho * abs(path.length)
+        return span * Double(curve.peakSlope) / travel
     }
 }

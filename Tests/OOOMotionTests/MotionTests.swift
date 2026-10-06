@@ -164,13 +164,15 @@ final class ChoreographyTests: XCTestCase {
     func testAutoTravelRespectsPeakRate() {
         let a = CameraPose(shot: Shot(time: 0, frame: ShotFrame(center: Vec2(0.5, 0.5), size: Vec2(0.6, 0.6))), slideAspect: A, canvasAspect: C)
         let b = CameraPose(shot: Shot(time: 0, frame: ShotFrame(center: Vec2(0.85, 0.2), size: Vec2(0.03, 0.04))), slideAspect: A, canvasAspect: C)
-        let style = MotionStyle()
-        for ease in EaseKind.allCases {
-            let T = Choreography.autoTravel(from: a, to: b, ease: ease, style: style, canvasAspect: C)
-            guard T < 3.999 else { continue }   // the longest move allowed wins over the cap
-            let path = ZoomPath(from: a.target, w0: a.height * C.squareRoot(), to: b.target, w1: b.height * C.squareRoot(), rho: style.rho)
-            let peak = Double(style.rho) * path.length * Double(ease.curve.peakSlope) / T
-            XCTAssertLessThanOrEqual(peak, Choreography.peakRate * 1.01 / Double(style.paceScale), "\(ease)")
+        // At any pace: a brisk style moves sooner, never faster than the limit.
+        for style in [MotionStyle(), MotionStyle(pace: 1)] {
+            for ease in EaseKind.allCases {
+                let T = Choreography.autoTravel(from: a, to: b, ease: ease, style: style, canvasAspect: C)
+                guard T < 3.999 else { continue }   // the longest move allowed wins over the cap
+                let path = ZoomPath(from: a.target, w0: a.height * C.squareRoot(), to: b.target, w1: b.height * C.squareRoot(), rho: style.rho)
+                let peak = Double(style.rho) * path.length * Double(ease.curve.peakSlope) / T
+                XCTAssertLessThanOrEqual(peak, Choreography.peakRate * 1.01, "\(ease) at pace \(style.pace)")
+            }
         }
     }
 
@@ -232,6 +234,30 @@ final class ChoreographyTests: XCTestCase {
             XCTAssertLessThan(abs(near.rotation.y), radians(1.5), "\(kind) yaw at the end")
             XCTAssertLessThan(abs(near.curl), 0.03, "\(kind) curl at the end")
             XCTAssertEqual(Arrival.slide(at: arrive.duration, arrive: arrive, canvasAspect: C), .rest)
+        }
+    }
+
+    /// Glide comes in on a bow, never a straight line, and its last stretch
+    /// heads straight in; it never jumps along the way.
+    func testGlideArrivesOnABow() {
+        for canvas: Float in [C, 16.0 / 9] {
+            let arrive = Arrive(kind: .glide)
+            let at = { (a: Double) -> Vec3 in Arrival.slide(at: arrive.duration * a, arrive: arrive, canvasAspect: canvas).offset }
+            let start = at(0), end = Vec3.zero
+            var most: Float = 0
+            var last = start
+            for i in 1...400 {
+                let p = at(Double(i) / 400)
+                // Distance from the straight line between start and rest.
+                let along = start / max(start.length, 1e-6)
+                most = max(most, (p - along * ((p * along).sum())).length)
+                XCTAssertLessThan((p - last).length, 0.08, "glide jumps at \(i) on \(canvas)")
+                last = p
+            }
+            XCTAssertGreaterThan(most, 0.12, "glide flies straight on \(canvas)")
+            let late = at(0.8), later = at(0.9)
+            let heading = (later - late) / max((later - late).length, 1e-6), home = (end - late) / max((end - late).length, 1e-6)
+            XCTAssertGreaterThan((heading * home).sum(), 0.98, "glide does not head straight in at the end on \(canvas)")
         }
     }
 
@@ -340,5 +366,27 @@ final class ChoreographyTests: XCTestCase {
         let held = Choreography(ChoreographyInput(overview: .overview(), shots: shots, arrive: Arrive(kind: .rise), ending: .hold,
                                                   duration: 16, slideAspect: A, canvasAspect: C, style: MotionStyle()))
         XCTAssertGreaterThan(held.emphasis(at: held.duration - 0.05)?.amount ?? 0, 0.9)
+    }
+
+    /// A short hold gets a quicker emphasis that still comes all the way in
+    /// and is gone before the camera leaves; one too short gets none.
+    func testEmphasisFitsItsHold() {
+        func peak(holding hold: Double) -> (most: Float, atLeave: Float) {
+            var shots = [Shot(time: 4, frame: ShotFrame(center: Vec2(0.3, 0.3), size: Vec2(0.2, 0.2)), emphasis: .lift),
+                         Shot(time: 6, frame: ShotFrame(center: Vec2(0.7, 0.6), size: Vec2(0.2, 0.2)), move: .cut)]
+            shots[1].time = 4 + hold
+            let c = Choreography(ChoreographyInput(overview: .overview(), shots: shots, arrive: Arrive(kind: .rise), ending: .hold,
+                                                   duration: 12, slideAspect: A, canvasAspect: C, style: MotionStyle()))
+            var most: Float = 0
+            var t = 3.5
+            while t < 4 + hold { most = max(most, c.emphasis(at: t)?.amount ?? 0); t += 1.0 / 240 }
+            return (most, c.emphasis(at: 4 + hold - 1e-3)?.amount ?? 0)
+        }
+        for hold in [0.7, 0.9, 1.4, 3.0] {
+            let (most, atLeave) = peak(holding: hold)
+            XCTAssertGreaterThan(most, 0.99, "a \(hold) s hold")
+            XCTAssertLessThan(atLeave, 0.01, "a \(hold) s hold")
+        }
+        XCTAssertEqual(peak(holding: 0.5).most, 0, "a half-second hold has no room for one")
     }
 }

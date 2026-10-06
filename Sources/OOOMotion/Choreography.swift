@@ -151,7 +151,7 @@ public struct Choreography: Sendable {
             let interval = land - prevLand
             let gap = interval - max(Choreography.minimumHold, min(0.32 * interval, 1.0))
             let wanted = item.shot.travel ?? Choreography.autoTravel(from: rests[i - 1], to: poses[i], ease: item.shot.ease,
-                                                                       style: input.style, canvasAspect: C)
+                                                                       move: item.shot.move, style: input.style, canvasAspect: C)
             let travel = gap < 0.25 ? max(land - prevLand - 0.05, 0.08) : min(max(wanted, 0.25), gap)
             departs.append(land - travel)
         }
@@ -209,17 +209,46 @@ public struct Choreography: Sendable {
     /// second (OpenScreen caps its zooms near 2.8; past that a move reads as a lurch).
     public static let peakRate = 2.6
 
+    /// The fastest the camera may turn at its peak, in degrees per second:
+    /// past it a turn reads as a whip, however slowly the view itself moves.
+    public static let peakTurn = 40.0
+
     /// A move's natural length in seconds: longer for distant or steeply turned
-    /// framings, never so short that the ease's peak outruns `peakRate`, and
-    /// scaled by the style's pace.
-    public static func autoTravel(from a: CameraPose, to b: CameraPose, ease: EaseKind = .glide,
+    /// framings, never so short that the ease's peak outruns `peakRate` or
+    /// `peakTurn`, and scaled by the style's pace.
+    public static func autoTravel(from a: CameraPose, to b: CameraPose, ease: EaseKind = .glide, move: MoveKind = .glide,
                                   style: MotionStyle, canvasAspect: Float) -> Double {
         let w = canvasAspect.squareRoot()
         let path = ZoomPath(from: a.target, w0: a.height * w, to: b.target, w1: b.height * w, rho: style.rho)
         let turn = max(abs(b.yaw - a.yaw), abs(b.pitch - a.pitch), abs(b.roll - a.roll))
         let raw = 0.62 + 0.34 * abs(path.length) + 0.55 * Double(turn / radians(30))
-        let paced = Double(style.rho) * abs(path.length) * Double(ease.curve.peakSlope) / peakRate
-        return min(max(max(raw, paced) * style.paceScale, 0.45), 4.0)
+        let shortest = shortestTravel(from: a, to: b, ease: ease, move: move, style: style, canvasAspect: canvasAspect)
+        return min(max(max(raw * style.paceScale, shortest), 0.45), 4.0)
+    }
+
+    /// The shortest a move can take without its peak outrunning `peakRate`
+    /// or `peakTurn`, whatever the style's pace.
+    public static func shortestTravel(from a: CameraPose, to b: CameraPose, ease: EaseKind = .glide, move: MoveKind = .glide,
+                                      style: MotionStyle, canvasAspect: Float) -> Double {
+        guard move != .cut else { return 0 }
+        let slope = Double(ease.curve.peakSlope)
+        let zoom = span(from: a, to: b, move: move, rho: style.rho, canvasAspect: canvasAspect) * slope
+        var turn = Double(max(abs(b.yaw - a.yaw), abs(b.pitch - a.pitch), abs(b.roll - a.roll))) * slope
+        // An arc swings out and back on top of the turn, fastest a sixth of the way in.
+        if move == .arc { turn += Double(radians(9) * (0.5 + style.flight)) * 3.75 }
+        return max(zoom / peakRate, turn / Double(radians(Float(peakTurn))))
+    }
+
+    /// How much of the view a move changes, in e-folds: along the flight's
+    /// path, or for a push straight across and in.
+    static func span(from a: CameraPose, to b: CameraPose, move: MoveKind, rho: Float, canvasAspect: Float) -> Double {
+        if move == .push {
+            let h = Double(max(min(a.height, b.height), 1e-4))
+            return max(Double((b.target - a.target).length) / h, Double(abs(logf(max(b.height, 1e-4) / max(a.height, 1e-4)))))
+        }
+        let w = canvasAspect.squareRoot()
+        let path = ZoomPath(from: a.target, w0: a.height * w, to: b.target, w1: b.height * w, rho: rho)
+        return Double(rho) * abs(path.length)
     }
 
     /// Index of the beat governing time `t`: the last one whose move has begun.
@@ -349,17 +378,33 @@ public struct Choreography: Sendable {
         // Coming in just before a landing belongs to the beat being landed on.
         for j in [i, i + 1] where j < beats.count {
             let b = beats[j]
-            guard b.shot.emphasis != .none, !b.isOverview else { continue }
-            let rise = smootherstep(Float((t - (b.land - 0.15)) / 0.55))
-            // It falls before the camera leaves, and before a Leave ending sets
-            // the slide off, so the slide goes as it is.
-            let end: Double? = b.leave < duration - 1e-6 ? b.leave : (ending == .leave ? duration - Self.leaveLength : nil)
-            let fall: Float = end.map { 1 - smootherstep(Float((t - ($0 - 0.45)) / 0.45)) } ?? 1
+            guard b.shot.emphasis != .none, !b.isOverview, let (rises, falls) = emphasisSpan(j) else { continue }
+            let rise = smootherstep(Float((t - rises.lowerBound) / (rises.upperBound - rises.lowerBound)))
+            let fall: Float = falls.map { 1 - smootherstep(Float((t - $0.lowerBound) / ($0.upperBound - $0.lowerBound))) } ?? 1
             let amount = rise * fall
             if amount > 0.001 { return (j, amount) }
         }
         return nil
     }
+
+    /// When beat `i`'s emphasis comes in and goes out, or nil when its hold
+    /// has no room for one. It comes in as the camera lands and falls before
+    /// the camera leaves, and before a Leave ending sets the slide off, so the
+    /// slide goes as it is. In a short hold both are quicker, never cut short.
+    func emphasisSpan(_ i: Int) -> (rise: ClosedRange<Double>, fall: ClosedRange<Double>?)? {
+        let b = beats[i]
+        let start = b.land - 0.15
+        let end: Double? = b.leave < duration - 1e-6 ? b.leave : (ending == .leave ? duration - Self.leaveLength : nil)
+        let room = (end ?? .infinity) - start
+        guard room >= Self.emphasisRoom else { return nil }
+        let rise = min(0.55, 0.45 * room)
+        let fall = min(0.45, 0.30 * room)
+        return (start...(start + rise), end.map { ($0 - fall)...$0 })
+    }
+
+    /// The shortest hold an emphasis comes in for: less, and it would be
+    /// gone before it could be seen.
+    public static let emphasisRoom = 0.75
 
     /// How settled the camera is at `t`, 0…1: 1 while it holds on a framing
     /// (reading along included), 0 while it travels, easing between the two
@@ -382,6 +427,13 @@ public struct Choreography: Sendable {
         }
     }
 
+    /// The time beyond a glance that `text` takes to read: about 0.3 s a
+    /// word, past the first four.
+    public static func readingTime(_ text: String?) -> Double {
+        let words = text?.split(whereSeparator: \.isWhitespace).count ?? 0
+        return max(Double(words) * 0.30 - 1.2, 0)
+    }
+
     /// How long a Leave ending takes, in seconds.
     public static let leaveLength = 1.6
 
@@ -391,12 +443,15 @@ public struct Choreography: Sendable {
     /// A natural length for a video with these shots and no voiceover.
     public static func naturalDuration(shots: [Shot], arrive: Arrive, ending: Ending) -> Double {
         let last = max(shots.map(\.time).max() ?? arrive.end, arrive.end)
-        // A shot that reads along a line holds for its glide.
+        // A shot that reads along a line holds for its glide; one with more
+        // to read than a glance holds for that.
         let lastShot = shots.max { $0.time < $1.time }
         let glide = lastShot?.sweep == nil ? 0 : max(readLead + (lastShot?.sweepTime ?? 1.6) - 1.2, 0)
-        var d = last + (shots.isEmpty ? 2.6 : 2.4) + glide
+        let reading = lastShot?.sweep == nil ? min(readingTime(lastShot?.cue), 2.4) : 0
+        var d = last + (shots.isEmpty ? 2.6 : 2.4) + glide + reading
         switch ending {
-        case .pullBack: d += 2.6
+        // The pull-back's flight comes out of this, so the last shot still holds.
+        case .pullBack: d += 3.4
         case .fade: d += 0.6
         case .leave: d += 1.0
         case .hold: break

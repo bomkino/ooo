@@ -6,7 +6,8 @@
 # plan, a contact sheet, a still at the opening and at every landing, the
 # opening at five angles and three floors, how dark its type lands against
 # the slide as supplied, how its moves fly (motioncheck), and a draft video.
-# Then export timings, and summary.txt with the numbers that matter.
+# Then export timings, and summary.txt with the numbers that matter. Fails
+# when motioncheck finds a problem in any set.
 #
 #   bash scripts/ci-renders.sh [out-dir]
 set -eo pipefail
@@ -79,10 +80,17 @@ echo "== Summary"
     [ -d "$dir" ] || continue
     echo "$name:"
     grep -h 'read the slide in\|^opening:\|^picture' "$dir/plan.txt" | sed 's/^/  /'
-    grep -h '^inkcheck' "$dir/ink.txt" | sed 's/^/  /'
+    sed -n '/one part left out/,$p' "$dir/ink.txt" | sed 's/^/  /'
+    grep -q 'one part left out' "$dir/ink.txt" || grep -h '^inkcheck' "$dir/ink.txt" | sed 's/^/  /'
     grep -h -A20 '^motioncheck' "$dir/motion.txt" | sed 's/^/  /'
   done
   echo "export timings (Good):"; sed 's/^/  /' "$OUT/timings.txt"
   echo "adaptive blur:"; sed 's/^/  /' "$OUT/blur.txt"
   echo "loop:"; tail -1 "$OUT/loop.txt" | sed 's/^/  /'
 } | tee "$OUT/summary.txt"
+
+# No planned move may fly or turn past the limits, cut an emphasis short, or jump.
+if grep -l 'problem(s)' "$OUT"/*/motion.txt; then
+  echo "motioncheck found problems in the sets above"
+  exit 1
+fi

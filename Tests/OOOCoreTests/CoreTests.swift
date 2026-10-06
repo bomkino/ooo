@@ -82,7 +82,8 @@ final class CoreTests: XCTestCase {
         let first = try XCTUnwrap(p.shots.map(\.time).min())
         p.makeRoomForTitle()
         // The tour waits while the title is read, and only once.
-        XCTAssertEqual(p.shots.map(\.time).min() ?? 0, p.arrive.end + OOOProject.titleHold + Director.firstLanding, accuracy: 1e-9)
+        XCTAssertEqual(p.shots.map(\.time).min() ?? 0, p.arrive.end + p.titleHold + Director.firstLanding, accuracy: 1e-9)
+        XCTAssertEqual(p.titleHold, 0.7 + 0.26 * 4, accuracy: 1e-9, "four words take a little under two seconds")
         XCTAssertGreaterThan(p.shots.map(\.time).min() ?? 0, first)
         let moved = p.shots
         p.makeRoomForTitle()
@@ -104,6 +105,12 @@ final class CoreTests: XCTestCase {
         XCTAssertGreaterThan(band.bottom - band.top, 0.07)
         XCTAssertLessThan(band.bottom, 0.45)
         XCTAssertNotNil(OpeningTitleArt.draw(p.title!, width: 540, height: 960, band: band, lightInk: true))
+    }
+
+    /// The sample every window opens on moves within the limits Direct for Me keeps to.
+    func testTheSampleNeverRushes() {
+        let check = MotionCheck(OOOProject.sample.choreography())
+        XCTAssertTrue(check.problems.isEmpty, check.summary)
     }
 
     func testTravelMeasuresWhatMovesOnTheCanvas() {

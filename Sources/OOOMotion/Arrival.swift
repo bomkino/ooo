@@ -137,15 +137,22 @@ public enum Arrival {
             p.opacity = smoothstep(a / 0.1)
 
         case .glide:
+            // It sweeps in on a bow, not a straight line, and comes the last
+            // stretch straight on; the turn finishes after the travel, so it
+            // squares up into place.
             let move = Curves.approach(a, k: 5.5)
             let turn = Curves.approach(a, k: 4.8)
+            let start: Vec3, bow: Vec3
             if canvasAspect < 0.9 {
-                p.offset = Vec3(0, -2.6 * s, -0.3 * s) * (1 - move)
+                start = Vec3(0, -2.6 * s, -0.3 * s)
+                bow = Vec3(0.5 * s, 0, -0.4 * s)
                 p.rotation = Vec3(radians(-38 * s), radians(6 * s), 0) * (1 - turn)
             } else {
-                p.offset = Vec3(3.2 * s, 0, -0.3 * s) * (1 - move)
+                start = Vec3(3.2 * s, 0, -0.3 * s)
+                bow = Vec3(0, -0.4 * s, -0.4 * s)
                 p.rotation = Vec3(0, radians(-40 * s), radians(-2 * s)) * (1 - turn)
             }
+            p.offset = along([start, start * 0.6 + bow, start * 0.15, .zero], move)
             p.curl = 0.18 * (1 - turn)
             p.opacity = smoothstep(a / 0.12)
 
@@ -153,6 +160,28 @@ public enum Arrival {
             break
         }
         return p
+    }
+
+    /// The point `f` (0…1) of the way along a cubic Bézier by distance, not
+    /// by its parameter, so the ease alone sets the speed along the curve.
+    static func along(_ p: [Vec3], _ f: Float) -> Vec3 {
+        func point(_ u: Float) -> Vec3 {
+            let v = 1 - u
+            return p[0] * (v * v * v) + p[1] * (3 * v * v * u) + p[2] * (3 * v * u * u) + p[3] * (u * u * u)
+        }
+        let n = 48
+        var lengths = [Float](repeating: 0, count: n + 1)
+        var last = point(0)
+        for i in 1...n {
+            let q = point(Float(i) / Float(n))
+            lengths[i] = lengths[i - 1] + (q - last).length
+            last = q
+        }
+        let target = clamp01(f) * lengths[n]
+        var i = 1
+        while i < n && lengths[i] < target { i += 1 }
+        let step = max(lengths[i] - lengths[i - 1], 1e-6)
+        return point((Float(i - 1) + clamp01((target - lengths[i - 1]) / step)) / Float(n))
     }
 
     /// The slide sinking away into the dark (`progress` 0…1).

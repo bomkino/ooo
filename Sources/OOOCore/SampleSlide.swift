@@ -24,16 +24,16 @@ public enum SampleSlide {
     /// the numbers, then the note in the corner.
     public static var shots: [Shot] {
         [
-            Shot(time: 3.7, frame: ShotFrame(center: Vec2(0.285, 0.33), size: Vec2(0.5, 0.36)),
+            Shot(time: 4.4, frame: ShotFrame(center: Vec2(0.285, 0.33), size: Vec2(0.5, 0.36)),
                  yaw: -7, pitch: 4, lens: 28, aperture: 0.45, move: .glide, ease: .glide, breathe: 0.55,
                  label: "The headline"),
-            Shot(time: 6.6, frame: ShotFrame(center: Vec2(0.755, 0.33), size: Vec2(0.17, 0.2)),
+            Shot(time: 7.4, frame: ShotFrame(center: Vec2(0.755, 0.33), size: Vec2(0.17, 0.2)),
                  yaw: 11, pitch: -3, lens: 26, aperture: 0.6, move: .arc, ease: .breathe, breathe: 0.6,
                  emphasis: .spotlight, label: "The moment it turned"),
-            Shot(time: 9.6, frame: ShotFrame(center: Vec2(0.29, 0.785), size: Vec2(0.47, 0.19)),
+            Shot(time: 10.4, frame: ShotFrame(center: Vec2(0.29, 0.785), size: Vec2(0.47, 0.19)),
                  yaw: -5, pitch: 7, lens: 28, aperture: 0.45, move: .push, ease: .glide, breathe: 0.5,
                  emphasis: .lift, label: "The numbers"),
-            Shot(time: 12.6, frame: ShotFrame(center: Vec2(0.912, 0.934), size: Vec2(0.07, 0.045)),
+            Shot(time: 14.6, frame: ShotFrame(center: Vec2(0.912, 0.934), size: Vec2(0.07, 0.045)),
                  yaw: 15, pitch: 9, lens: 24, aperture: 0.75, move: .glide, ease: .linger, breathe: 0.7,
                  label: "A note for whoever looks closely"),
         ]
