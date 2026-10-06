@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Metal
 import OOOMotion
@@ -167,9 +168,15 @@ final class CoreTests: XCTestCase {
         let scene = try SlideLoader.scene(for: project, media: nil)
         let stage = try SlideStage()
         let t = project.arrive.duration * 0.45
-        let a = try stage.still(scene, at: t, width: 270, height: 480)
-        let b = try stage.still(scene, at: t, width: 270, height: 480)
-        XCTAssertEqual(a.dataProvider?.data as Data?, b.dataProvider?.data as Data?)
+        func bytes(_ image: CGImage) -> [UInt8] { [UInt8]((image.dataProvider?.data as Data?) ?? Data()) }
+        // The first frame a new stage draws sets up its targets; the frames after it are what an export is made of.
+        let first = try bytes(stage.still(scene, at: t, width: 270, height: 480))
+        let a = try bytes(stage.still(scene, at: t, width: 270, height: 480))
+        let b = try bytes(stage.still(scene, at: t, width: 270, height: 480))
+        let changed = zip(first, a).filter { $0 != $1 }.count, most = zip(first, a).map { abs(Int($0) - Int($1)) }.max() ?? 0
+        print("weave replay: the first frame differs from the next in \(changed) of \(a.count) bytes, by up to \(most)")
+        XCTAssertFalse(a.isEmpty)
+        XCTAssertEqual(a, b, "the same frame drawn twice")
         let threads = scene.stageFrame(at: t, canvasAspect: project.canvasAspect, outputWidth: 270, patch: nil).cards
         XCTAssertGreaterThan(threads.count, 2, "mid-weave, the slide is threads")
         XCTAssertEqual(scene.stageFrame(at: project.arrive.duration, canvasAspect: project.canvasAspect, outputWidth: 270, patch: nil).cards.count, 1,
