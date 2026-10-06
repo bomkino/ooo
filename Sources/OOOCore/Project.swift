@@ -39,6 +39,17 @@ public struct CanvasFormat: Codable, Hashable, Identifiable, Sendable {
     public static let uhd = CanvasFormat(id: "uhd", name: "4K", detail: "Big screens", width: 3840, height: 2160)
 
     public static let presets: [CanvasFormat] = [.reel, .portrait, .square, .landscape, .uhd]
+
+    /// The part of the frame the platform's interface leaves clear, which
+    /// framings sit in: on a Reel the profile covers the top tenth and the
+    /// caption and buttons the bottom fifth.
+    public var safeArea: SafeArea {
+        switch id {
+        case "reel": return .reel
+        case "portrait": return .feed
+        default: return .none
+        }
+    }
 }
 
 /// Where the slide comes from.
@@ -76,12 +87,15 @@ public struct SlideRef: Codable, Hashable, Sendable {
 
     public static let sample = SlideRef(kind: .sample, aspect: 16.0 / 9.0, name: "Sample slide")
 
-    /// How many times closer than the whole slide the camera can go before a
-    /// picture runs out of pixels on a canvas `canvasHeight` pixels tall
-    /// (vector slides never do).
-    public func sharpLimit(canvasHeight: Int, slideHeightOnCanvas: Float) -> Float? {
-        guard kind == .image, let h = pixelHeight else { return nil }
-        return Float(h) / max(Float(canvasHeight) * slideHeightOnCanvas, 1)
+    /// How far past its own pixels a picture is drawn (sharpened; see `SlideSource`).
+    public static let pictureUpscale: Float = 2
+
+    /// The least view height, in slide heights, at which a picture stays
+    /// sharp on a canvas `canvasHeight` pixels tall; nil for vectors, which
+    /// stay sharp at any distance.
+    public func sharpViewHeight(canvasHeight: Int) -> Float? {
+        guard kind == .image, let h = pixelHeight, h > 0 else { return nil }
+        return Float(canvasHeight) / (Float(h) * SlideRef.pictureUpscale)
     }
 }
 
@@ -115,9 +129,55 @@ public struct Voiceover: Codable, Hashable, Sendable {
     public var end: Double { offset + duration }
 }
 
+/// What the slide stands on.
+public enum FloorKind: String, Codable, CaseIterable, Sendable, Identifiable {
+    /// Nothing: the slide floats in front of the backdrop.
+    case none
+    /// A soft, blurred reflection that fades within a short distance.
+    case soft
+    /// A glossy mirror floor.
+    case mirror
+
+    public var id: String { rawValue }
+    public var title: String {
+        switch self {
+        case .none: return "None"
+        case .soft: return "Soft"
+        case .mirror: return "Mirror"
+        }
+    }
+}
+
+/// Words over the opening, set in the band a tall frame leaves above the
+/// slide. They rise in as the slide lands, clear as the camera goes in, and
+/// come back for a Pull Back. Off until someone types them.
+public struct OpeningTitle: Codable, Hashable, Sendable {
+    public var text: String
+    /// A short line above the title, such as a company or a date.
+    public var kicker: String
+    public var face: ReelTitle.Face
+
+    public init(text: String = "", kicker: String = "", face: ReelTitle.Face = .modern) {
+        self.text = text
+        self.kicker = kicker
+        self.face = face
+    }
+
+    public var isEmpty: Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && kicker.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
 /// One OOO document: a slide, the moves over it, and how it all looks.
 public struct OOOProject: Codable, Hashable, Sendable {
     public var version: Int = 1
+    /// The oldest OOO file reader that understands everything in this file.
+    /// A build whose `readerVersion` is lower refuses the file rather than
+    /// quietly exporting it without the settings it can't read.
+    public var minimumReaderVersion: Int? = OOOProject.readerVersion
+    /// The newest files this build reads in full. Raise it, and write it as
+    /// `minimumReaderVersion`, when a setting older builds would drop arrives.
+    public static let readerVersion = 1
     public var slide: SlideRef
     /// The establishing framing the slide arrives into.
     public var overview: Shot
@@ -133,12 +193,16 @@ public struct OOOProject: Codable, Hashable, Sendable {
     public var length: Double?
     public var voice: Voiceover?
     public var seed: UInt32 = 1
+    /// What the slide stands on; nil (documents from before floors) is `defaultFloor`.
+    public var floor: FloorKind?
+    /// Words over the opening; nil or empty for none.
+    public var title: OpeningTitle?
 
-    public init(slide: SlideRef, overview: Shot = .overview(), shots: [Shot] = [], arrive: Arrive = Arrive(kind: .rise),
+    public init(slide: SlideRef, overview: Shot? = nil, shots: [Shot] = [], arrive: Arrive = Arrive(kind: .rise),
                 ending: Ending = .pullBack, style: MotionStyle = MotionStyle(), look: StageLook = OOOProject.defaultLook,
                 backdrop: BackdropSettings = OOOProject.defaultBackdrop, format: CanvasFormat = .reel) {
         self.slide = slide
-        self.overview = overview
+        self.overview = overview ?? .overview(slideAspect: slide.aspect, canvasAspect: format.aspect)
         self.shots = shots
         self.arrive = arrive
         self.ending = ending
@@ -187,6 +251,54 @@ public struct OOOProject: Codable, Hashable, Sendable {
     public var slideAspect: Float { slide.aspect }
     public var canvasAspect: Float { format.aspect }
 
+    public static let defaultFloor: FloorKind = .soft
+    public var floorKind: FloorKind { floor ?? Self.defaultFloor }
+
+    /// The least view height at which the slide stays sharp on this canvas;
+    /// nil for vectors.
+    public var sharpViewHeight: Float? { slide.sharpViewHeight(canvasHeight: format.height) }
+
+    /// How many times closer than the opening the camera can go on this
+    /// slide and canvas and stay sharp; nil when it always can.
+    public var sharpZoom: Float? {
+        guard let h = sharpViewHeight else { return nil }
+        let opening = CameraPose(shot: overview, slideAspect: slideAspect, canvasAspect: canvasAspect, safe: format.safeArea)
+        return opening.height / h
+    }
+
+    /// What Direct for Me plans from: the slide's reading, the voice, the canvas.
+    public func directorInput(_ details: [SlideDetail]) -> DirectorInput {
+        DirectorInput(details: details, words: voice?.words, slideAspect: slideAspect, canvasAspect: canvasAspect,
+                      start: tourStart, safe: format.safeArea, minViewHeight: sharpViewHeight, overview: overview)
+    }
+
+    /// How long the whole slide holds under an opening title before the tour
+    /// sets off, so the words can be read.
+    public static let titleHold = 2.0
+
+    /// When the tour may set off: as the slide lands, or once its title has been read.
+    public var tourStart: Double { arrive.end + ((title?.isEmpty ?? true) ? 0 : Self.titleHold) }
+
+    /// Gives a new opening title time to be read: without a voice to keep
+    /// time with, the whole tour moves later until the first move sets off
+    /// after it. Moves nothing when there is already room.
+    public mutating func makeRoomForTitle() {
+        guard voice == nil, !(title?.isEmpty ?? true), let first = shots.map(\.time).min() else { return }
+        let shift = tourStart + Director.firstLanding - first
+        guard shift > 0.05 else { return }
+        for i in shots.indices { shots[i].time += shift }
+    }
+
+    /// Follows a new slide or canvas shape with the opening, unless someone
+    /// has set the opening themselves.
+    public mutating func adaptOverview(fromSlideAspect A: Float, canvasAspect C: Float) {
+        guard overview.isDefaultOverview(slideAspect: A, canvasAspect: C) else { return }
+        let d = Shot.overview(slideAspect: slideAspect, canvasAspect: canvasAspect)
+        overview.frame = d.frame
+        overview.yaw = d.yaw
+        overview.pitch = d.pitch
+    }
+
     /// The video's length: as set, or long enough for every move and the whole voiceover.
     public var duration: Double {
         if let length { return max(length, 1) }
@@ -197,7 +309,7 @@ public struct OOOProject: Codable, Hashable, Sendable {
 
     public var choreographyInput: ChoreographyInput {
         ChoreographyInput(overview: overview, shots: shots, arrive: arrive, ending: ending, duration: duration,
-                          slideAspect: slideAspect, canvasAspect: canvasAspect, style: style, seed: seed)
+                          slideAspect: slideAspect, canvasAspect: canvasAspect, style: style, seed: seed, safe: format.safeArea)
     }
 
     public func choreography() -> Choreography { Choreography(choreographyInput) }
@@ -217,7 +329,25 @@ public enum ProjectPackage {
     }
 
     public static func decode(_ data: Data) throws -> OOOProject {
-        try JSONDecoder().decode(OOOProject.self, from: data)
+        // Read the version first: a newer file may not decode at all here.
+        struct Header: Decodable { var minimumReaderVersion: Int? }
+        if let needs = (try? JSONDecoder().decode(Header.self, from: data))?.minimumReaderVersion, needs > OOOProject.readerVersion {
+            throw PackageError.newer
+        }
+        var project = try JSONDecoder().decode(OOOProject.self, from: data)
+        project.minimumReaderVersion = OOOProject.readerVersion
+        return project
+    }
+
+    public enum PackageError: LocalizedError {
+        /// The file needs a newer OOO.
+        case newer
+
+        public var errorDescription: String? {
+            switch self {
+            case .newer: return "This project was made with a newer OOO. Choose Check for Updates… in the OOO menu, then open it again."
+            }
+        }
     }
 
     /// Reads a package from disk, returning the project and its media folder.

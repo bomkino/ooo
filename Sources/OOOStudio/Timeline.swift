@@ -30,7 +30,7 @@ struct TimelineView: View {
 
     var body: some View {
         GeometryReader { geo in
-            let scale = TimeScale(width: geo.size.width, duration: session.clock.duration)
+            let scale = TimeScale(width: geo.size.width, duration: session.timelineLength)
             ZStack(alignment: .topLeading) {
                 VStack(spacing: 0) {
                     RulerView(session: session, scale: scale)
@@ -279,7 +279,7 @@ struct BeatBlock: View {
 
     private var title: String {
         if beat.isOverview { return "Whole slide" }
-        return beat.shot.label ?? "Shot \(number ?? 0)"
+        return Director.spokenLabel(beat.shot.label) ?? "Shot \(number ?? 0)"
     }
 
     private var detail: String {
@@ -297,6 +297,7 @@ struct BeatBlock: View {
                 let id = beat.shot.id
                 if dragStart == nil {
                     dragStart = beat.shot.time
+                    session.holdTimeline(true)
                     session.beginEdit("Move Shot")
                     if session.selection != .shot(id) { session.select(.shot(id), show: false) }
                 }
@@ -324,6 +325,7 @@ struct BeatBlock: View {
                 dragStart = nil
                 snappedTo = nil
                 session.commitEdit("Move Shot")
+                session.holdTimeline(false)
             }
     }
 }
@@ -392,6 +394,7 @@ struct VoiceLane: View {
                 guard let voice = session.project.voice else { return }
                 if dragStart == nil {
                     dragStart = voice.offset
+                    session.holdTimeline(true)
                     session.beginEdit("Move Voiceover")
                 }
                 let o = (dragStart ?? 0) + Double(g.translation.width / scale.pointsPerSecond)
@@ -400,6 +403,7 @@ struct VoiceLane: View {
             .onEnded { _ in
                 dragStart = nil
                 session.commitEdit("Move Voiceover")
+                session.holdTimeline(false)
             }
     }
 }

@@ -1,6 +1,8 @@
 # Builds and tests OOO on an Apple silicon runner for every pull request and
-# every change to main, renders a still, a contact sheet and a short draft
-# video with the headless lab, and packages the unsigned app as a disk image.
+# every change to main, renders the review set with the headless lab (test
+# slides at pitch.dog's sizes, taken through the app's journey into a 1080 ×
+# 1920 reel), packages the unsigned app as a disk image, and proves in-app
+# updates install when signed and are refused when tampered with.
 name: build
 
 on:
@@ -28,22 +30,20 @@ jobs:
           system_profiler SPDisplaysDataType | sed -n '1,20p' || true
       - name: Build
         run: swift build -c release
-      - name: Test the camera's maths and the director
+      - name: Test the camera's maths, the director, documents and the renderer
         run: swift test
       - name: Compile every shader
         run: swift run -c release ooo-lab shaders
-      - name: Render a still, a contact sheet and a draft video
+      - name: Render the review set (test slides at 2576 × 1080 and 1920 × 1080 in a 1080 × 1920 reel)
         run: |
-          mkdir -p renders
-          swift run -c release ooo-lab still --t 6.6 --out renders/still.png
-          swift run -c release ooo-lab still --t 13.4 --out renders/still-note.png
-          swift run -c release ooo-lab sheet --out renders/sheet.png
-          swift run -c release ooo-lab sheet --format landscape --out renders/sheet-landscape.png
-          swift run -c release ooo-lab render --quality draft --scale 0.5 --out renders/draft.mp4
-          swift run -c release ooo-lab analyze | tee renders/analyze.txt
-          swift run -c release ooo-lab path --out renders/path.csv
+          bash scripts/ci-renders.sh renders
+          swift run -c release ooo-lab sheet --format landscape --out renders/sample/sheet-landscape.png
+          swift run -c release ooo-lab path --out renders/sample/path.csv
       - name: Package the app
         run: bash scripts/build-app.sh release
+      - name: Test in-app updates (a signed update installs, a tampered one is refused)
+        timeout-minutes: 10
+        run: bash scripts/test-update.sh
       - uses: actions/upload-artifact@v4
         with:
           name: OOO-app

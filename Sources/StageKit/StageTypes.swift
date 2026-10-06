@@ -86,6 +86,15 @@ public struct CardPose: Sendable {
     /// The depth (world z) this card's shadow falls on, instead of the frame's
     /// ground: a cut-out lifted off a sheet throws its shadow onto the sheet.
     public var shadowGround: Float? = nil
+    /// Width (world units) over which the card's edges fade out; 0 = crisp.
+    /// A detail lifted off a slide fades into it rather than cutting a box.
+    public var softEdge: Float = 0
+    /// How much of the surface's light (Print's tooth, Gloss's sheen, Foil,
+    /// Satin) shows, 0…1. At 0 the card shows its media exactly as it is.
+    public var surfaceAmount: Float = 1
+    /// Whether the card shows in a mirror floor. A detail laid exactly over
+    /// its card is already reflected with it.
+    public var reflects = true
 
     /// A plain surface such as a mat, ledge or wire. Colour is sRGB.
     public static func solid(_ rgb: RGB, position: SIMD3<Float>, size: SIMD2<Float>, rotation: SIMD3<Float> = .zero,
@@ -151,6 +160,10 @@ public struct StageFrame: Sendable {
     public var reflection: Float = 0
     /// World y of the reflecting floor.
     public var floorY: Float = -0.5
+    /// How quickly the reflection fades with depth below the floor (per world unit).
+    public var reflectionFade: Float = 3.2
+    /// Extra defocus of the reflection, in output pixels: a soft floor.
+    public var reflectionBlur: Float = 0
     /// Whether a card's shadow may fall on the cards behind it. Right for piles,
     /// whose stacking never changes; scenes whose cards pass one another in depth
     /// turn it off, or a shadow jumps between cards when they trade places.

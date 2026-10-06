@@ -65,8 +65,17 @@ public final class DetailCache: @unchecked Sendable {
             lock.unlock()
             return hit
         }
+        let drawing = pending.contains(plan.key)
         lock.unlock()
         if wait {
+            // Already being drawn ahead: wait for that rather than draw it twice.
+            if drawing {
+                queue.sync {}
+                lock.lock()
+                let hit = patches[plan.key]
+                lock.unlock()
+                if let hit { return hit }
+            }
             return draw(plan)
         }
         lock.lock()
@@ -89,6 +98,30 @@ public final class DetailCache: @unchecked Sendable {
         return fallback
     }
 
+    /// Starts drawing, in the background, the detail a frame that sees
+    /// `footprint` will need, unless it is drawn or on its way.
+    public func prepare(for footprint: ViewFootprint) {
+        guard let plan = plan(for: footprint) else { return }
+        lock.lock()
+        let start = patches[plan.key] == nil && !pending.contains(plan.key)
+        if start { pending.insert(plan.key) }
+        lock.unlock()
+        guard start else { return }
+        queue.async { [weak self] in
+            guard let self else { return }
+            _ = self.draw(plan)
+            self.lock.lock()
+            self.pending.remove(plan.key)
+            self.lock.unlock()
+        }
+    }
+
+    /// Whether `patch` is all the detail a frame that sees `footprint` needs.
+    public func isSharp(_ patch: Patch?, for footprint: ViewFootprint) -> Bool {
+        guard let plan = plan(for: footprint) else { return true }
+        return patch?.key == plan.key
+    }
+
     /// Forgets every detail (the slide changed).
     public func clear() {
         lock.lock()
@@ -102,7 +135,7 @@ public final class DetailCache: @unchecked Sendable {
     func plan(for fp: ViewFootprint) -> Plan? {
         let A = source.aspect
         var needed = fp.pixelsPerUnit * 1.1
-        if let native = source.nativeHeight { needed = min(needed, Float(native)) }
+        if let limit = source.densityLimit { needed = min(needed, limit) }
         guard needed > baseDensity * 1.08 else { return nil }
         let r = fp.region
         let eu = max((r.z - r.x) * 1.35, 0.004), ev = max((r.w - r.y) * 1.35, 0.004)
@@ -119,7 +152,7 @@ public final class DetailCache: @unchecked Sendable {
         region = source.snapped(region)
         let d = Int(ceilf(2 * log2f(needed)))
         var density = powf(2, Float(d) / 2)
-        if let native = source.nativeHeight { density = min(density, Float(native)) }
+        if let limit = source.densityLimit { density = min(density, limit) }
         var h = density * (region.w - region.y)
         var w = h * (region.z - region.x) * A / max(region.w - region.y, 1e-6)
         let longest = max(w, h)

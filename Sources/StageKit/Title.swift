@@ -135,17 +135,23 @@ public struct TitleOverlay: @unchecked Sendable {
 
 /// Draws a title over the finished frame: the dimming behind a title card,
 /// then the words, in one premultiplied pass.
-final class TitleCompositor {
+public final class TitleCompositor {
     private let library: MTLLibrary
     private var cached: (key: Int, width: Int, height: Int, texture: MTLTexture)?
     private let lock = NSLock()
 
-    init() throws {
+    public init() throws {
         library = try GPU.shared.library(named: "title", source: ShaderPrelude.source + Self.source)
     }
 
     func encode(_ cb: MTLCommandBuffer, _ overlay: TitleOverlay, at t: Double, loop: Double, output: MTLTexture) throws {
         let (alpha, drop) = overlay.presence(at: t, loop: loop)
+        try encode(cb, overlay, alpha: alpha, drop: drop, output: output)
+    }
+
+    /// Draws the words over `output` at `alpha`, `drop` (a share of the frame
+    /// height) below their place, for a scene that times its own title.
+    public func encode(_ cb: MTLCommandBuffer, _ overlay: TitleOverlay, alpha: Float, drop: Float, output: MTLTexture) throws {
         guard alpha > 0.002, let words = texture(overlay, output.width, output.height) else { return }
         let gpu = GPU.shared
         let pass = MTLRenderPassDescriptor()

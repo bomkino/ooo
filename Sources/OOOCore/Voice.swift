@@ -141,12 +141,18 @@ public enum Transcriber {
     public enum Failure: Error, CustomStringConvertible {
         case notAllowed
         case unavailable
+        /// This Mac can't recognise the language without sending the
+        /// recording to Apple, which OOO never does.
+        case notOnDevice(String)
         case nothingHeard
 
         public var description: String {
             switch self {
             case .notAllowed: return "OOO isn't allowed to recognise speech. Turn it on in System Settings › Privacy & Security › Speech Recognition."
             case .unavailable: return "Speech recognition isn't available for this language on this Mac."
+            case .notOnDevice(let language):
+                return "This Mac can't recognise \(language) speech by itself, and OOO never sends your recording away. "
+                    + "Add the language for dictation in System Settings › Keyboard › Dictation, then choose Transcribe again."
             case .nothingHeard: return "No words were heard in the recording."
             }
         }
@@ -168,7 +174,12 @@ public enum Transcriber {
         let request = SFSpeechURLRecognitionRequest(url: url)
         request.shouldReportPartialResults = false
         request.taskHint = .dictation
-        if recognizer.supportsOnDeviceRecognition { request.requiresOnDeviceRecognition = true }
+        // Only ever on this Mac: the Voice panel promises nothing leaves it.
+        guard recognizer.supportsOnDeviceRecognition else {
+            let name = Locale.current.localizedString(forIdentifier: recognizer.locale.identifier) ?? recognizer.locale.identifier
+            throw Failure.notOnDevice(name)
+        }
+        request.requiresOnDeviceRecognition = true
         request.addsPunctuation = true
         let once = Once()
         let words: [SpokenWord] = try await withCheckedThrowingContinuation { cont in

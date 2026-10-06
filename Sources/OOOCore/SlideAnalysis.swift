@@ -13,8 +13,9 @@ public enum SlideAnalysis {
     public static func read(_ source: SlideSource, side: Int = 3200) throws -> [SlideDetail] {
         guard let whole = source.renderWhole(side: side) else { throw RenderError.io("Could not draw the slide.") }
         var found = try lines(in: whole)
-        // A picture has no more detail to give than its pixels.
-        if source.nativeHeight.map({ $0 > whole.height + whole.height / 4 }) ?? true {
+        // A picture has no more detail to give than its (sharpened) pixels;
+        // read twice its size, its small print comes out of the blur.
+        if source.densityLimit.map({ $0 > Float(whole.height) * 1.25 }) ?? true {
             let tiles: [SIMD4<Float>] = [(0, 0), (1, 0), (0, 1), (1, 1)].map { c, r in
                 let u0: Float = c == 0 ? 0 : 0.44, v0: Float = r == 0 ? 0 : 0.44
                 return SIMD4(u0, v0, u0 + 0.56, v0 + 0.56)

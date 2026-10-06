@@ -53,11 +53,16 @@ public struct FinishFrame: Sendable {
     public var keepAlpha: Bool
     /// True when the destination stores sRGB-encoded values in a UNORM format.
     public var encodeSRGB: Bool
+    /// The share of bloom kept where the input's alpha is 1, when alpha holds
+    /// how much of each pixel the subject covers: bloom then lights the room
+    /// around the subject without laying a veil over it.
+    public var bloomOnSubject: Float
 
-    public init(frameIndex: UInt32, keepAlpha: Bool = false, encodeSRGB: Bool = true) {
+    public init(frameIndex: UInt32, keepAlpha: Bool = false, encodeSRGB: Bool = true, bloomOnSubject: Float = 1) {
         self.frameIndex = frameIndex
         self.keepAlpha = keepAlpha
         self.encodeSRGB = encodeSRGB
+        self.bloomOnSubject = bloomOnSubject
     }
 }
 
@@ -150,7 +155,7 @@ public final class Finisher {
             grain: settings.grain, grainSize: settings.grainSize,
             aberration: settings.aberration, frame: Float(frame.frameIndex % 100_000),
             keepAlpha: frame.keepAlpha ? 1 : 0, encodeSRGB: frame.encodeSRGB ? 1 : 0,
-            pad0: 0, pad1: 0)
+            bloomOnSubject: frame.bloomOnSubject, pad1: 0)
         enc.setFragmentBytes(&u, length: MemoryLayout<FinishUniforms>.stride, index: 0)
         enc.setFragmentTexture(input, index: 0)
         enc.setFragmentTexture(useBloom ? chain[0] : input, index: 1)
@@ -165,7 +170,7 @@ public final class Finisher {
         var bloom: Float, vignette: Float, grain: Float, grainSize: Float
         var aberration: Float, frame: Float
         var keepAlpha: Float, encodeSRGB: Float
-        var pad0: Float, pad1: Float
+        var bloomOnSubject: Float, pad1: Float
     }
 
     static let source = #"""
@@ -175,7 +180,7 @@ struct FinishU {
     float bloom, vignette, grain, grainSize;
     float aberration, frame;
     float keepAlpha, encodeSRGB;
-    float pad0, pad1;
+    float bloomOnSubject, pad1;
 };
 
 inline float3 down13(texture2d<float> t, sampler s, float2 uv, float2 tx) {
@@ -269,6 +274,7 @@ fragment float4 finish_composite(FSOut in [[stage_in]], constant FinishU &u [[bu
     }
     if (u.bloom > 0.0) {
         float3 bl = bloomTex.sample(s, uv).rgb * (u.bloom * 0.9);
+        bl *= mix(1.0, u.bloomOnSubject, clamp(c.a, 0.0, 1.0));
         c.rgb += bl;
         if (u.keepAlpha > 0.5) c.a = clamp(c.a + luma(bl), 0.0, 1.0);
     }

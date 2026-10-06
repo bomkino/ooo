@@ -45,10 +45,20 @@ public struct CameraPose: Hashable, Sendable {
         return (target, max(height, 0.002))
     }
 
-    public init(shot: Shot, slideAspect: Float, canvasAspect: Float) {
-        let f = CameraPose.framing(shot.frame, slideAspect: slideAspect, canvasAspect: canvasAspect)
-        self.init(target: f.target, height: f.height, yaw: radians(shot.yaw), pitch: radians(shot.pitch),
-                  roll: radians(shot.roll), fov: shot.lens, aperture: shot.aperture)
+    /// The camera on a shot: its region fitted into the safe part of the
+    /// canvas as seen from the shot's angle (see `Composer`).
+    public init(shot: Shot, slideAspect: Float, canvasAspect: Float, safe: SafeArea = .none) {
+        let yaw = radians(shot.yaw), pitch = radians(shot.pitch), roll = radians(shot.roll)
+        let f = Composer.fit(shot.frame, yaw: yaw, pitch: pitch, roll: roll, fov: shot.lens,
+                             slideAspect: slideAspect, canvasAspect: canvasAspect, safe: safe)
+        self.init(target: f.target, height: f.height, yaw: yaw, pitch: pitch, roll: roll, fov: shot.lens, aperture: shot.aperture)
+    }
+
+    /// The camera where a shot's glide along its line ends.
+    public init(sweepEndOf shot: Shot, slideAspect: Float, canvasAspect: Float, safe: SafeArea = .none) {
+        var end = shot
+        end.frame.center += shot.sweep ?? .zero
+        self.init(shot: end, slideAspect: slideAspect, canvasAspect: canvasAspect, safe: safe)
     }
 
     /// The frame this pose shows square-on (its angles ignored), for capturing

@@ -1,6 +1,7 @@
 import BackdropKit
 import CoreGraphics
 import Foundation
+import Metal
 import OOOCore
 import OOOMotion
 import RenderCore
@@ -14,9 +15,25 @@ import StageKit
 //   ooo-lab render  --out v.mp4 [--quality draft|good|best] [--scale 0.5] [--codec h264|hevc]
 //   ooo-lab analyze                         read the slide and plan a tour
 //   ooo-lab path    [--out path.csv]        the camera's path, sampled
+//   ooo-lab landings --out dir              a still at the opening and at every landing
+//   ooo-lab fixture --kind wide|standard --out f.png|f.pdf [--scale 2]
+//                                           draw a test slide: 2576 × 1080 or 1920 × 1080
+//   ooo-lab openings --out grid.png         the opening at five angles (across) and
+//                                           three floors (down: none, soft, mirror)
+//   ooo-lab titles --out grid.png           the opening title in four faces, and in time
+//   ooo-lab blurcheck [--quality good]      adaptive motion blur against full samples:
+//                                           samples taken, GPU time, PSNR
+//   ooo-lab render --full-blur ...          every frame at the quality's full samples
+//   ooo-lab inkcheck                        at every landing, how dark the type and how
+//                                           light the paper come out against the slide
+//   ooo-lab loopcheck [--ending leave]      the step from the last frame back to the
+//                                           first against the steps either side of it
 //
-// Every command takes --project <file.ooo> (default: the sample) and
-// --format reel|portrait|square|landscape.
+// Every command takes --project <file.ooo> (default: the sample), or
+// --slide <file> (a PDF or picture, read and directed as the app would on a
+// drop), --format reel|portrait|square|landscape, --floor none|soft|mirror,
+// --ending hold|pullBack|fade|leave and --title "words" [--kicker "line above"]
+// [--face modern|grotesk|editorial|poster].
 
 let args = CommandLine.arguments
 func value(_ name: String) -> String? {
@@ -40,7 +57,52 @@ if let path = value("--project") {
 }
 if let id = value("--format") {
     guard let f = CanvasFormat.presets.first(where: { $0.id == id }) else { fail("unknown format \(id)") }
+    let (A, C) = (project.slideAspect, project.canvasAspect)
     project.format = f
+    project.adaptOverview(fromSlideAspect: A, canvasAspect: C)
+}
+if let text = value("--title") {
+    var t = OpeningTitle(text: text, kicker: value("--kicker") ?? "")
+    if let f = value("--face") {
+        guard let face = ReelTitle.Face(rawValue: f) else { fail("unknown face \(f)") }
+        t.face = face
+    }
+    project.title = t
+    project.makeRoomForTitle()
+}
+if let f = value("--floor") {
+    guard let floor = FloorKind(rawValue: f) else { fail("unknown floor \(f)") }
+    project.floor = floor
+}
+if let e = value("--ending") {
+    guard let ending = Ending(rawValue: e) else { fail("unknown ending \(e)") }
+    project.ending = ending
+}
+if let path = value("--slide") {
+    // The app's drop: copy the file in, read it, plan a tour.
+    let url = URL(fileURLWithPath: path)
+    guard var ref = SlideSource.inspect(url) else { fail("not a slide: \(path)") }
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("ooo-lab-\(UUID().uuidString)", isDirectory: true)
+    let file = "slide." + url.pathExtension.lowercased()
+    do {
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: url, to: dir.appendingPathComponent(file))
+    } catch {
+        fail("could not copy \(path): \(error)")
+    }
+    ref.file = file
+    let (format, floor, title, ending) = (project.format, project.floor, project.title, project.ending)
+    project = OOOProject(slide: ref, format: format)
+    project.floor = floor
+    project.title = title
+    project.ending = ending
+    media = dir
+    do {
+        let details = try SlideAnalysis.read(SlideSource(ref: ref, media: dir))
+        project.shots = Director.shots(project.directorInput(details))
+    } catch {
+        fail("could not read \(path): \(error)")
+    }
 }
 
 func loadScene() -> SlideScene {
@@ -108,6 +170,7 @@ case "render":
     if let q = value("--quality"), let quality = ExportQuality(rawValue: q) { options.quality = quality }
     if let s = value("--scale"), let scale = Double(s) { options.scale = scale }
     if let c = value("--codec"), let codec = VideoCodec(rawValue: c) { options.codec = codec }
+    if args.contains("--full-blur") { options.adaptiveBlur = false }
     var voice: AudioTrack?
     if let v = project.voice, let media {
         voice = try? VoiceLoader.decode(media.appendingPathComponent(v.file))
@@ -139,13 +202,260 @@ case "analyze":
         for d in details {
             print(d.kind.rawValue, String(format: "%.3f %.3f %.3f %.3f", d.frame.minU, d.frame.minV, d.frame.maxU, d.frame.maxV), d.text)
         }
-        let shots = Director.shots(DirectorInput(details: details, slideAspect: project.slideAspect,
-                                                 canvasAspect: project.canvasAspect, start: project.arrive.end))
-        for s in shots {
-            print(String(format: "shot %.2f s", s.time), s.label ?? "", s.move.rawValue, s.ease.rawValue, s.emphasis.rawValue)
-        }
+        printPlan(Director.shots(project.directorInput(details)))
     } catch {
         fail("analyze failed: \(error)")
+    }
+
+case "landings":
+    // The opening, then each framing a moment after the camera lands on it.
+    let scene = loadScene()
+    let dir = URL(fileURLWithPath: value("--out") ?? "landings", isDirectory: true)
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let samples = Int(value("--samples") ?? "") ?? 12
+    let beats = scene.choreography.beats
+    var moments: [(String, Double)] = []
+    if project.arrive.kind != .none { moments.append(("arrive", project.arrive.duration * 0.5)) }
+    for (i, beat) in beats.enumerated() {
+        let t = min(beat.land + min(0.7, beat.hold * 0.45), scene.duration - 0.02)
+        let name = beat.isOverview ? (i == 0 ? "opening" : "ending") : String(format: "shot-%02d", i)
+        moments.append((name, t))
+    }
+    do {
+        let stage = try SlideStage()
+        for (name, t) in moments {
+            let img = try stage.still(scene, at: t, width: project.format.width, height: project.format.height, samples: samples)
+            try ImageOutput.writeJPEG(img, to: dir.appendingPathComponent(name + ".jpg"), quality: 0.9)
+            print(String(format: "landing %@ t %.2f", name, t))
+        }
+    } catch {
+        fail("landings failed: \(error)")
+    }
+
+case "openings":
+    // The opening as the slide comes to rest, at five angles and three floors.
+    let base = loadScene()
+    let out = URL(fileURLWithPath: value("--out") ?? "openings.png")
+    let yaws: [Float] = [-9, -20, -28, -34, -40]
+    let floors: [FloorKind] = [.none, .soft, .mirror]
+    let cw = project.format.width / 3, ch = project.format.height / 3
+    do {
+        let stage = try SlideStage()
+        guard let ctx = CGContext(data: nil, width: cw * yaws.count, height: ch * floors.count, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { fail("no context") }
+        for (r, floor) in floors.enumerated() {
+            for (c, yaw) in yaws.enumerated() {
+                var p = project
+                p.overview.yaw = yaw
+                p.floor = floor
+                p.shots = []
+                p.length = p.arrive.end + 3
+                let scene = SlideScene(project: p, base: base.base, details: base.details)
+                let img = try stage.still(scene, at: p.arrive.end + 1.2, width: cw, height: ch, samples: 4)
+                ctx.draw(img, in: CGRect(x: c * cw, y: (floors.count - 1 - r) * ch, width: cw, height: ch))
+            }
+        }
+        try ImageOutput.writePNG(ctx.makeImage()!, to: out)
+        print("openings \(out.path): yaw \(yaws) across, floors \(floors.map(\.rawValue)) down")
+    } catch {
+        fail("openings failed: \(error)")
+    }
+
+case "titles":
+    // The opening title in each face (top row), and in time (bottom row:
+    // rising in, held, clearing as the camera sets off, back for the Pull Back).
+    let base = loadScene()
+    let out = URL(fileURLWithPath: value("--out") ?? "titles.png")
+    let cw = project.format.width / 3, ch = project.format.height / 3
+    var words = project.title ?? OpeningTitle(text: "One slide, obsessed over.", kicker: "pitch.dog")
+    if words.isEmpty { words = OpeningTitle(text: "One slide, obsessed over.", kicker: "pitch.dog") }
+    do {
+        let stage = try SlideStage()
+        guard let ctx = CGContext(data: nil, width: cw * 4, height: ch * 2, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { fail("no context") }
+        for (c, face) in ReelTitle.Face.allCases.enumerated() {
+            var p = project
+            p.title = words
+            p.title?.face = face
+            p.makeRoomForTitle()
+            let scene = SlideScene(project: p, base: base.base, details: base.details)
+            let rest = (scene.choreography.beats.first?.land ?? 2) + 1.0
+            let img = try stage.still(scene, at: rest, width: cw, height: ch, samples: 4)
+            ctx.draw(img, in: CGRect(x: c * cw, y: ch, width: cw, height: ch))
+        }
+        var p = project
+        p.title = words
+        p.makeRoomForTitle()
+        let scene = SlideScene(project: p, base: base.base, details: base.details)
+        let beats = scene.choreography.beats
+        let land = beats.first?.land ?? 2
+        let leave = beats.count > 1 ? beats[1].depart + 0.2 : land + 2
+        let back = (beats.count > 2 && beats.last?.isOverview == true) ? (beats.last?.land ?? scene.duration) + 0.3 : scene.duration - 0.2
+        for (c, t) in [land - 0.2, land + 1.0, leave, back].enumerated() {
+            let img = try stage.still(scene, at: t, width: cw, height: ch, samples: 4)
+            ctx.draw(img, in: CGRect(x: c * cw, y: 0, width: cw, height: ch))
+        }
+        try ImageOutput.writePNG(ctx.makeImage()!, to: out)
+        print("titles \(out.path): faces \(ReelTitle.Face.allCases.map(\.rawValue)) across the top; rising, held, clearing, back below")
+    } catch {
+        fail("titles failed: \(error)")
+    }
+
+case "blurcheck":
+    // Adaptive motion blur against every frame at full samples: how many
+    // samples each frame took, how long the GPU spent, and how far apart the
+    // pictures are (PSNR; above 45 dB nobody can tell).
+    let scene = loadScene()
+    let quality = ExportQuality(rawValue: value("--quality") ?? "good") ?? .good
+    let w = project.format.width, h = project.format.height
+    let step = Double(value("--step") ?? "") ?? 0.2
+    do {
+        let stage = try SlideStage()
+        let gpu = GPU.shared
+        func frame(_ t: Double, adaptive: Bool) throws -> (pixels: [UInt8], samples: Int, ms: Double) {
+            let out = gpu.makeTexture(width: w, height: h, format: .bgra8Unorm, usage: [.renderTarget, .shaderRead], storage: .shared)
+            guard let cb = gpu.queue.makeCommandBuffer() else { throw RenderError.io("GPU unavailable.") }
+            let n = try stage.encode(cb, scene: scene, at: t, output: out, samples: quality.samples,
+                                     frameIndex: UInt32(t * Double(project.fps)), waitForDetail: true, adaptive: adaptive)
+            cb.commit()
+            cb.waitUntilCompleted()
+            var px = [UInt8](repeating: 0, count: w * h * 4)
+            out.getBytes(&px, bytesPerRow: w * 4, from: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0)
+            return (px, n, (cb.gpuEndTime - cb.gpuStartTime) * 1000)
+        }
+        // Warm the pipelines and the close-ups first, so timings compare like with like.
+        _ = try frame(scene.duration / 2, adaptive: false)
+        var rows: [String] = []
+        var worst = Double.infinity, sum = 0.0, count = 0, ones = 0, taken = 0
+        var msAdaptive = 0.0, msFull = 0.0
+        for t in stride(from: 0, to: scene.duration, by: step) {
+            let full = try frame(t, adaptive: false)
+            let fast = try frame(t, adaptive: true)
+            var se = 0.0
+            for i in stride(from: 0, to: full.pixels.count, by: 4) {
+                for c in 0..<3 {
+                    let d = Double(full.pixels[i + c]) - Double(fast.pixels[i + c])
+                    se += d * d
+                }
+            }
+            let mse = se / Double(w * h * 3)
+            let psnr = mse == 0 ? 99 : 10 * log10(255 * 255 / mse)
+            worst = min(worst, psnr)
+            sum += min(psnr, 99)
+            count += 1
+            taken += fast.samples
+            if fast.samples == 1 { ones += 1 }
+            msAdaptive += fast.ms
+            msFull += full.ms
+            rows.append(String(format: "%6.2f s  %2d samples  %5.1f dB  %5.1f ms vs %5.1f ms", t, fast.samples, psnr, fast.ms, full.ms))
+        }
+        rows.forEach { print($0) }
+        print(String(format: "blur %@: %d frames, %.1f samples a frame on average (of %d), %d%% held at one; GPU %.0f ms vs %.0f ms (%.0f%% saved); PSNR worst %.1f dB, mean %.1f dB",
+                     quality.rawValue, count, Double(taken) / Double(max(count, 1)), quality.samples, 100 * ones / max(count, 1),
+                     msAdaptive, msFull, 100 * (1 - msAdaptive / max(msFull, 1e-6)), worst, sum / Double(max(count, 1))))
+    } catch {
+        fail("blurcheck failed: \(error)")
+    }
+
+case "inkcheck":
+    // The slide must read as it is: at every landing, the darkest ink and the
+    // lightest paper inside the frame's clear area (1st and 99th percentiles
+    // of luma, 0…255) against the same measure of the slide itself.
+    let scene = loadScene()
+    let w = project.format.width, h = project.format.height
+    func luma(_ img: CGImage, box: CGRect) -> [UInt8] {
+        let iw = img.width, ih = img.height
+        var px = [UInt8](repeating: 0, count: iw * ih * 4)
+        guard let ctx = CGContext(data: &px, width: iw, height: ih, bitsPerComponent: 8, bytesPerRow: iw * 4,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return [] }
+        ctx.draw(img, in: CGRect(x: 0, y: 0, width: iw, height: ih))
+        var out: [UInt8] = []
+        for y in Int(box.minY * CGFloat(ih))..<Int(box.maxY * CGFloat(ih)) {
+            for x in Int(box.minX * CGFloat(iw))..<Int(box.maxX * CGFloat(iw)) {
+                let i = (y * iw + x) * 4
+                let r = Double(px[i]), g = Double(px[i + 1]), b = Double(px[i + 2])
+                let l: Double = 0.2126 * r + 0.7152 * g + 0.0722 * b
+                out.append(UInt8(min(255.0, l.rounded())))
+            }
+        }
+        return out.sorted()
+    }
+    func percentile(_ v: [UInt8], _ p: Double) -> Int { v.isEmpty ? 0 : Int(v[min(v.count - 1, Int(Double(v.count) * p))]) }
+    do {
+        guard let whole = try SlideSource(ref: project.slide, media: media).renderWhole() else { fail("could not draw the slide") }
+        let source = luma(whole, box: CGRect(x: 0, y: 0, width: 1, height: 1))
+        let (inkSource, paperSource) = (percentile(source, 0.01), percentile(source, 0.99))
+        print("source ink \(inkSource) paper \(paperSource)")
+        let safe = project.format.safeArea
+        let box = CGRect(x: CGFloat(safe.left), y: CGFloat(safe.top), width: CGFloat(1 - safe.left - safe.right),
+                         height: CGFloat(1 - safe.top - safe.bottom))
+        let stage = try SlideStage()
+        var worst = 0
+        for (i, beat) in scene.choreography.beats.enumerated() where !beat.isOverview {
+            let t = min(beat.land + min(0.7, beat.hold * 0.45), scene.duration - 0.02)
+            let img = try stage.still(scene, at: t, width: w, height: h, samples: 1)
+            let v = luma(img, box: box)
+            let (ink, paper) = (percentile(v, 0.01), percentile(v, 0.99))
+            worst = max(worst, ink - inkSource)
+            print(String(format: "shot-%02d t %.2f  ink %3d (%+d)  paper %3d (%+d)  surface %.2f", i, t, ink, ink - inkSource,
+                         paper, paper - paperSource, scene.surfaceAmount(at: t)))
+        }
+        print("inkcheck: ink at most \(worst) above the slide's own")
+    } catch {
+        fail("inkcheck failed: \(error)")
+    }
+
+case "loopcheck":
+    // A platform plays a reel on repeat: the step from the last frame back to
+    // the first should be no bigger than the steps between neighbouring frames.
+    project.look.finish.grain = 0
+    let scene = loadScene()
+    let w = project.format.width / 2, h = project.format.height / 2
+    let fps = Double(max(project.fps, 1))
+    let n = max(2, Int((scene.duration * fps).rounded()))
+    do {
+        let stage = try SlideStage()
+        func pixels(_ i: Int) throws -> [UInt8] {
+            let img = try stage.still(scene, at: Double(i) / fps, width: w, height: h, samples: 1)
+            var px = [UInt8](repeating: 0, count: w * h * 4)
+            guard let ctx = CGContext(data: &px, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return px }
+            ctx.draw(img, in: CGRect(x: 0, y: 0, width: w, height: h))
+            return px
+        }
+        func psnr(_ a: [UInt8], _ b: [UInt8]) -> Double {
+            var se = 0.0
+            for i in stride(from: 0, to: a.count, by: 4) {
+                for c in 0..<3 {
+                    let d = Double(a[i + c]) - Double(b[i + c])
+                    se += d * d
+                }
+            }
+            let mse = se / Double(w * h * 3)
+            return mse == 0 ? 99 : 10 * log10(255 * 255 / mse)
+        }
+        let frames = try [n - 2, n - 1, 0, 1].map(pixels)
+        let before = psnr(frames[0], frames[1]), wrap = psnr(frames[1], frames[2]), after = psnr(frames[2], frames[3])
+        print(String(format: "loop %@, %d frames: last two %.1f dB, last to first %.1f dB, first two %.1f dB",
+                     project.ending.rawValue, n, before, wrap, after))
+        print(wrap >= min(before, after) - 3 ? "loopcheck: closes" : "loopcheck: jumps")
+    } catch {
+        fail("loopcheck failed: \(error)")
+    }
+
+case "fixture":
+    guard let kind = Fixture(rawValue: value("--kind") ?? "wide") else { fail("unknown fixture; use wide or standard") }
+    let out = URL(fileURLWithPath: value("--out") ?? "\(kind.rawValue).png")
+    let scale = CGFloat(Double(value("--scale") ?? "") ?? 1)
+    do {
+        try kind.write(to: out, scale: scale)
+        print("fixture \(kind.rawValue) \(out.path)")
+    } catch {
+        fail("fixture failed: \(error)")
     }
 
 case "path":
@@ -168,9 +478,29 @@ case "path":
 default:
     print("""
     ooo-lab — headless renders and checks for OOO
-      shaders | still | sheet | render | analyze | path
-      --project file.ooo  --format reel|portrait|square|landscape  --out path
+      shaders | still | sheet | render | analyze | path | landings | openings | titles | blurcheck | fixture
+      --project file.ooo | --slide file.pdf|png  --format reel|portrait|square|landscape  --floor none|soft|mirror  --out path
     """)
+}
+
+/// The tour, one line a shot: when it lands, how close it goes (times closer
+/// than the opening, and how tall the slide's text stands on the canvas),
+/// how it moves.
+func printPlan(_ shots: [Shot]) {
+    let A = project.slideAspect, C = project.canvasAspect, safe = project.format.safeArea
+    let opening = CameraPose(shot: project.overview, slideAspect: A, canvasAspect: C, safe: safe)
+    print(String(format: "opening: the slide stands %.0f%% of the frame's height", 100 / opening.height))
+    if let h = project.slide.pixelHeight, let zoom = project.sharpZoom {
+        print(String(format: "picture %d px tall: sharp to %.1f× closer than the opening", h, zoom))
+    }
+    for s in shots.sorted(by: { $0.time < $1.time }) {
+        let pose = CameraPose(shot: s, slideAspect: A, canvasAspect: C, safe: safe)
+        var line = String(format: "shot %6.2f s  %5.2f×  slide %4.0f%% of frame  centre %.3f %.3f  size %.3f %.3f  ", s.time,
+                          opening.height / pose.height, 100 / pose.height, s.frame.center.x, s.frame.center.y, s.frame.size.x, s.frame.size.y)
+        line += "\(s.move.rawValue) \(s.ease.rawValue) \(s.emphasis.rawValue)"
+        if let sweep = s.sweep { line += String(format: " reads along %.3f over %.1f s", sweep.x, s.sweepTime ?? 0) }
+        print(line + "  \(s.label ?? "")")
+    }
 }
 
 final class ErrorBox: @unchecked Sendable {

@@ -32,6 +32,7 @@ struct CardU {
     float4 window;      // the region of the whole media this texture holds: u0, v0, u1, v1
     float4 spot;        // spotlight region in the whole card's uv: u0, v0, u1, v1
     float4 spotP;       // spotlight dim (+ outside, − inside), feather, own shadow ground (1), its z
+    float4 soft;        // x: width (world) over which the card's edges fade out; 0 = crisp
 };
 
 // 1 inside a card's spotlight region, 0 outside, with a soft edge.
@@ -154,7 +155,9 @@ vertex CardVOut card_vertex(uint vid [[vertex_id]],
     // the shade follows only where the surface is free to fold.
     float pin = smoothstep(0.0, 0.18, sin(PI * g.x)) * smoothstep(0.0, 0.18, sin(PI * g.y));
     o.cavity = clamp(lap * min(w, h) * 0.15, 0.0, 1.0) * pin;
-    o.viewDist = length(world.xyz - f.eye.xyz);
+    // Depth along the view, not distance from the eye: a lens focuses on a
+    // plane, so a card square to the camera is sharp to its corners.
+    o.viewDist = o.position.w;
     return o;
 }
 
@@ -255,6 +258,7 @@ fragment float4 card_fragment(CardVOut in [[stage_in]], bool facing [[front_faci
     coc += c.fx.y;
     float feather = pxWorld * (0.85 + coc * 0.9);
     float mask = 1.0 - smoothstep(-feather, feather, d);
+    if (c.soft.x > 0.0) mask *= smoothstep(0.0, c.soft.x, -d);
     float rim = bandRim(in.uv, c);
     if (c.band.y > 0.0) {
         float core = c.band.x;
@@ -314,6 +318,7 @@ fragment float4 card_fragment(CardVOut in [[stage_in]], bool facing [[front_faci
         rgb = mix(stock, rgb * 0.25, 0.18);
         alpha = 1.0;
     } else if (surface >= 1) {
+        float3 unlit = rgb;
         float ndl = dot(N, L);
         float wrap = clamp((ndl + 0.35) / 1.35, 0.0, 1.0);
         float shade = mix(0.80, 1.06, wrap);
@@ -371,6 +376,9 @@ fragment float4 card_fragment(CardVOut in [[stage_in]], bool facing [[front_faci
             rgb *= (1.0 - 0.28 * in.cavity) * 0.96;
             rgb += keep * (0.09 * band + 0.75 * float3(1.0, 0.97, 0.94) * charlie * vis * NL);
         }
+        // While a slide is read, its surface steps back and the media shows
+        // as it is: a sheen added over black type would turn it grey.
+        rgb = mix(unlit, rgb, c.soft.y);
         // Edge catch light: a hairline along the rim facing the light.
         float edge = (1.0 - smoothstep(0.0, pxWorld * 2.2, abs(d + pxWorld * 1.2)));
         float facing = clamp(dot(normalize(float3(local, 0.0)), float3(L.xy, 0.0)) * 0.5 + 0.5, 0.0, 1.0);
@@ -420,7 +428,7 @@ vertex ShadowVOut shadow_vertex(uint vid [[vertex_id]],
     float centreHeight = max((c.model * float4(0.0, 0.0, 0.0, 1.0)).z - groundZ, 0.0);
     float reach = max(w, h) * 0.5;
     float sigmaMax = mode.z + mode.w * (centreHeight + reach);
-    float margin = max(mode.y, sigmaMax * 3.2);
+    float margin = max(max(mode.y, sigmaMax * 3.2), c.soft.x > 0.0 ? max(c.soft.x * 3.6, min(w, h) * 1.3) : 0.0);
     float2 local = float2((g.x - 0.5) * (w + 2.0 * margin), (0.5 - g.y) * (h + 2.0 * margin));
     float4 world = c.model * float4(local, 0.0, 1.0);
     float height = max(world.z - groundZ, 0.0);
@@ -447,6 +455,13 @@ fragment float4 shadow_fragment(ShadowVOut in [[stage_in]],
     float2 b = abs(in.local) - float2(w, h) * 0.5;
     d = max(d, max(b.x, b.y));
     float sigma = max(in.sigma, 1e-4);
+    // A card whose edges fade casts a diffuse shadow from inside its solid
+    // middle, as soft as a good part of its size, so it reads as depth under
+    // the detail rather than the outline of a box.
+    if (c.soft.x > 0.0) {
+        d += c.soft.x * 1.0;
+        sigma = max(sigma, max(c.soft.x * 1.1, min(w, h) * 0.4));
+    }
     float outside = max(d, 0.0);
     float a = exp(-outside * outside / (2.0 * sigma * sigma));
     // Soften the inside slightly so thin shadows do not look cut out.
@@ -463,13 +478,15 @@ fragment float4 accumulate_fragment(FSOut in [[stage_in]], constant float4 &weig
     return src.sample(s, in.uv) * weight.x;
 }
 
+// The backdrop under the scene. It adds no coverage, so the scene's alpha
+// says how much of each pixel the cards cover (the finish keeps bloom off them).
 fragment float4 copy_fragment(FSOut in [[stage_in]], texture2d<float> src [[texture(0)]], sampler s [[sampler(0)]]) {
-    return src.sample(s, in.uv);
+    return float4(src.sample(s, in.uv).rgb, 0.0);
 }
 
 fragment float4 copy_uv_fragment(FSOut in [[stage_in]], constant float4 &xf [[buffer(0)]],
                                  texture2d<float> src [[texture(0)]], sampler s [[sampler(0)]]) {
-    return src.sample(s, (in.uv - 0.5) * xf.xy + 0.5 + xf.zw);
+    return float4(src.sample(s, (in.uv - 0.5) * xf.xy + 0.5 + xf.zw).rgb, 0.0);
 }
 """#
 

@@ -104,11 +104,17 @@ public final class OOOSession {
     public private(set) var waveform: Waveform?
     /// Pages in the slide's PDF, when it has more than one.
     public private(set) var pageCount = 1
+    /// The timeline's length while something on it is dragged (see `timelineLength`).
+    public private(set) var heldTimelineLength: Double?
 
     @ObservationIgnored private var slideBase: SlideBase?
     @ObservationIgnored private var slideToken = 0
     @ObservationIgnored private var sceneCache: SlideScene?
-    @ObservationIgnored private var details: [SlideDetail]?
+    /// The last reading of a slide, and which slide it was.
+    @ObservationIgnored private var details: (ref: SlideRef, found: [SlideDetail])?
+    /// A dropped slide whose tour is still being planned: the drop and its
+    /// tour become one undo step when the plan lands.
+    @ObservationIgnored private var pendingDrop: (before: OOOProject, name: String)?
     @ObservationIgnored private var voiceTrack: AudioTrack?
     @ObservationIgnored private var voiceFile: String?
     @ObservationIgnored private var placedCache: (key: VoiceKey, track: AudioTrack)?
@@ -137,6 +143,7 @@ public final class OOOSession {
 
     /// Applies a change as one undoable step. A gesture still open is closed first.
     public func update(_ actionName: String, _ change: (inout OOOProject) -> Void) {
+        finishDrop()
         let openGesture = pendingEditStart != nil ? pendingEditName : nil
         let wasOpen = pendingEditStart != nil
         if wasOpen { commitEdit(pendingEditName ?? "Edit") }
@@ -156,6 +163,7 @@ public final class OOOSession {
 
     /// Call at the start of a continuous gesture (a slider drag, a drag on the map).
     public func beginEdit(_ name: String? = nil) {
+        finishDrop()
         if pendingEditStart != nil, pendingEditName != name { commitEdit(pendingEditName ?? "Edit") }
         if pendingEditStart == nil {
             pendingEditStart = project
@@ -178,9 +186,29 @@ public final class OOOSession {
         if start != project { registerUndo(from: start, name: actionName) }
     }
 
+    /// Closes a drop as one undo step: the slide, and its tour if it has one by now.
+    private func finishDrop() {
+        guard let drop = pendingDrop else { return }
+        pendingDrop = nil
+        if drop.before != project { registerUndo(from: drop.before, name: drop.name) }
+    }
+
+    /// A new slide (or page) and its tour, undone together.
+    private func drop(_ name: String, _ change: (inout OOOProject) -> Void) {
+        if pendingEditStart != nil { commitEdit(pendingEditName ?? "Edit") }
+        finishDrop()
+        let before = project
+        var after = project
+        change(&after)
+        guard after != before else { return }
+        set(after)
+        pendingDrop = (before, name)
+    }
+
     private func set(_ p: OOOProject) {
         let slideChanged = p.slide != project.slide
         let voiceChanged = p.voice?.file != project.voice?.file
+        if slideChanged || p.format != project.format { thumbs = [:] }
         project = p
         document.project = p
         choreography = p.choreography()
@@ -202,6 +230,8 @@ public final class OOOSession {
         um.registerUndo(withTarget: document) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
+                // Undoing past a drop still being planned drops its plan too.
+                self.pendingDrop = nil
                 self.set(old)
                 if self.pendingEditStart != nil { self.pendingEditStart = old }
                 self.registerUndo(from: current, name: name)
@@ -249,7 +279,7 @@ public final class OOOSession {
                     self.busy = nil
                     switch result {
                     case .success(let base): self.install(base)
-                    case .failure(let error): self.message = "\(error)"
+                    case .failure(let error): self.message = "Couldn't draw the slide: \(readable(error))"
                     }
                 }
             }
@@ -263,7 +293,6 @@ public final class OOOSession {
         }
         slidePreview = base.preview
         thumbs = [:]
-        details = nil
         sceneCache = nil
         if base.ref.kind == .pdf, let file = base.ref.file {
             pageCount = SlideSource.pageCount(document.media.url(for: file))
@@ -287,14 +316,50 @@ public final class OOOSession {
             message = "Couldn't copy the slide: \(error.localizedDescription)"
             return
         }
-        update("Change Slide") { p in
+        drop("Change Slide") { p in
+            let (A, C) = (p.slideAspect, p.canvasAspect)
             p.slide = ref
             p.shots = []
+            p.adaptOverview(fromSlideAspect: A, canvasAspect: C)
         }
         selection = .overview
+        // The arrival plays once, when the slide has been read and its tour is
+        // planned; until then the stage holds on the room.
         clock.time = 0
-        clock.playing = true
+        clock.playing = false
         autoDirect()
+    }
+
+    /// Takes the slide on the clipboard: a PDF or picture copied in Finder,
+    /// or a slide copied straight from Keynote, Figma or Preview (vectors
+    /// first, when the app put a PDF of it there).
+    public func pasteSlide() {
+        let pb = NSPasteboard.general
+        if let urls = pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+           let url = urls.first(where: { u in
+               let type = UTType(filenameExtension: u.pathExtension)
+               return Self.slideTypes.contains { type?.conforms(to: $0) ?? false }
+           }) {
+            importSlide(url)
+            return
+        }
+        let kinds: [(NSPasteboard.PasteboardType, String)] = [(.pdf, "pdf"), (.png, "png"), (.tiff, "tiff")]
+        for (type, ext) in kinds {
+            guard let data = pb.data(forType: type) else { continue }
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+            let url = folder.appendingPathComponent("Pasted slide.\(ext)")
+            do {
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                try data.write(to: url)
+            } catch {
+                message = "Couldn't paste the slide: \(error.localizedDescription)"
+                return
+            }
+            importSlide(url)
+            try? FileManager.default.removeItem(at: folder)
+            return
+        }
+        message = "There's no slide on the clipboard. Copy a slide in Keynote, Figma or Preview, or a PDF or picture in Finder, then paste it here."
     }
 
     /// Shows another page of the slide's PDF.
@@ -304,9 +369,11 @@ public final class OOOSession {
         guard n != project.slide.page, var ref = SlideSource.inspect(document.media.url(for: file), page: n) else { return }
         ref.file = file
         ref.name = project.slide.name
-        update("Change Page") { p in
+        drop("Change Page") { p in
+            let (A, C) = (p.slideAspect, p.canvasAspect)
             p.slide = ref
             p.shots = []
+            p.adaptOverview(fromSlideAspect: A, canvasAspect: C)
         }
         selection = .overview
         clock.time = 0
@@ -335,7 +402,8 @@ public final class OOOSession {
     public func autoDirect() {
         let ref = project.slide
         let media = document.media.directory
-        let cached = details
+        // Only this slide's own reading will do: a new slide or page is read afresh.
+        let cached = details?.ref == ref ? details?.found : nil
         busy = "Reading the slide"
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = Result { () throws -> [SlideDetail] in
@@ -346,22 +414,41 @@ public final class OOOSession {
                 MainActor.assumeIsolated {
                     guard let self, self.project.slide == ref else { return }
                     self.busy = nil
+                    // A new slide waits for its tour to arrive; it arrives now either way.
+                    let fresh = self.pendingDrop != nil
                     switch result {
                     case .success(let found):
-                        self.details = found
-                        let p = self.project
-                        let shots = Director.shots(DirectorInput(details: found, words: p.voice?.words, slideAspect: p.slideAspect,
-                                                                 canvasAspect: p.canvasAspect, start: p.arrive.end))
+                        self.details = (ref, found)
+                        let shots = Director.shots(self.project.directorInput(found))
                         guard !shots.isEmpty else {
+                            self.finishDrop()
+                            if fresh {
+                                self.selection = .overview
+                                self.clock.time = 0
+                                self.clock.playing = true
+                            }
                             self.message = "OOO found nothing to read on this slide. Draw framings on the slide map to choose what the camera visits."
                             return
                         }
-                        self.update("Direct") { $0.shots = shots }
+                        if self.pendingDrop != nil {
+                            var p = self.project
+                            p.shots = shots
+                            self.set(p)
+                            self.finishDrop()
+                        } else {
+                            self.update("Direct") { $0.shots = shots }
+                        }
                         self.selection = .overview
                         self.clock.time = 0
                         self.clock.playing = true
                     case .failure(let error):
-                        self.message = "Couldn't read the slide: \(error)"
+                        self.finishDrop()
+                        if fresh {
+                            self.selection = .overview
+                            self.clock.time = 0
+                            self.clock.playing = true
+                        }
+                        self.message = "Couldn't read the slide: \(readable(error))"
                     }
                 }
             }
@@ -372,7 +459,7 @@ public final class OOOSession {
     public func cutToVoice() {
         guard let words = project.voice?.words, !words.isEmpty else { return }
         update("Cut to Voice") { p in
-            p.shots = Director.retime(p.shots, words: words, start: p.arrive.end)
+            p.shots = Director.retime(p.shots, words: words, start: p.tourStart)
         }
     }
 
@@ -392,6 +479,21 @@ public final class OOOSession {
         update(name) { p in
             if let i = p.shots.firstIndex(where: { $0.id == id }) { change(&p.shots[i]) }
         }
+    }
+
+    /// The length the timeline lays out. While a framing or the voice is
+    /// dragged it stays put under the pointer, growing only in steps if the
+    /// video outgrows it, and it follows the video again on release.
+    public var timelineLength: Double {
+        let d = clock.duration
+        guard let held = heldTimelineLength, held > 0 else { return d }
+        guard d > held else { return held }
+        return held * pow(1.25, ceil(log(d / held) / log(1.25)))
+    }
+
+    /// Holds the timeline's scale for a drag, or lets it go.
+    public func holdTimeline(_ on: Bool) {
+        heldTimelineLength = on ? clock.duration : nil
     }
 
     public func liveShot(_ id: UUID, _ change: (inout Shot) -> Void) {
@@ -422,7 +524,7 @@ public final class OOOSession {
     public func addShot(frame: ShotFrame? = nil, at time: Double? = nil) {
         let p = project
         var t = time ?? clock.time
-        let start = p.arrive.end + 0.6
+        let start = p.tourStart + 0.6
         let taken = p.shots.contains { abs($0.time - t) < 0.9 }
         if t < start || taken { t = max(start, (p.shots.map(\.time).max() ?? start - 2.6) + 2.6) }
         var f: ShotFrame
@@ -435,7 +537,7 @@ public final class OOOSession {
         f.center = Vec2(min(max(f.center.x, 0), 1), min(max(f.center.y, 0), 1))
         let yaw = clamp((f.center.x - 0.5) * 22, -12, 12)
         let pitch = clamp((0.5 - f.center.y) * 12, -7, 7)
-        let shot = Shot(time: t, frame: f, yaw: yaw, pitch: pitch, lens: 28, aperture: 0.45, label: "Shot \(p.shots.count + 1)")
+        let shot = Shot(time: t, frame: f, yaw: yaw, pitch: pitch, lens: 28, aperture: 0.45, label: nil)
         update("Add Shot") { $0.shots.append(shot) }
         select(.shot(shot.id))
     }
@@ -472,7 +574,11 @@ public final class OOOSession {
     }
 
     public func setFormat(_ f: CanvasFormat) {
-        update("Canvas") { $0.format = f }
+        update("Canvas") { p in
+            let (A, C) = (p.slideAspect, p.canvasAspect)
+            p.format = f
+            p.adaptOverview(fromSlideAspect: A, canvasAspect: C)
+        }
     }
 
     // MARK: Voiceover
@@ -513,7 +619,7 @@ public final class OOOSession {
                         self.tab = .voice
                         self.transcribe()
                     case .failure(let error):
-                        self.message = "Couldn't read the recording: \(error)"
+                        self.message = "Couldn't read the recording: \(readable(error))"
                     }
                 }
             }
@@ -571,7 +677,7 @@ public final class OOOSession {
                 self.cutToVoice()
             } catch {
                 self?.busy = nil
-                self?.message = "\(error)"
+                self?.message = readable(error)
             }
         }
     }
@@ -698,4 +804,12 @@ final class VoicePlayer {
         node?.stop()
         signature = nil
     }
+}
+
+/// An error as a sentence for people: the renderer's own message or the
+/// system's description, never a type name and a code.
+func readable(_ error: Error) -> String {
+    if let e = error as? RenderError { return e.description }
+    if let e = error as? LocalizedError, let d = e.errorDescription { return d }
+    return (error as NSError).localizedDescription
 }

@@ -23,6 +23,8 @@ final class StageCoordinator: NSObject, MTKViewDelegate {
     private var lastSize: CGSize = .zero
     private var liveSamples = 4
     private var gpuMs: Double = 0
+    /// Display refreshes in a row with nothing new to draw.
+    private var idle = 0
 
     init(session: OOOSession) {
         self.session = session
@@ -50,22 +52,42 @@ final class StageCoordinator: NSObject, MTKViewDelegate {
             let t = clock.time + dt
             clock.time = t >= clock.duration ? 0 : t
         }
+        // A stage nobody can see (minimised, behind other windows, on another
+        // Space) keeps time but draws nothing.
+        if let window = view.window, !window.occlusionState.contains(.visible) {
+            lastVersion = -1
+            return
+        }
         let version = session.version
         let needs = clock.playing || version != lastVersion || clock.time != lastDrawn || view.drawableSize != lastSize
-        guard needs, let drawable = view.currentDrawable, let cb = GPU.shared.queue.makeCommandBuffer() else { return }
+        if !needs {
+            // Half a second with nothing to draw: stop waking the display
+            // until something the stage shows changes.
+            idle += 1
+            if idle > 30 { sleep(view, session: session) }
+            return
+        }
+        idle = 0
+        guard let drawable = view.currentDrawable, let cb = GPU.shared.queue.makeCommandBuffer() else { return }
         if let scene = session.scene, let stage = OOOShared.stage {
             let samples = clock.playing ? liveSamples : 8
             let frameIndex = UInt32(max(0, clock.time * Double(scene.project.fps)))
             // Heavy backdrops render smaller while playing; paused frames are exact.
             let cost = scene.project.backdrop.styleInfo.cost
             let scale: Float = clock.playing ? (cost >= 3 ? 0.5 : (cost == 2 ? 0.75 : 1)) : 1
-            try? stage.encode(cb, scene: scene, at: clock.time, output: drawable.texture, samples: samples,
-                              frameIndex: frameIndex, waitForDetail: false, backdropScale: scale)
+            let used = (try? stage.encode(cb, scene: scene, at: clock.time, output: drawable.texture, samples: samples,
+                                          frameIndex: frameIndex, waitForDetail: false, backdropScale: scale)) ?? 1
             if clock.playing {
-                let used = scene.project.look.shutter > 0.01 ? liveSamples : 1
-                cb.addCompletedHandler { [weak self] buffer in
-                    let ms = (buffer.gpuEndTime - buffer.gpuStartTime) * 1000
-                    DispatchQueue.main.async { self?.adapt(gpuMs: ms, samples: used) }
+                // The close-up the tour needs a moment from now, drawn before it gets there.
+                let size = drawable.texture
+                stage.drawAhead(scene, at: clock.time + 0.6, width: size.width, height: size.height)
+                // Only frames in motion, which take every sample they may, tell
+                // what a sample costs; a held frame takes one.
+                if used == samples {
+                    cb.addCompletedHandler { [weak self] buffer in
+                        let ms = (buffer.gpuEndTime - buffer.gpuStartTime) * 1000
+                        DispatchQueue.main.async { self?.adapt(gpuMs: ms, samples: used) }
+                    }
                 }
             }
         } else {
@@ -81,6 +103,26 @@ final class StageCoordinator: NSObject, MTKViewDelegate {
         lastVersion = version
         lastDrawn = clock.time
         lastSize = view.drawableSize
+    }
+
+    @MainActor
+    private func sleep(_ view: MTKView, session: OOOSession) {
+        guard !view.isPaused else { return }
+        view.isPaused = true
+        idle = 0
+        withObservationTracking {
+            _ = session.version
+            _ = session.clock.playing
+            _ = session.clock.time
+        } onChange: { [weak view, weak self] in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    // Time asleep is not time played.
+                    self?.lastTime = CACurrentMediaTime()
+                    view?.isPaused = false
+                }
+            }
+        }
     }
 
     /// Four samples read as blur; two show as double edges, so it is four,
@@ -168,6 +210,7 @@ struct StagePreview: NSViewRepresentable {
         context.coordinator.session = session
         if v.drawableSize != pixelSize, pixelSize.width > 1, pixelSize.height > 1 {
             v.drawableSize = pixelSize
+            v.isPaused = false
         }
     }
 }
@@ -269,6 +312,12 @@ struct StageStatus: View {
                     .buttonStyle(QuietButtonStyle())
             } else {
                 Text(session.project.slide.name).textStyle(.label).foregroundStyle(.primary).lineLimit(1)
+                if let zoom = session.project.sharpZoom, let h = session.project.slide.pixelHeight {
+                    Text(String(format: "Sharp to %.1f× closer", zoom))
+                        .textStyle(.caption).foregroundStyle(.secondary)
+                        .help("This picture is \(h) pixels tall. OOO draws it at up to twice that, sharpened, and Direct for Me "
+                            + "stays within it. For closer looks, export the slide as a PDF, or as a picture at 2× or 3×.")
+                }
                 if session.pageCount > 1 {
                     HStack(spacing: 2) {
                         IconButton("chevron.left", label: "Previous Page", size: 10) { session.showPage(session.project.slide.page - 1) }

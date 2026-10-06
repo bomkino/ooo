@@ -1,6 +1,7 @@
 import AppKit
 import OOOCore
 import OOOMotion
+import RenderCore
 import StageKit
 import SwiftUI
 import UniformTypeIdentifiers
@@ -48,6 +49,37 @@ public enum OOOCommands {
     }
 }
 
+extension OOOCommands {
+    /// Saves the frame at the playhead as a full-size picture, for the
+    /// post's cover or thumbnail.
+    @MainActor
+    public static func saveCoverFrame(_ session: OOOSession) {
+        guard let scene = session.exportScene() else { return }
+        let t = session.clock.time
+        let format = session.project.format
+        session.clock.playing = false
+        let panel = NSSavePanel()
+        let name = session.project.slide.kind == .sample ? "OOO" : "OOO " + session.project.slide.name
+        panel.nameFieldStringValue = name + " cover.png"
+        panel.allowedContentTypes = [.png]
+        panel.canCreateDirectories = true
+        panel.message = String(format: "The frame at %.1f s, %d × %d, as the export draws it.", t, format.width, format.height)
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            Task.detached(priority: .userInitiated) {
+                do {
+                    // Its own renderer, so it never shares scratch space with the live stage.
+                    let stage = try SlideStage()
+                    let image = try stage.still(scene, at: t, width: format.width, height: format.height, samples: 16)
+                    try ImageOutput.writePNG(image, to: url)
+                } catch {
+                    await MainActor.run { session.message = "Couldn't save the cover frame: \(readable(error))" }
+                }
+            }
+        }
+    }
+}
+
 public struct OOOMenuCommands: Commands {
     @FocusedValue(\.oooSession) private var session
     @AppStorage("appearance") private var appearance = AppearanceChoice.dark.rawValue
@@ -63,10 +95,16 @@ public struct OOOMenuCommands: Commands {
             Button("Choose Voiceover…") { if let session { OOOCommands.chooseVoice(session) } }
                 .keyboardShortcut("i", modifiers: [.command, .option])
                 .disabled(session == nil)
+            Button("Paste Slide") { session?.pasteSlide() }
+                .keyboardShortcut("v", modifiers: [.command, .shift])
+                .disabled(session == nil)
             Divider()
             Button("Export Video…") { session?.showExport = true }
                 .keyboardShortcut("e", modifiers: .command)
                 .disabled(session == nil)
+            Button("Save Cover Frame…") { if let session { OOOCommands.saveCoverFrame(session) } }
+                .keyboardShortcut("e", modifiers: [.command, .option])
+                .disabled(session == nil || session?.hasSlide == false)
         }
         CommandMenu("Camera") {
             Button("Direct for Me") { session?.autoDirect() }
@@ -171,7 +209,7 @@ public struct OOOWindow: View {
                 Button { OOOCommands.chooseSlide(session) } label: {
                     Label("Slide", systemImage: "rectangle.on.rectangle.angled")
                 }
-                .help("Choose the slide: a PDF or a picture (⌘I)")
+                .help("Choose the slide: a PDF or a picture (⌘I). Or copy a slide in Keynote, Figma or Preview and paste it (⇧⌘V).")
                 Button { OOOCommands.chooseVoice(session) } label: {
                     Label("Voiceover", systemImage: "waveform.badge.plus")
                 }
@@ -222,8 +260,13 @@ struct DirectButton: View {
         .help("Read the slide and plan the camera's tour: the headline, the details worth a look, the small print last (⇧⌘D)")
         .disabled(session.busy != nil || !session.hasSlide)
         .shadow(color: Theme.camera.opacity(glow && pulse ? 0.8 : 0), radius: 6)
-        .onAppear {
-            withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) { pulse = true }
+        // The pulse runs only while the glow shows; otherwise nothing animates.
+        .onChange(of: glow, initial: true) { _, on in
+            if on {
+                withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) { pulse = true }
+            } else {
+                withTransaction(Transaction(animation: nil)) { pulse = false }
+            }
         }
     }
 }
