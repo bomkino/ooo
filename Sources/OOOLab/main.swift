@@ -34,8 +34,8 @@ import StageKit
 // Every command takes --project <file.ooo> (default: the sample), or
 // --slide <file> (a PDF or picture, read and directed as the app would on a
 // drop), --format reel|portrait|square|landscape, --floor none|soft|mirror,
-// --ending hold|pullBack|fade|leave and --title "words" [--kicker "line above"]
-// [--face modern|grotesk|editorial|poster].
+// --ending hold|pullBack|fade|leave and --title "words" [--kicker "line above"
+// [--kicker-as-typed]] [--face modern|grotesk|editorial|poster].
 
 let args = CommandLine.arguments
 func value(_ name: String) -> String? {
@@ -64,7 +64,7 @@ if let id = value("--format") {
     project.adaptOverview(fromSlideAspect: A, canvasAspect: C)
 }
 if let text = value("--title") {
-    var t = OpeningTitle(text: text, kicker: value("--kicker") ?? "")
+    var t = OpeningTitle(text: text, kicker: value("--kicker") ?? "", kickerCaps: !args.contains("--kicker-as-typed"))
     if let f = value("--face") {
         guard let face = ReelTitle.Face(rawValue: f) else { fail("unknown face \(f)") }
         t.face = face

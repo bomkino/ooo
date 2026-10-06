@@ -182,3 +182,29 @@ public extension Palette {
         return Palette(id: id, name: name, colors: Array(rgb.prefix(8)))
     }
 }
+
+public extension Palette {
+    /// These colours at another palette's lightness: each of the room's
+    /// colours, dark to light, keeps its lightness and takes the leading hue
+    /// of these (its middle tone the second, when there is one), with its
+    /// colour held back most in the deepest and palest tones. The room takes
+    /// on the slide's colours and stays as dark or as light as it was, so the
+    /// slide still stands out. A grey slide gives a grey room.
+    func atLightness(of room: Palette, id: String = "from-slide", name: String = "From Slide") -> Palette {
+        let target = room.sorted
+        let hues = colors.map(\.oklab).sorted { $0.y * $0.y + $0.z * $0.z > $1.y * $1.y + $1.z * $1.z }
+        guard let lead = hues.first, !target.isEmpty else { return room }
+        func chroma(_ c: SIMD3<Float>) -> Float { (c.y * c.y + c.z * c.z).squareRoot() }
+        let second = hues.dropFirst().first { chroma($0) > 0.04 }
+        let out = target.enumerated().map { i, c -> RGB in
+            let L = c.lightness
+            let h = i == target.count / 2 ? second ?? lead : lead
+            let k = chroma(h)
+            let limit = 0.02 + 0.1 * max(0, 1 - abs(L - 0.55) / 0.55)
+            let s = k > 1e-4 ? min(k, limit) / k : 0
+            let lin = ColorMath.oklabToLinear(SIMD3(L, h.y * s, h.z * s))
+            return RGB(linear: simd_clamp(lin, SIMD3(repeating: 0), SIMD3(repeating: 1)))
+        }
+        return Palette(id: id, name: name, colors: out)
+    }
+}

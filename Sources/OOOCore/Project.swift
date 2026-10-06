@@ -156,11 +156,25 @@ public struct OpeningTitle: Codable, Hashable, Sendable {
     /// A short line above the title, such as a company or a date.
     public var kicker: String
     public var face: ReelTitle.Face
+    /// Sets the kicker in capitals (the default), or as typed.
+    public var kickerCaps: Bool
 
-    public init(text: String = "", kicker: String = "", face: ReelTitle.Face = .modern) {
+    public init(text: String = "", kicker: String = "", face: ReelTitle.Face = .modern, kickerCaps: Bool = true) {
         self.text = text
         self.kicker = kicker
         self.face = face
+        self.kickerCaps = kickerCaps
+    }
+
+    enum CodingKeys: String, CodingKey { case text, kicker, face, kickerCaps }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        text = try c.decode(String.self, forKey: .text)
+        kicker = try c.decode(String.self, forKey: .kicker)
+        face = try c.decode(ReelTitle.Face.self, forKey: .face)
+        // 0.2 documents have no choice saved: their kickers were capitals.
+        kickerCaps = try c.decodeIfPresent(Bool.self, forKey: .kickerCaps) ?? true
     }
 
     public var isEmpty: Bool {

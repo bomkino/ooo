@@ -42,6 +42,7 @@ render_set sample
 mkdir -p "$OUT/titles"
 "$LAB" titles --slide "$OUT/fixtures/wide-2576x1080.png" --title "How we grew 3.1× in nine months" --kicker "pitch.dog · Series A" --out "$OUT/titles/wide.png"
 "$LAB" titles --slide "$OUT/fixtures/standard-1920x1080.png" --title "A \$4.2B market nobody designs for." --kicker "pitch.dog" --out "$OUT/titles/standard.png"
+"$LAB" titles --slide "$OUT/fixtures/standard-1920x1080.png" --title "A \$4.2B market nobody designs for." --kicker "pitch.dog · Seed round" --kicker-as-typed --out "$OUT/titles/standard-as-typed.png"
 render_set wide-png --slide "$OUT/fixtures/wide-2576x1080.png"
 render_set standard-png --slide "$OUT/fixtures/standard-1920x1080.png"
 render_set wide-pdf --slide "$OUT/fixtures/wide.pdf"

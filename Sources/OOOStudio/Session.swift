@@ -102,6 +102,11 @@ public final class OOOSession {
     private var lastJob = 0
     /// The slide drawn small, for the map and the timeline.
     public private(set) var slidePreview: CGImage?
+    /// The slide's main colours, for a room in them.
+    private var slideColours: Palette?
+
+    /// The room's palette in the slide's colours, at the room's own lightness.
+    public var slidePalette: Palette? { slideColours?.atLightness(of: project.backdrop.palette) }
     /// The voiceover's peaks, recording time.
     public private(set) var waveform: Waveform?
     /// Pages in the slide's PDF, when it has more than one.
@@ -306,6 +311,7 @@ public final class OOOSession {
             MainActor.assumeIsolated { self?.touch() }
         }
         slidePreview = base.preview
+        slideColours = base.preview.flatMap { Palette.extract(from: [$0], id: "slide", name: "Slide") }
         thumbs = [:]
         sceneCache = nil
         if base.ref.kind == .pdf, let file = base.ref.file {
