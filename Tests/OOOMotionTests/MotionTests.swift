@@ -275,9 +275,12 @@ final class ChoreographyTests: XCTestCase {
         let c = readingAlong()
         let beat = c.beats[1]
         guard let to = beat.sweepTo else { return XCTFail("no glide") }
-        XCTAssertEqual(beat.sweepEnd, beat.land + 2.2, accuracy: 1e-9)
-        let start = c.basePose(at: beat.land + 0.01), end = c.basePose(at: beat.sweepEnd)
+        // It rests on the start of the line, then reads it in the time given.
+        XCTAssertEqual(beat.sweepStart, beat.land + Choreography.readLead, accuracy: 1e-9)
+        XCTAssertEqual(beat.sweepEnd, beat.sweepStart + 2.2, accuracy: 1e-9)
+        let start = c.basePose(at: beat.sweepStart), end = c.basePose(at: beat.sweepEnd)
         XCTAssertEqual(start.target.x, beat.pose.target.x, accuracy: beat.pose.height * 0.05)
+        XCTAssertEqual(c.basePose(at: beat.land + 0.01).target.x, beat.pose.target.x, accuracy: beat.pose.height * 0.05)
         XCTAssertEqual(end.target.x, to.target.x, accuracy: beat.pose.height * 0.05)
         XCTAssertGreaterThan(to.target.x - beat.pose.target.x, 0.3 * A * 0.9)
         // The next move leaves from where the glide ended.

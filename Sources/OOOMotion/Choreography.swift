@@ -63,8 +63,11 @@ public struct Choreography: Sendable {
         /// Natural-log push-in over the hold.
         let breathe: Float
         let arcSign: Float
-        /// Reading along: the framing the hold glides to, and when the glide ends.
+        /// Reading along: the framing the hold glides to, and when the glide
+        /// sets off (a moment after landing, once the eye has found the start
+        /// of the line) and ends.
         public let sweepTo: CameraPose?
+        public let sweepStart: Double
         public let sweepEnd: Double
 
         public var travel: Double { land - depart }
@@ -190,10 +193,12 @@ public struct Choreography: Sendable {
             let dx = pose.target.x - from.target.x
             // The glide along a line keeps clear of the move out.
             let glide = hold > 0.5 ? sweeps[i] : nil
-            let sweepEnd = land + min(item.shot.sweepTime ?? hold * 0.82, hold - 0.2)
+            let sweepEnd = max(land + min(Self.readLead + (item.shot.sweepTime ?? hold * 0.82), hold - 0.2), land + 0.3)
+            let sweepStart = land + min(Self.readLead, (sweepEnd - land) * 0.25)
             built.append(Beat(shot: item.shot, isOverview: item.overview, pose: pose, depart: depart, land: land, leave: leave,
                               from: from, path: path, curve: curve, overrun: overrun, tail: tail,
-                              breathe: breathe, arcSign: dx >= 0 ? 1 : -1, sweepTo: glide, sweepEnd: max(sweepEnd, land + 0.3)))
+                              breathe: breathe, arcSign: dx >= 0 ? 1 : -1, sweepTo: glide,
+                              sweepStart: sweepStart, sweepEnd: sweepEnd))
         }
         beats = built
     }
@@ -291,7 +296,7 @@ public struct Choreography: Sendable {
         let rest = beat.overrun > 0 ? beat.overrun * powf(left, beat.tail) : 0
         var p = interpolate(beat, 1 - rest, time: 1)
         if let to = beat.sweepTo {
-            let e = Curves.along(Float(x / max(beat.sweepEnd - beat.land, 1e-3)))
+            let e = Curves.along(Float((t - beat.sweepStart) / max(beat.sweepEnd - beat.sweepStart, 1e-3)))
             p.target += (to.target - beat.pose.target) * e
             p.height *= powf(to.height / max(beat.pose.height, 1e-5), e)
             p.yaw = lerp(p.yaw, to.yaw, e)
@@ -362,12 +367,15 @@ public struct Choreography: Sendable {
         }
     }
 
+    /// How long a read-along rests on the start of its line before gliding.
+    public static let readLead = 0.4
+
     /// A natural length for a video with these shots and no voiceover.
     public static func naturalDuration(shots: [Shot], arrive: Arrive, ending: Ending) -> Double {
         let last = max(shots.map(\.time).max() ?? arrive.end, arrive.end)
         // A shot that reads along a line holds for its glide.
         let lastShot = shots.max { $0.time < $1.time }
-        let glide = lastShot?.sweep == nil ? 0 : max((lastShot?.sweepTime ?? 1.6) - 1.2, 0)
+        let glide = lastShot?.sweep == nil ? 0 : max(readLead + (lastShot?.sweepTime ?? 1.6) - 1.2, 0)
         var d = last + (shots.isEmpty ? 2.6 : 2.4) + glide
         switch ending {
         case .pullBack: d += 2.6
