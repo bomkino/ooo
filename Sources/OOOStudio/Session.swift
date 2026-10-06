@@ -452,13 +452,13 @@ public final class OOOSession {
             message = "Couldn't copy the slide: \(error.localizedDescription)"
             return
         }
-        let was = project.slide, known = project.reading
+        let was = project.slide, known = project.reading, now = ref
         let media = document.media.directory
         let job = begin("Reading the new slide")
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = Result { () throws -> (old: [SlideDetail], new: [SlideDetail]) in
                 let old = try known ?? SlideAnalysis.read(SlideSource(ref: was, media: media))
-                return (old, try SlideAnalysis.read(SlideSource(ref: ref, media: media)))
+                return (old, try SlideAnalysis.read(SlideSource(ref: now, media: media)))
             }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
@@ -469,7 +469,7 @@ public final class OOOSession {
                     switch result {
                     case .success(let reading):
                         self.update("Replace Slide") { p in
-                            p.replaceSlide(with: ref, reading: reading.new, from: reading.old)
+                            p.replaceSlide(with: now, reading: reading.new, from: reading.old)
                         }
                     case .failure(let error):
                         self.message = "Couldn't read the new slide: \(readable(error))"

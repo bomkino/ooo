@@ -70,7 +70,7 @@ extension OOOCommands {
         panel.prompt = "Save Stills"
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
-            let job = session.beginJob("Saving the stills")
+            let job = MainActor.assumeIsolated { session.beginJob("Saving the stills") }
             Task.detached(priority: .userInitiated) {
                 do {
                     let files = try Stills.write(scene, to: url, width: format.width, height: format.height)
@@ -335,7 +335,8 @@ struct EditorKeys: ViewModifier {
                 let box = window, session = session
                 monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { event in
                     guard let w = box.window, event.window === w else { return event }
-                    return MainActor.assumeIsolated { session.handleKey(event) } ? nil : event
+                    let used = MainActor.assumeIsolated { session.handleKey(event) }
+                    return used ? nil : event
                 }
             }
             .onDisappear {
