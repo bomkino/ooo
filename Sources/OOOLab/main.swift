@@ -14,9 +14,13 @@ import StageKit
 //   ooo-lab render  --out v.mp4 [--quality draft|good|best] [--scale 0.5] [--codec h264|hevc]
 //   ooo-lab analyze                         read the slide and plan a tour
 //   ooo-lab path    [--out path.csv]        the camera's path, sampled
+//   ooo-lab landings --out dir              a still at the opening and at every landing
+//   ooo-lab fixture --kind wide|standard --out f.png|f.pdf [--scale 2]
+//                                           draw a test slide: 2576 × 1080 or 1920 × 1080
 //
-// Every command takes --project <file.ooo> (default: the sample) and
-// --format reel|portrait|square|landscape.
+// Every command takes --project <file.ooo> (default: the sample), or
+// --slide <file> (a PDF or picture, read and directed as the app would on a
+// drop), and --format reel|portrait|square|landscape.
 
 let args = CommandLine.arguments
 func value(_ name: String) -> String? {
@@ -41,6 +45,30 @@ if let path = value("--project") {
 if let id = value("--format") {
     guard let f = CanvasFormat.presets.first(where: { $0.id == id }) else { fail("unknown format \(id)") }
     project.format = f
+}
+if let path = value("--slide") {
+    // The app's drop: copy the file in, read it, plan a tour.
+    let url = URL(fileURLWithPath: path)
+    guard var ref = SlideSource.inspect(url) else { fail("not a slide: \(path)") }
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("ooo-lab-\(UUID().uuidString)", isDirectory: true)
+    let file = "slide." + url.pathExtension.lowercased()
+    do {
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: url, to: dir.appendingPathComponent(file))
+    } catch {
+        fail("could not copy \(path): \(error)")
+    }
+    ref.file = file
+    let format = project.format
+    project = OOOProject(slide: ref, format: format)
+    media = dir
+    do {
+        let details = try SlideAnalysis.read(SlideSource(ref: ref, media: dir))
+        project.shots = Director.shots(DirectorInput(details: details, words: project.voice?.words, slideAspect: project.slideAspect,
+                                                     canvasAspect: project.canvasAspect, start: project.arrive.end))
+    } catch {
+        fail("could not read \(path): \(error)")
+    }
 }
 
 func loadScene() -> SlideScene {
@@ -141,11 +169,45 @@ case "analyze":
         }
         let shots = Director.shots(DirectorInput(details: details, slideAspect: project.slideAspect,
                                                  canvasAspect: project.canvasAspect, start: project.arrive.end))
-        for s in shots {
-            print(String(format: "shot %.2f s", s.time), s.label ?? "", s.move.rawValue, s.ease.rawValue, s.emphasis.rawValue)
-        }
+        printPlan(shots)
     } catch {
         fail("analyze failed: \(error)")
+    }
+
+case "landings":
+    // The opening, then each framing a moment after the camera lands on it.
+    let scene = loadScene()
+    let dir = URL(fileURLWithPath: value("--out") ?? "landings", isDirectory: true)
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let samples = Int(value("--samples") ?? "") ?? 12
+    let beats = scene.choreography.beats
+    var moments: [(String, Double)] = []
+    if project.arrive.kind != .none { moments.append(("arrive", project.arrive.duration * 0.5)) }
+    for (i, beat) in beats.enumerated() {
+        let t = min(beat.land + min(0.7, beat.hold * 0.45), scene.duration - 0.02)
+        let name = beat.isOverview ? (i == 0 ? "opening" : "ending") : String(format: "shot-%02d", i)
+        moments.append((name, t))
+    }
+    do {
+        let stage = try SlideStage()
+        for (name, t) in moments {
+            let img = try stage.still(scene, at: t, width: project.format.width, height: project.format.height, samples: samples)
+            try ImageOutput.writeJPEG(img, to: dir.appendingPathComponent(name + ".jpg"), quality: 0.9)
+            print(String(format: "landing %@ t %.2f", name, t))
+        }
+    } catch {
+        fail("landings failed: \(error)")
+    }
+
+case "fixture":
+    guard let kind = Fixture(rawValue: value("--kind") ?? "wide") else { fail("unknown fixture; use wide or standard") }
+    let out = URL(fileURLWithPath: value("--out") ?? "\(kind.rawValue).png")
+    let scale = CGFloat(Double(value("--scale") ?? "") ?? 1)
+    do {
+        try kind.write(to: out, scale: scale)
+        print("fixture \(kind.rawValue) \(out.path)")
+    } catch {
+        fail("fixture failed: \(error)")
     }
 
 case "path":
@@ -168,9 +230,24 @@ case "path":
 default:
     print("""
     ooo-lab — headless renders and checks for OOO
-      shaders | still | sheet | render | analyze | path
-      --project file.ooo  --format reel|portrait|square|landscape  --out path
+      shaders | still | sheet | render | analyze | path | landings | fixture
+      --project file.ooo | --slide file.pdf|png  --format reel|portrait|square|landscape  --out path
     """)
+}
+
+/// The tour, one line a shot: when it lands, how close it goes, how it moves.
+func printPlan(_ shots: [Shot]) {
+    let A = project.slideAspect, C = project.canvasAspect
+    if let h = project.slide.pixelHeight {
+        print(String(format: "picture %d px tall; whole slide %.0f px tall on a %d px canvas", h,
+                     Float(project.format.height) / project.overview.frame.visible(slideAspect: A, canvasAspect: C).size.y,
+                     project.format.height))
+    }
+    for s in shots.sorted(by: { $0.time < $1.time }) {
+        let zoom = s.frame.magnification(slideAspect: A, canvasAspect: C)
+        print(String(format: "shot %6.2f s  %5.2f×  centre %.3f %.3f  size %.3f %.3f  ", s.time, zoom, s.frame.center.x, s.frame.center.y,
+                     s.frame.size.x, s.frame.size.y) + "\(s.move.rawValue) \(s.ease.rawValue) \(s.emphasis.rawValue)  \(s.label ?? "")")
+    }
 }
 
 final class ErrorBox: @unchecked Sendable {
