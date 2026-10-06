@@ -31,6 +31,8 @@ public struct MotionCheck: Sendable {
 
     public let beats: [BeatReport]
     public let lifts: [LiftReport]
+    /// The card changing from slide to slide.
+    public let changes: [SlideChange]
     /// Single-frame jumps outside a cut, as times.
     public let pops: [Double]
     public let problems: [String]
@@ -141,6 +143,7 @@ public struct MotionCheck: Sendable {
 
         beats = reports
         self.lifts = lifts
+        changes = c.changes
         self.pops = pops
         self.problems = problems
     }
@@ -156,6 +159,10 @@ public struct MotionCheck: Sendable {
             if b.peakRate > 0 { line += String(format: "  %.2f e-folds/s  %3.0f°/s", b.peakRate, b.peakTurn) }
             if let e = b.emphasisPeak { line += String(format: "  emphasis %.0f%%", e * 100) }
             lines.append(line)
+        }
+        for c in changes {
+            let what = c.back ? "turns back to slide 1" : (c.kind == .turn ? "turns over to slide \(c.to + 1)" : "melts into slide \(c.to + 1)")
+            lines.append("   the card " + what + String(format: " at %6.2f", c.start))
         }
         for l in lifts {
             lines.append("   the stage " + (l.rising ? "rises   " : "settles ") + String(format: "at %6.2f  %.2f e-folds/s", l.start, l.peakRate))
