@@ -270,6 +270,24 @@ final class DirectorTests: XCTestCase {
         XCTAssertEqual(Director.follow(before, from: standard, to: standard), before)
     }
 
+    /// A number corrected where it stood keeps its shot, which takes the new number.
+    func testANumberCorrectedInPlaceRenamesItsShot() {
+        let A: Float = 2576.0 / 1080
+        let before = Director.shots(DirectorInput(details: wide, slideAspect: A, canvasAspect: C, start: 2.1, safe: .reel))
+        let corrected = wide.map { d -> SlideDetail in
+            var d = d
+            if d.text == "$412k" { d.text = "$431k" }
+            return d
+        }
+        let after = Director.follow(before, from: wide, to: corrected)
+        let total = before.firstIndex { $0.label == "$412k" }
+        XCTAssertNotNil(total, "\(before.map { $0.label ?? "" })")
+        if let total {
+            XCTAssertEqual(after[total].label, "$431k")
+            XCTAssertEqual(after[total].frame, before[total].frame)
+        }
+    }
+
     func testDetailsInOneViewGetOneShot() {
         // A 1080 px picture in a reel: the sharp limit keeps the rings' numbers
         // in nearly the same close-up, so only the first of them gets a shot.

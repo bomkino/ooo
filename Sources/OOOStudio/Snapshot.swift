@@ -152,19 +152,24 @@ public enum OOOSnapshot {
         }
     }
 
-    /// How the window and its views are sized, in the log, for when a
-    /// screenshot looks cut off.
+    /// How the window and its views are sized, in the log, and a warning
+    /// when the editor needs more height than the window has (which leaves
+    /// the timeline off the bottom of a small screen).
     private static func describeLayout(_ window: NSWindow) {
         func s(_ r: NSRect) -> String { String(format: "%.0f,%.0f %.0f×%.0f", r.minX, r.minY, r.width, r.height) }
         func s(_ z: NSSize) -> String { String(format: "%.0f×%.0f", z.width, z.height) }
         let screen = window.screen ?? NSScreen.main
-        print("layout: window \(s(window.frame)), content layout \(s(window.contentLayoutRect)), min \(s(window.minSize)),"
-              + " content min \(s(window.contentMinSize)), screen \(s(screen?.frame ?? .zero)), visible \(s(screen?.visibleFrame ?? .zero))")
-        func walk(_ view: NSView, _ depth: Int) {
-            print("layout: " + String(repeating: "  ", count: depth) + "\(type(of: view)) \(s(view.frame)) fitting \(s(view.fittingSize))")
-            if depth < 5 { view.subviews.forEach { walk($0, depth + 1) } }
+        print("layout: window \(s(window.frame)), content \(s(window.contentLayoutRect)), min \(s(window.minSize)),"
+              + " screen \(s(screen?.frame ?? .zero)), visible \(s(screen?.visibleFrame ?? .zero))")
+        guard let content = window.contentView else { return }
+        for view in content.subviews {
+            print("layout:   \(type(of: view)) \(s(view.frame)) fitting \(s(view.fittingSize))")
         }
-        if let content = window.contentView { walk(content, 0) }
+        let needed = content.subviews.map(\.fittingSize.height).max() ?? 0
+        if needed > window.contentLayoutRect.height + 1 {
+            print(String(format: "layout: the editor needs %.0f points of height and the window has %.0f",
+                         needed, window.contentLayoutRect.height))
+        }
     }
 
     private static func capture(_ session: OOOSession) {

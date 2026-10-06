@@ -72,7 +72,9 @@ extension Director {
     }
 
     /// The same detail on the new slide: the same words (or, for a figure,
-    /// the nearest figure), else the most alike text, if it is alike enough.
+    /// the nearest figure), else the most alike text, if it is alike enough,
+    /// else text of the same kind in the same place (a number corrected where
+    /// it stood, "$412k" now "$431k").
     static func counterpart(of b: DetailBlock, in blocks: [DetailBlock], excluding taken: Set<Int>) -> Int? {
         let open = blocks.indices.filter { !taken.contains($0) }
         if b.role == .figure {
@@ -89,7 +91,14 @@ extension Director {
             let score = Float(mine.intersection(theirs).count) / Float(max(mine.union(theirs).count, 1))
             if score >= 0.5, score > (best?.score ?? 0) { best = (i, score) }
         }
-        return best?.i
+        if let best { return best.i }
+        var inPlace: (i: Int, score: Float)?
+        for i in open where blocks[i].role == b.role {
+            let shared = overlap(blocks[i].bounds, b.bounds)
+            let score = shared / max(area(blocks[i].bounds) + area(b.bounds) - shared, 1e-8)
+            if score >= 0.5, score > (inPlace?.score ?? 0) { inPlace = (i, score) }
+        }
+        return inPlace?.i
     }
 
     static func same(_ a: ShotFrame, _ b: ShotFrame) -> Bool {

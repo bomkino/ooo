@@ -34,6 +34,11 @@ shot() {
   wait "$watchdog" 2>/dev/null
   if [ "$rc" -eq 0 ] && [ -s "$OUT/$name.png" ]; then
     grep -h '^snapshot' "$OUT/$name.log" | sed "s|^snapshot $OUT/|  |"
+    # The whole editor fits the window: the timeline is never off the bottom.
+    if grep -q 'the editor needs' "$OUT/$name.log"; then
+      grep -h 'the editor needs' "$OUT/$name.log" | sed "s|^layout: |  $name.png: |"
+      failures=$((failures + 1))
+    fi
   else
     echo "  $name.png FAILED (exit $rc)"
     tail -5 "$OUT/$name.log" | sed 's/^/    /'
