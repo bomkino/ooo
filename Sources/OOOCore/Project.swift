@@ -189,9 +189,17 @@ public struct OOOProject: Codable, Hashable, Sendable {
     /// A build whose `readerVersion` is lower refuses the file rather than
     /// quietly exporting it without the settings it can't read.
     public var minimumReaderVersion: Int? = OOOProject.readerVersion
-    /// The newest files this build reads in full. Raise it, and write it as
-    /// `minimumReaderVersion`, when a setting older builds would drop arrives.
-    public static let readerVersion = 1
+    /// The newest files this build reads in full. Raise it, and say in
+    /// `neededReader` what needs it, when a setting older builds would drop arrives.
+    /// 1: OOO 0.2. 2: OOO 1.0 (Weave, a kicker as typed).
+    public static let readerVersion = 2
+
+    /// The oldest reader that draws everything this project uses, written as
+    /// `minimumReaderVersion`: a file 0.2 can draw still opens there.
+    public var neededReader: Int {
+        let typedKicker = title.map { !$0.kickerCaps && !$0.kicker.trimmingCharacters(in: .whitespaces).isEmpty } ?? false
+        return arrive.kind == .weave || typedKicker ? 2 : 1
+    }
     public var slide: SlideRef
     /// The establishing framing the slide arrives into.
     public var overview: Shot
@@ -211,6 +219,10 @@ public struct OOOProject: Codable, Hashable, Sendable {
     public var floor: FloorKind?
     /// Words over the opening; nil or empty for none.
     public var title: OpeningTitle?
+    /// What Direct for Me last read on this slide, so it isn't read again
+    /// and the tour can follow the canvas or a corrected slide. Nil until
+    /// read, and cleared when the slide changes.
+    public var reading: [SlideDetail]?
 
     public init(slide: SlideRef, overview: Shot? = nil, shots: [Shot] = [], arrive: Arrive = Arrive(kind: .rise),
                 ending: Ending = .pullBack, style: MotionStyle = MotionStyle(), look: StageLook = OOOProject.defaultLook,
@@ -313,6 +325,18 @@ public struct OOOProject: Codable, Hashable, Sendable {
         }
     }
 
+    /// A corrected version of the slide, keeping the tour: every shot keeps
+    /// its time, move and words, and each one about a detail follows that
+    /// detail's words to where they are on the new slide. `old` is the
+    /// slide's reading before; `new` the replacement's.
+    public mutating func replaceSlide(with ref: SlideRef, reading new: [SlideDetail], from old: [SlideDetail]) {
+        let (A, C) = (slideAspect, canvasAspect)
+        slide = ref
+        reading = new
+        adaptOverview(fromSlideAspect: A, canvasAspect: C)
+        shots = Director.follow(shots, from: old, to: new)
+    }
+
     /// Follows a new slide or canvas shape with the opening, unless someone
     /// has set the opening themselves.
     public mutating func adaptOverview(fromSlideAspect A: Float, canvasAspect C: Float) {
@@ -349,7 +373,9 @@ public enum ProjectPackage {
     public static func encode(_ project: OOOProject) throws -> Data {
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return try enc.encode(project)
+        var p = project
+        p.minimumReaderVersion = p.neededReader
+        return try enc.encode(p)
     }
 
     public static func decode(_ data: Data) throws -> OOOProject {

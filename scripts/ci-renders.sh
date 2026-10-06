@@ -7,8 +7,9 @@
 # opening at five angles and three floors, how dark its type lands against
 # the slide as supplied, how its moves fly (motioncheck), and a draft video.
 # Then the titles, every backdrop look, every arrival (Weave and Develop also
-# as draft videos), export timings, and summary.txt with the numbers that
-# matter. Fails when motioncheck finds a problem in any set.
+# as draft videos), the wide tour moved onto a corrected slide (Replace
+# Slide), the stills Save Stills writes, export timings, and summary.txt with
+# the numbers that matter. Fails when motioncheck finds a problem in any set.
 #
 #   bash scripts/ci-renders.sh [out-dir]
 set -eo pipefail
@@ -21,6 +22,7 @@ mkdir -p "$OUT/fixtures"
 
 echo "== Test slides"
 "$LAB" fixture --kind wide --out "$OUT/fixtures/wide-2576x1080.png"
+"$LAB" fixture --kind wide-revised --out "$OUT/fixtures/wide-revised-2576x1080.png"
 "$LAB" fixture --kind standard --out "$OUT/fixtures/standard-1920x1080.png"
 "$LAB" fixture --kind wide --out "$OUT/fixtures/wide.pdf"
 "$LAB" fixture --kind wide --scale 2 --out "$OUT/fixtures/wide-5152x2160.png"
@@ -53,6 +55,15 @@ render_set wide-png --slide "$OUT/fixtures/wide-2576x1080.png"
 render_set standard-png --slide "$OUT/fixtures/standard-1920x1080.png"
 render_set wide-pdf --slide "$OUT/fixtures/wide.pdf"
 render_set wide-png-2x --slide "$OUT/fixtures/wide-5152x2160.png"
+
+echo "== Replace Slide: the wide tour, moved onto the corrected slide"
+mkdir -p "$OUT/replace"
+"$LAB" plan --slide "$OUT/fixtures/wide-2576x1080.png" | tee "$OUT/replace/before.txt"
+"$LAB" plan --slide "$OUT/fixtures/wide-2576x1080.png" --replace "$OUT/fixtures/wide-revised-2576x1080.png" | tee "$OUT/replace/after.txt"
+"$LAB" landings --slide "$OUT/fixtures/wide-2576x1080.png" --replace "$OUT/fixtures/wide-revised-2576x1080.png" --out "$OUT/replace/landings"
+
+echo "== Save Stills"
+"$LAB" stills --slide "$OUT/fixtures/wide-2576x1080.png" --out "$OUT/wide-png/stills"
 
 echo "== The loop back to the first frame (Leave ending)"
 "$LAB" loopcheck --slide "$OUT/fixtures/wide-2576x1080.png" --ending leave | tee "$OUT/loop.txt"

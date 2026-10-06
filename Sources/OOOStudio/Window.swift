@@ -20,17 +20,21 @@ extension FocusedValues {
 }
 
 public enum OOOCommands {
+    /// Chooses a new slide, or (`replacing`) a corrected version of this
+    /// one that keeps the tour.
     @MainActor
-    public static func chooseSlide(_ session: OOOSession) {
+    public static func chooseSlide(_ session: OOOSession, replacing: Bool = false) {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.allowedContentTypes = OOOSession.slideTypes
-        panel.message = "Choose the slide: a PDF (its first page) or a picture."
-        panel.prompt = "Choose"
+        panel.message = replacing
+            ? "Choose the corrected slide. The tour stays: each framing follows its words to where they are now."
+            : "Choose the slide: a PDF (its first page) or a picture."
+        panel.prompt = replacing ? "Replace" : "Choose"
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
-            MainActor.assumeIsolated { session.importSlide(url) }
+            MainActor.assumeIsolated { replacing ? session.replaceSlide(url) : session.importSlide(url) }
         }
     }
 
@@ -50,6 +54,40 @@ public enum OOOCommands {
 }
 
 extension OOOCommands {
+    /// Saves the opening and every framing as full-size pictures in a new
+    /// folder, for a carousel post or a deck.
+    @MainActor
+    public static func saveStills(_ session: OOOSession) {
+        guard let scene = session.exportScene() else { return }
+        let format = session.project.format
+        session.clock.playing = false
+        let panel = NSSavePanel()
+        let name = session.project.slide.kind == .sample ? "OOO" : "OOO " + session.project.slide.name
+        panel.nameFieldStringValue = name + " stills"
+        panel.canCreateDirectories = true
+        panel.message = String(format: "A folder of pictures, %d × %d: the opening, then each framing once the camera lands.",
+                               format.width, format.height)
+        panel.prompt = "Save Stills"
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            let job = session.beginJob("Saving the stills")
+            Task.detached(priority: .userInitiated) {
+                do {
+                    let files = try Stills.write(scene, to: url, width: format.width, height: format.height)
+                    await MainActor.run {
+                        session.endJob(job)
+                        NSWorkspace.shared.activateFileViewerSelecting(files.prefix(1).map { $0 })
+                    }
+                } catch {
+                    await MainActor.run {
+                        session.endJob(job)
+                        session.message = "Couldn't save the stills: \(readable(error))"
+                    }
+                }
+            }
+        }
+    }
+
     /// Saves the frame at the playhead as a full-size picture, for the
     /// post's cover or thumbnail.
     @MainActor
@@ -95,6 +133,9 @@ public struct OOOMenuCommands: Commands {
             Button("Choose Voiceover…") { if let session { OOOCommands.chooseVoice(session) } }
                 .keyboardShortcut("i", modifiers: [.command, .option])
                 .disabled(session == nil)
+            Button("Replace Slide…") { if let session { OOOCommands.chooseSlide(session, replacing: true) } }
+                .keyboardShortcut("i", modifiers: [.command, .shift])
+                .disabled(session == nil || session?.hasSlide == false)
             Button("Paste Slide") { session?.pasteSlide() }
                 .keyboardShortcut("v", modifiers: [.command, .shift])
                 .disabled(session == nil)
@@ -104,6 +145,9 @@ public struct OOOMenuCommands: Commands {
                 .disabled(session == nil)
             Button("Save Cover Frame…") { if let session { OOOCommands.saveCoverFrame(session) } }
                 .keyboardShortcut("e", modifiers: [.command, .option])
+                .disabled(session == nil || session?.hasSlide == false)
+            Button("Save Stills…") { if let session { OOOCommands.saveStills(session) } }
+                .keyboardShortcut("e", modifiers: [.command, .shift])
                 .disabled(session == nil || session?.hasSlide == false)
         }
         CommandMenu("Camera") {
@@ -121,6 +165,32 @@ public struct OOOMenuCommands: Commands {
                 .keyboardShortcut("d", modifiers: .command)
                 .disabled(session?.selectedShot == nil)
             Button("Delete Shot") { session?.deleteSelectedShot() }
+                .disabled(session?.selectedShot == nil)
+            Divider()
+            // Every drag on the map and the timeline has a key; a run of presses is one undo step.
+            Button("Move Framing Left") { session?.nudgeFraming(-1, 0) }
+                .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
+                .disabled(session == nil)
+            Button("Move Framing Right") { session?.nudgeFraming(1, 0) }
+                .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
+                .disabled(session == nil)
+            Button("Move Framing Up") { session?.nudgeFraming(0, -1) }
+                .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+                .disabled(session == nil)
+            Button("Move Framing Down") { session?.nudgeFraming(0, 1) }
+                .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+                .disabled(session == nil)
+            Button("Closer") { session?.nudgeZoom(closer: true) }
+                .keyboardShortcut("=", modifiers: [.command, .option])
+                .disabled(session == nil)
+            Button("Wider") { session?.nudgeZoom(closer: false) }
+                .keyboardShortcut("-", modifiers: [.command, .option])
+                .disabled(session == nil)
+            Button("Land Earlier") { session?.nudgeTime(-1) }
+                .keyboardShortcut("[", modifiers: [.command, .option])
+                .disabled(session?.selectedShot == nil)
+            Button("Land Later") { session?.nudgeTime(1) }
+                .keyboardShortcut("]", modifiers: [.command, .option])
                 .disabled(session?.selectedShot == nil)
         }
         CommandMenu("Playback") {
@@ -168,10 +238,12 @@ public struct OOORoot: View {
                 if session.document.isNew {
                     session.document.isNew = false
                     session.clock.time = 0
-                    session.clock.playing = true
+                    session.clock.autoplay()
                 }
             }
             .onChange(of: undoManager) { _, um in session.undoManager = um }
+            .modifier(EditorKeys(session: session))
+            .environment(session.clock)
             .modifier(SnapshotHost(session: session))
             .focusedSceneValue(\.oooSession, session)
             .preferredColorScheme(AppearanceChoice(rawValue: appearance)?.colorScheme)
@@ -247,10 +319,61 @@ public struct OOOWindow: View {
     }
 }
 
-/// Plans a tour of the slide. It glows softly while the slide has no shots.
+/// Keys that act mid-gesture or while held, which menus can't carry: Esc
+/// cancels a drag, and holding \ shows the slide in the Original look.
+/// Only this window's keys, while it is in front.
+struct EditorKeys: ViewModifier {
+    let session: OOOSession
+    @State private var window = WindowBox()
+    @State private var monitor: Any?
+
+    func body(content: Content) -> some View {
+        content
+            .background(WindowReader(box: window))
+            .onAppear {
+                guard monitor == nil else { return }
+                let box = window, session = session
+                monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { event in
+                    guard let w = box.window, event.window === w else { return event }
+                    return MainActor.assumeIsolated { session.handleKey(event) } ? nil : event
+                }
+            }
+            .onDisappear {
+                if let monitor { NSEvent.removeMonitor(monitor) }
+                monitor = nil
+            }
+    }
+}
+
+final class WindowBox {
+    weak var window: NSWindow?
+}
+
+/// Notes which window a view is in.
+struct WindowReader: NSViewRepresentable {
+    let box: WindowBox
+    func makeNSView(context: Context) -> NSView {
+        let v = WindowTracker()
+        v.box = box
+        return v
+    }
+    func updateNSView(_ view: NSView, context: Context) {}
+
+    final class WindowTracker: NSView {
+        var box: WindowBox?
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            box?.window = window
+        }
+    }
+}
+
+/// Plans a tour of the slide. It glows softly while the slide has no shots
+/// (steadily, with Reduce Motion on).
 struct DirectButton: View {
     @Bindable var session: OOOSession
     @State private var pulse = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var glow: Bool { session.project.shots.isEmpty && session.hasSlide && session.busy == nil }
 
@@ -263,7 +386,9 @@ struct DirectButton: View {
         .shadow(color: Theme.camera.opacity(glow && pulse ? 0.8 : 0), radius: 6)
         // The pulse runs only while the glow shows; otherwise nothing animates.
         .onChange(of: glow, initial: true) { _, on in
-            if on {
+            if on && reduceMotion {
+                pulse = true
+            } else if on {
                 withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) { pulse = true }
             } else {
                 withTransaction(Transaction(animation: nil)) { pulse = false }

@@ -132,6 +132,17 @@ public struct Shot: Codable, Hashable, Sendable, Identifiable {
     /// The detail the shot is about, which its emphasis lights or lifts;
     /// nil is the whole framing.
     public var focus: ShotFrame?
+    /// True for a shot Direct for Me planned, until its framing is changed
+    /// by hand: a planned framing follows the canvas, one you set never moves.
+    public var planned: Bool?
+
+    public var isPlanned: Bool { planned == true }
+
+    /// Whether `other` shows the slide differently: its framing, angle, lens or read-along.
+    public func framesDifferently(from other: Shot) -> Bool {
+        frame != other.frame || yaw != other.yaw || pitch != other.pitch || roll != other.roll || lens != other.lens
+            || sweep != other.sweep
+    }
 
     public init(id: UUID = UUID(), time: Double, travel: Double? = nil, frame: ShotFrame,
                 yaw: Float = 0, pitch: Float = 0, roll: Float = 0, lens: Float = 28, aperture: Float = 0.4,

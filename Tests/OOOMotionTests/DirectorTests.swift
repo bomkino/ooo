@@ -216,6 +216,60 @@ final class DirectorTests: XCTestCase {
         ]
     }
 
+    /// Direct for Me's framings follow the canvas; one set by hand never moves.
+    func testPlannedFramingsFollowTheCanvasAndYoursStay() {
+        let reel = Director.shots(DirectorInput(details: standard, slideAspect: A, canvasAspect: C, start: 2.1, safe: .reel))
+        let wide = Director.shots(DirectorInput(details: standard, slideAspect: A, canvasAspect: 16.0 / 9, start: 2.1))
+        XCTAssertTrue(reel.allSatisfy(\.isPlanned))
+        XCTAssertGreaterThan(reel.count, 2)
+        var mine = reel
+        mine[1].frame.size *= 0.8
+        mine[1].planned = nil
+        mine[2].time += 0.7
+        let moved = Director.reframe(mine, from: wide)
+        XCTAssertEqual(moved.count, mine.count)
+        for (i, s) in moved.enumerated() {
+            XCTAssertEqual(s.time, mine[i].time, "times stay")
+            XCTAssertEqual(s.id, mine[i].id)
+            if i == 1 {
+                XCTAssertEqual(s, mine[1], "a framing set by hand stays as it is")
+            } else if let match = wide.first(where: { $0.focus == s.focus }) {
+                XCTAssertEqual(s.frame, match.frame, "shot \(i) takes the wide canvas's framing")
+                XCTAssertEqual(s.yaw, match.yaw)
+            }
+        }
+        XCTAssertNotEqual(moved[0].frame, reel[0].frame, "a tall frame and a wide one frame the headline differently")
+    }
+
+    /// Replacing a slide with a corrected one keeps the tour: shots follow
+    /// their words to where they moved, and a shot whose detail is gone stays.
+    func testShotsFollowTheirWordsOntoACorrectedSlide() {
+        let before = Director.shots(DirectorInput(details: standard, slideAspect: A, canvasAspect: C, start: 2.1, safe: .reel))
+        // The corrected slide: the headline moved down, the $4.2B ring's
+        // figure changed, and the logos are gone.
+        let shift: Float = 0.06
+        let corrected: [SlideDetail] = standard.compactMap { d in
+            var d = d
+            if d.text.hasPrefix("A $4.2B") || d.text.hasPrefix("nobody") { d.frame.center.y += shift }
+            if d.text == "$4.2B" { d.text = "$4.5B" }
+            if ["Northwind", "Halcyon", "Brightline", "TRUSTED BY"].contains(d.text) { return nil }
+            return d
+        }
+        let after = Director.follow(before, from: standard, to: corrected)
+        XCTAssertEqual(after.map(\.id), before.map(\.id))
+        XCTAssertEqual(after.map(\.time), before.map(\.time))
+        let headline = try? XCTUnwrap(before.firstIndex { $0.label?.hasPrefix("A $4.2B market") ?? false })
+        if let h = headline {
+            XCTAssertEqual(after[h].frame.center.y, before[h].frame.center.y + shift, accuracy: 1e-4, "the headline's shot moves with it")
+            XCTAssertEqual(after[h].frame.size, before[h].frame.size)
+        }
+        for (b, a) in zip(before, after) where b.focus.map({ $0.center.y > 0.7 }) ?? false {
+            XCTAssertEqual(a, b, "a shot of something gone or unmoved stays")
+        }
+        // Nothing moved: nothing changes.
+        XCTAssertEqual(Director.follow(before, from: standard, to: standard), before)
+    }
+
     func testDetailsInOneViewGetOneShot() {
         // A 1080 px picture in a reel: the sharp limit keeps the rings' numbers
         // in nearly the same close-up, so only the first of them gets a shot.

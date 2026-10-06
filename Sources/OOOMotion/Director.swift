@@ -519,6 +519,7 @@ public enum Director {
                             move: .glide, ease: .glide, breathe: sweep == nil ? 0.55 : 0.25, emphasis: .none, label: label(for: b),
                             cue: b.role == .figure ? nil : b.text, sweep: sweep, sweepTime: sweepTime,
                             focus: ShotFrame(center: b.center, size: b.size))
+            shot.planned = true
             switch b.role {
             case .numbers:
                 shot.emphasis = sweep == nil ? .lift : .none
@@ -882,8 +883,13 @@ public enum Director {
         case .numbers where b.items > 1:
             return "The numbers"
         default:
-            let words = b.text.split(separator: " ").prefix(5).joined(separator: " ")
-            return words.isEmpty ? "A detail" : (b.text.split(separator: " ").count > 5 ? words + "…" : words)
+            return textLabel(b.text)
         }
+    }
+
+    /// A detail named by its first five words.
+    static func textLabel(_ text: String) -> String {
+        let words = text.split(separator: " ").prefix(5).joined(separator: " ")
+        return words.isEmpty ? "A detail" : (text.split(separator: " ").count > 5 ? words + "…" : words)
     }
 }

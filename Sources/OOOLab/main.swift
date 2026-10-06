@@ -14,10 +14,14 @@ import StageKit
 //   ooo-lab sheet   --out sheet.png         a contact sheet across the video
 //   ooo-lab render  --out v.mp4 [--quality draft|good|best] [--scale 0.5] [--codec h264|hevc]
 //   ooo-lab analyze                         read the slide and plan a tour
+//   ooo-lab plan                            the tour as it stands (after --replace, as it followed)
 //   ooo-lab path    [--out path.csv]        the camera's path, sampled
 //   ooo-lab landings --out dir              a still at the opening and at every landing
-//   ooo-lab fixture --kind wide|standard --out f.png|f.pdf [--scale 2]
+//   ooo-lab fixture --kind wide|wide-revised|standard --out f.png|f.pdf [--scale 2]
 //                                           draw a test slide: 2576 × 1080 or 1920 × 1080
+//                                           (wide-revised: the wide slide corrected)
+//   ooo-lab stills --out dir                the stills Save Stills writes: the opening, then
+//                                           each framing
 //   ooo-lab openings --out grid.png         the opening at five turns, 28° to 52° (across), and
 //                                           three floors (down: none, soft, mirror)
 //   ooo-lab titles --out grid.png           the opening title in four faces, and in time
@@ -35,7 +39,8 @@ import StageKit
 //
 // Every command takes --project <file.ooo> (default: the sample), or
 // --slide <file> (a PDF or picture, read and directed as the app would on a
-// drop), --format reel|portrait|square|landscape, --floor none|soft|mirror,
+// drop) and --replace <file> (then Replace Slide with it: the tour follows
+// its words onto the new slide), --format reel|portrait|square|landscape, --floor none|soft|mirror,
 // --ending hold|pullBack|fade|leave, --arrive rise|unfold|drop|develop|turn|glide|weave|none and --title "words" [--kicker "line above"
 // [--kicker-as-typed]] [--face modern|grotesk|editorial|poster].
 
@@ -109,8 +114,25 @@ if let path = value("--slide") {
     do {
         let details = try SlideAnalysis.read(SlideSource(ref: ref, media: dir))
         project.shots = Director.shots(project.directorInput(details))
+        project.reading = details
+        project.makeRoomForTitle()
     } catch {
         fail("could not read \(path): \(error)")
+    }
+}
+if let path = value("--replace") {
+    // The app's Replace Slide: the new slide, and the tour following its words onto it.
+    guard let dir = media, let old = project.reading else { fail("--replace needs --slide") }
+    let url = URL(fileURLWithPath: path)
+    guard var ref = SlideSource.inspect(url) else { fail("not a slide: \(path)") }
+    let file = "replaced." + url.pathExtension.lowercased()
+    do {
+        try FileManager.default.copyItem(at: url, to: dir.appendingPathComponent(file))
+        ref.file = file
+        let new = try SlideAnalysis.read(SlideSource(ref: ref, media: dir))
+        project.replaceSlide(with: ref, reading: new, from: old)
+    } catch {
+        fail("could not replace the slide with \(path): \(error)")
     }
 }
 
@@ -216,6 +238,9 @@ case "analyze":
         fail("analyze failed: \(error)")
     }
 
+case "plan":
+    printPlan(project.shots)
+
 case "landings":
     // The opening, then each framing a moment after the camera lands on it.
     let scene = loadScene()
@@ -239,6 +264,18 @@ case "landings":
         }
     } catch {
         fail("landings failed: \(error)")
+    }
+
+case "stills":
+    // What Save Stills writes, at the canvas's size.
+    let scene = loadScene()
+    let dir = URL(fileURLWithPath: value("--out") ?? "stills", isDirectory: true)
+    do {
+        for url in try Stills.write(scene, to: dir, width: project.format.width, height: project.format.height) {
+            print("still \(url.lastPathComponent)")
+        }
+    } catch {
+        fail("stills failed: \(error)")
     }
 
 case "openings":
@@ -581,7 +618,7 @@ case "loopcheck":
     }
 
 case "fixture":
-    guard let kind = Fixture(rawValue: value("--kind") ?? "wide") else { fail("unknown fixture; use wide or standard") }
+    guard let kind = Fixture(rawValue: value("--kind") ?? "wide") else { fail("unknown fixture; use wide, wide-revised or standard") }
     let out = URL(fileURLWithPath: value("--out") ?? "\(kind.rawValue).png")
     let scale = CGFloat(Double(value("--scale") ?? "") ?? 1)
     do {
@@ -611,9 +648,9 @@ case "path":
 default:
     print("""
     ooo-lab — headless renders and checks for OOO
-      shaders | still | sheet | render | analyze | path | landings | openings | titles | blurcheck | inkcheck
-      motioncheck | loopcheck | fixture
-      --project file.ooo | --slide file.pdf|png  --format reel|portrait|square|landscape  --floor none|soft|mirror  --out path
+      shaders | still | sheet | render | analyze | plan | path | landings | stills | openings | titles
+      backdrops | arrivals | blurcheck | inkcheck | motioncheck | loopcheck | fixture
+      --project file.ooo | --slide file.pdf|png [--replace file]  --format reel|portrait|square|landscape  --floor none|soft|mirror  --out path
     """)
 }
 

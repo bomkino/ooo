@@ -11,12 +11,16 @@ import UniformTypeIdentifiers
 enum Fixture: String, CaseIterable {
     /// 2576 × 1080, light: traction, a bar chart, three numbers, a footnote.
     case wide
+    /// The wide slide corrected, as a team sends it a day later: new numbers
+    /// in the headline, the stats and the chart, the stats and the chart
+    /// moved, a word gone from the footnote. For Replace Slide.
+    case wideRevised = "wide-revised"
     /// 1920 × 1080, dark: a market slide with rings, a paragraph, wordmarks.
     case standard
 
     var size: CGSize {
         switch self {
-        case .wide: return CGSize(width: 2576, height: 1080)
+        case .wide, .wideRevised: return CGSize(width: 2576, height: 1080)
         case .standard: return CGSize(width: 1920, height: 1080)
         }
     }
@@ -56,6 +60,7 @@ enum Fixture: String, CaseIterable {
     func draw(_ ctx: CGContext) {
         switch self {
         case .wide: Self.drawWide(ctx)
+        case .wideRevised: Self.drawWide(ctx, revised: true)
         case .standard: Self.drawStandard(ctx)
         }
     }
@@ -69,7 +74,7 @@ enum Fixture: String, CaseIterable {
 
     // MARK: - Wide: traction
 
-    static func drawWide(_ ctx: CGContext) {
+    static func drawWide(_ ctx: CGContext, revised: Bool = false) {
         let W: CGFloat = 2576, H: CGFloat = 1080
         let paper = rgb(0.980, 0.976, 0.965), ink = rgb(0.075, 0.078, 0.090)
         let soft = rgb(0.075, 0.078, 0.090, 0.58), faint = rgb(0.075, 0.078, 0.090, 0.12)
@@ -79,7 +84,7 @@ enum Fixture: String, CaseIterable {
 
         text(ctx, "07", font: font("AvenirNext-DemiBold", 22), color: accent, at: CGPoint(x: 140, y: 140), tracking: 1)
         text(ctx, "TRACTION", font: font("AvenirNext-DemiBold", 22), color: soft, at: CGPoint(x: 186, y: 140), tracking: 4)
-        text(ctx, "Revenue grew 3.1× this year.", font: font("AvenirNext-Bold", 88), color: ink,
+        text(ctx, revised ? "Revenue grew 3.4× this year." : "Revenue grew 3.1× this year.", font: font("AvenirNext-Bold", 88), color: ink,
              at: CGPoint(x: 134, y: 262), tracking: -2)
         text(ctx, "Teams that send one great slide instead of a deck hear back faster,",
              font: font("AvenirNext-Regular", 30), color: soft, at: CGPoint(x: 140, y: 340))
@@ -87,15 +92,18 @@ enum Fixture: String, CaseIterable {
              font: font("AvenirNext-Regular", 30), color: soft, at: CGPoint(x: 140, y: 384))
 
         // Three numbers.
-        let stats: [(String, String)] = [("3.1×", "revenue growth"), ("62", "new customers"), ("94%", "net revenue retention")]
+        let stats: [(String, String)] = revised
+            ? [("3.4×", "revenue growth"), ("71", "new customers"), ("94%", "net revenue retention")]
+            : [("3.1×", "revenue growth"), ("62", "new customers"), ("94%", "net revenue retention")]
+        let statsAt = revised ? CGPoint(x: 220, y: 700) : CGPoint(x: 140, y: 760)
         for (i, s) in stats.enumerated() {
-            let x = 140 + CGFloat(i) * 400
-            text(ctx, s.0, font: font("AvenirNext-DemiBold", 96), color: i == 0 ? accent : ink, at: CGPoint(x: x - 4, y: 760), tracking: -2)
-            text(ctx, s.1, font: font("AvenirNext-Medium", 26), color: soft, at: CGPoint(x: x, y: 806))
+            let x = statsAt.x + CGFloat(i) * (revised ? 430 : 400)
+            text(ctx, s.0, font: font("AvenirNext-DemiBold", 96), color: i == 0 ? accent : ink, at: CGPoint(x: x - 4, y: statsAt.y), tracking: -2)
+            text(ctx, s.1, font: font("AvenirNext-Medium", 26), color: soft, at: CGPoint(x: x, y: statsAt.y + 46))
         }
 
         // The chart: nine months of bars, the last one lit.
-        let plot = CGRect(x: 1640, y: 300, width: 796, height: 520)
+        let plot = revised ? CGRect(x: 1560, y: 330, width: 840, height: 500) : CGRect(x: 1640, y: 300, width: 796, height: 520)
         text(ctx, "Monthly recurring revenue, $k", font: font("AvenirNext-DemiBold", 24), color: ink,
              at: CGPoint(x: plot.minX, y: 214))
         for k in 0...4 {
@@ -106,7 +114,7 @@ enum Fixture: String, CaseIterable {
                 text(ctx, "\(k * 100)", font: font("AvenirNext-Regular", 18), color: soft, at: CGPoint(x: plot.maxX + 14, y: y + 6))
             }
         }
-        let values: [CGFloat] = [132, 141, 158, 171, 196, 240, 291, 352, 412]
+        let values: [CGFloat] = [132, 141, 158, 171, 196, 240, 291, 352, revised ? 431 : 412]
         let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep"]
         let step = plot.width / CGFloat(values.count), bar = step * 0.56
         for (i, v) in values.enumerated() {
@@ -121,17 +129,18 @@ enum Fixture: String, CaseIterable {
             text(ctx, m, font: font("AvenirNext-Medium", 18), color: soft, at: CGPoint(x: x + bar / 2 - mw / 2, y: plot.maxY + 34))
         }
         let last = plot.minX + step * (CGFloat(values.count) - 0.5)
-        let label = "$412k"
+        let label = revised ? "$431k" : "$412k"
         let lw = width(label, font: font("AvenirNext-Bold", 40), tracking: -0.5)
         text(ctx, label, font: font("AvenirNext-Bold", 40), color: accent,
-             at: CGPoint(x: last - lw / 2, y: plot.maxY - plot.height * 412 / 400 - 18), tracking: -0.5)
+             at: CGPoint(x: last - lw / 2, y: plot.maxY - plot.height * values[values.count - 1] / 400 - 18), tracking: -0.5)
 
         // Footer and the footnote.
         ctx.setFillColor(faint)
         ctx.fill(CGRect(x: 140, y: 952, width: W - 280, height: 1))
         text(ctx, "pitch.dog", font: font("AvenirNext-DemiBold", 22), color: ink, at: CGPoint(x: 140, y: 1006))
         text(ctx, "Series A update  ·  Confidential", font: font("AvenirNext-Regular", 20), color: soft, at: CGPoint(x: 268, y: 1006))
-        let note = "Source: billing export, 1 Jan – 30 Sep 2026. Excludes one-off services. Unaudited."
+        let note = revised ? "Source: billing export, 1 Jan – 30 Sep 2026. Excludes one-off services."
+            : "Source: billing export, 1 Jan – 30 Sep 2026. Excludes one-off services. Unaudited."
         let nw = width(note, font: font("AvenirNext-Regular", 13))
         text(ctx, note, font: font("AvenirNext-Regular", 13), color: soft, at: CGPoint(x: W - 140 - nw, y: 1004))
     }
