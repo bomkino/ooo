@@ -1,7 +1,9 @@
 #!/bin/bash
-# Turns on the in-app update to a release CI has already published: signs its
-# ZIP with pitch.dog's key and puts the signed appcast.xml on it. Nothing is
-# rebuilt. Run on the release Mac, from this repository on main:
+# Turns on the in-app update to a release: signs its ZIP with pitch.dog's key
+# and writes the signed appcast.xml. Nothing is rebuilt. The release workflow
+# runs it on every release (--dir, before publishing) and for "Sign" (a
+# release already out), with the key from its secret; it also runs on a Mac
+# that holds the key, from this repository on main:
 #
 #   bash scripts/sign-release.sh v1.0.1 [--only]
 #
@@ -10,7 +12,7 @@
 #   3. signs the ZIP (generate_appcast --ed-key-file) into appcast.xml, with
 #      this version's section of CHANGELOG.md for the update window
 #   4. checks the signature with the public key inside the app, as Sparkle will
-#   5. uploads appcast.xml to the release, replacing the one CI carried over
+#   5. uploads appcast.xml to the release, replacing the one it has
 #   6. confirms releases/latest/download/appcast.xml now names this version
 #   7. with --only, then deletes every other release, so this one is the only
 #      version on the releases page (their tags stay). Nothing reads them once
@@ -26,7 +28,7 @@
 #   DOWNLOAD_URL  where the ZIP is served (default: the GitHub release; --dir needs it)
 #
 # The key is only ever read by generate_appcast, from its file. Never commit
-# it, paste it anywhere or put it in a GitHub secret (docs/UPDATES.md).
+# it, paste it anywhere or print it (docs/UPDATES.md).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 REPO="bomkino/ooo"
@@ -38,7 +40,7 @@ fail() { echo "sign-release: $*" >&2; exit 1; }
 case "${1:-}" in
   --dir) LOCAL="${2:?--dir needs a folder}"; TAG="" ;;
   v[0-9]*.[0-9]*.[0-9]*) LOCAL=""; TAG="$1" ;;
-  *) sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
 ONLY=""
 for a in "$@"; do [ "$a" = --only ] && ONLY=1; done

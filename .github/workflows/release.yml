@@ -1,19 +1,24 @@
 # Publishes an OOO release from CI, run by hand from the Actions tab on main:
-# the disk image, the ZIP, checksums and notes, marked Latest.
+# the disk image, the ZIP, checksums, notes and the update feed, signed with
+# pitch.dog's update key, marked Latest. Installed copies are offered the new
+# version as soon as it is out; the last step proves it with a real copy of
+# the release before it.
 #
-# The update feed (appcast.xml) has to be signed with pitch.dog's private key,
-# which never leaves the release Mac and is never given to CI. So this release
-# carries the current feed over unchanged: installed copies, old and new, keep
-# reading "up to date" and download nothing. Then, on the release Mac,
+# The key is the SPARKLE_PRIVATE_KEY secret of the `release` environment,
+# which only main may use (docs/UPDATES.md). It is written to a file only the
+# runner can read, used by Sparkle's generate_appcast, and deleted.
 #
-#   bash scripts/sign-release.sh v<version>
-#
-# signs this release's ZIP and replaces the feed, and installed copies are
-# offered the new version (docs/UPDATES.md).
+# "Sign" (a version like v1.0.0) signs the update of a release that is already
+# out instead, without rebuilding it.
 name: release
 
 on:
   workflow_dispatch:
+    inputs:
+      sign:
+        description: Only sign the update of a release that is already out (like v1.0.0). Leave empty to publish a new release.
+        type: string
+        default: ''
 
 permissions:
   contents: write
@@ -24,7 +29,9 @@ concurrency:
 
 jobs:
   release:
+    if: ${{ inputs.sign == '' }}
     runs-on: macos-26
+    environment: release
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -48,6 +55,18 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "LATEST=$LATEST" >> "$GITHUB_ENV"
           echo "Publishing $VERSION after ${LATEST:-nothing}"
+      - name: Get Sparkle's tools and the update key
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          [ -n "$SPARKLE_PRIVATE_KEY" ] || { echo "::error::The release environment has no SPARKLE_PRIVATE_KEY secret. docs/UPDATES.md has the one-time command that sets it."; exit 1; }
+          curl -fsSL -o "$RUNNER_TEMP/sparkle.tar.xz" https://github.com/sparkle-project/Sparkle/releases/download/2.10.0/Sparkle-2.10.0.tar.xz
+          echo "c2bf58aa8387266ac179357b1415d6f2635f044da8be41042af32425dae6da0c  $RUNNER_TEMP/sparkle.tar.xz" | shasum -a 256 -c -
+          mkdir -p "$RUNNER_TEMP/sparkle" && tar -xf "$RUNNER_TEMP/sparkle.tar.xz" -C "$RUNNER_TEMP/sparkle"
+          umask 077
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | tr -d '[:space:]' > "$RUNNER_TEMP/update.key"
+          echo "SPARKLE_BIN=$RUNNER_TEMP/sparkle/bin" >> "$GITHUB_ENV"
+          echo "SPARKLE_KEY=$RUNNER_TEMP/update.key" >> "$GITHUB_ENV"
       - name: Test
         run: swift test
       - name: Package the app
@@ -64,25 +83,9 @@ jobs:
           KEY="$(/usr/libexec/PlistBuddy -c "Print :SUPublicEDKey" dist/OOO.app/Contents/Info.plist)"
           [ "$KEY" = "P43E8I+FgVyAW3QkS4J9bnDRRhAnsS4y3dT2WDce1lQ=" ] || { echo "::error::OOO.app doesn't trust pitch.dog's update key"; exit 1; }
           bash scripts/make-release.sh release
-          # The feed, carried over from the Latest release unchanged, after
-          # checking it is safe to keep serving: it must name a version below
-          # this one, and the ZIP it names must still download.
-          if [ -n "$LATEST" ]; then
-            gh release download "$LATEST" -R "$GITHUB_REPOSITORY" -p appcast.xml -D release
-            xmllint --noout release/appcast.xml
-            FEED_BUILD="$(xmllint --xpath 'string(//*[local-name()="version"][1])' release/appcast.xml)"
-            [ -n "$FEED_BUILD" ] || FEED_BUILD="$(grep -o 'sparkle:version="[0-9]*"' release/appcast.xml | head -1 | cut -d'"' -f2)"
-            BUILD="$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" dist/OOO.app/Contents/Info.plist)"
-            [ -n "$FEED_BUILD" ] && [ "$FEED_BUILD" -lt "$BUILD" ] \
-              || { echo "::error::The carried feed names build '$FEED_BUILD', not one below $BUILD"; exit 1; }
-            FEED_VERSION="$(xmllint --xpath 'string(//*[local-name()="shortVersionString"][1])' release/appcast.xml)"
-            [ -n "$FEED_VERSION" ] || FEED_VERSION="$(grep -o 'shortVersionString="[^"]*"' release/appcast.xml | head -1 | cut -d'"' -f2)"
-            echo "FEED_VERSION=$FEED_VERSION" >> "$GITHUB_ENV"
-            URL="$(grep -o 'url="[^"]*"' release/appcast.xml | head -1 | cut -d'"' -f2)"
-            # A ranged GET: GitHub's release downloads refuse HEAD after the redirect.
-            curl -fsSL -r 0-99 -o /dev/null "$URL" || { echo "::error::The carried feed's download ($URL) doesn't answer"; exit 1; }
-            echo "Carrying over $LATEST's feed: $FEED_VERSION (build $FEED_BUILD), $URL"
-          fi
+          # The feed: this release's ZIP, signed, and checked with the key inside the app.
+          DOWNLOAD_URL="https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION/" bash scripts/sign-release.sh --dir release
+          rm -f "$SPARKLE_KEY"
           # The release notes, in the shape of Drift's, Galileo's and Backdrop's:
           # the changelog section's opening line, what's new, how to install,
           # the files, what was checked, the source and the checksums.
@@ -101,7 +104,7 @@ jobs:
           1. Download `OOO-@VERSION@-macOS-arm64.dmg`, open it, and drag OOO onto **Applications**. If macOS offers to install it for you and then says "Could not install", click OK and drag it instead. (That route only works for apps notarized by Apple.) `OOO-@VERSION@-macOS-arm64.zip` is the same app, if you'd rather unzip it.
           2. The first time you open it, macOS stops it. Open **System Settings › Privacy & Security**, scroll down, and click **Open Anyway**. (Control-click › Open no longer works on current macOS.)
 
-          It needs an Apple silicon Mac with macOS 14 or later. OOO is free and open source, signed ad hoc and not notarized. If you have OOO 0.2.0 or later, it offers this version itself (**OOO › Check for Updates…**).
+          It needs an Apple silicon Mac with macOS 14 or later. OOO is free and open source, signed ad hoc and not notarized. If you have OOO 0.2.0 or later, it offers this version itself (**OOO › Check for Updates…**), within a day or at once from that menu.
 
           ### Files
 
@@ -112,7 +115,7 @@ jobs:
 
           ### Checked
 
-          Built from this commit by `release.yml` on GitHub's macOS 26 runner (Apple silicon). The unit tests pass: the camera's maths, the director, documents and the renderer. In `scripts/test-update.sh`, a test copy packed and signed by the release scripts updated itself from a local feed and relaunched on the new version, and an update with a single changed byte was refused.
+          Built from this commit by `release.yml` on GitHub's macOS 26 runner (Apple silicon). The unit tests pass: the camera's maths, the director, documents and the renderer. In `scripts/test-update.sh`, a test copy packed and signed by the release scripts updated itself from a local feed and relaunched on the new version, and an update with a single changed byte was refused. The update feed was signed by this workflow, and the signature checked with the public key inside the app.
           NOTES
             echo
             echo "Source: \`$GITHUB_SHA\` (main)."
@@ -129,16 +132,55 @@ jobs:
         run: |
           gh release create "v$VERSION" release/* --target "$GITHUB_SHA" --latest \
             --title "OOO $VERSION — Apple silicon Mac" --notes-file notes.md
-          # The feed every copy reads is still the one carried over (it names
-          # the last version signed, which can be older than the Latest
-          # release), until scripts/sign-release.sh replaces it.
-          [ -n "$LATEST" ] || exit 0
-          for _ in $(seq 12); do
+          for _ in $(seq 24); do
             FEED="$(curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/appcast.xml" || true)"
-            if echo "$FEED" | grep -Eq "shortVersionString(>|=\")${FEED_VERSION}[<\"]"; then
-              echo "The feed still offers $FEED_VERSION. Next, on the release Mac: bash scripts/sign-release.sh v$VERSION"
+            if grep -Eq "shortVersionString(>|=\")${VERSION}[<\"]" <<< "$FEED"; then
+              echo "The feed offers $VERSION: installed copies will update to it."
               exit 0
             fi
             sleep 5
           done
-          echo "::error::releases/latest/download/appcast.xml doesn't serve the carried feed"; exit 1
+          echo "::error::releases/latest/download/appcast.xml doesn't offer $VERSION"; exit 1
+      - name: Update a copy of the release before from the live feed
+        timeout-minutes: 10
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/test-live-update.sh
+      - name: Forget the key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/update.key"
+
+  sign:
+    if: ${{ inputs.sign != '' }}
+    runs-on: macos-26
+    environment: release
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ inputs.sign }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: On main only
+        run: '[ "$GITHUB_REF_NAME" = main ] || { echo "::error::Run this on main."; exit 1; }'
+      - name: Get Sparkle's tools and the update key
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          [ -n "$SPARKLE_PRIVATE_KEY" ] || { echo "::error::The release environment has no SPARKLE_PRIVATE_KEY secret. docs/UPDATES.md has the one-time command that sets it."; exit 1; }
+          curl -fsSL -o "$RUNNER_TEMP/sparkle.tar.xz" https://github.com/sparkle-project/Sparkle/releases/download/2.10.0/Sparkle-2.10.0.tar.xz
+          echo "c2bf58aa8387266ac179357b1415d6f2635f044da8be41042af32425dae6da0c  $RUNNER_TEMP/sparkle.tar.xz" | shasum -a 256 -c -
+          mkdir -p "$RUNNER_TEMP/sparkle" && tar -xf "$RUNNER_TEMP/sparkle.tar.xz" -C "$RUNNER_TEMP/sparkle"
+          umask 077
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | tr -d '[:space:]' > "$RUNNER_TEMP/update.key"
+          echo "SPARKLE_BIN=$RUNNER_TEMP/sparkle/bin" >> "$GITHUB_ENV"
+          echo "SPARKLE_KEY=$RUNNER_TEMP/update.key" >> "$GITHUB_ENV"
+      - name: Sign the release's update
+        run: |
+          bash scripts/sign-release.sh "$TAG"
+          rm -f "$SPARKLE_KEY"
+      - name: Update a copy of the release before from the live feed
+        timeout-minutes: 10
+        run: bash scripts/test-live-update.sh
+      - name: Forget the key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/update.key"

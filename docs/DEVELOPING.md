@@ -57,7 +57,7 @@ The renders, screens and app are kept as the run's artifacts.
 
 ## Releasing
 
-`.github/workflows/release.yml` publishes a release from CI, and `scripts/sign-release.sh` signs its update on the release Mac. Both are described in [`UPDATES.md`](UPDATES.md).
+`.github/workflows/release.yml` publishes a release from CI, its update signed by `scripts/sign-release.sh` with the key from the `release` environment. Both are described in [`UPDATES.md`](UPDATES.md).
 
 ## Layout
 

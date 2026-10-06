@@ -1,8 +1,8 @@
 #!/bin/bash
 # Packs a built OOO.app into a release's files: a disk image for people, a ZIP
 # for the in-app updater, and checksums. Needs no key: the update feed that
-# offers the ZIP is signed separately, by scripts/sign-release.sh on the
-# release Mac (docs/UPDATES.md).
+# offers the ZIP is signed separately, by scripts/sign-release.sh (in the
+# release workflow, with the key from its secret; docs/UPDATES.md).
 #
 #   bash scripts/make-release.sh <out-dir>
 #
