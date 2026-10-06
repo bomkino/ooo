@@ -10,8 +10,14 @@
 - `CardPose.softEdge` fades a card's edges (a detail lifted off a slide blends into it), `CardPose.reflects` keeps an overlaid detail out of the mirror floor, and `StageFrame.reflectionFade` and `reflectionBlur` make a soft floor. A soft-edged card casts a diffuse shadow from inside its solid middle.
 - `StageFrame.travel(to:width:height:)` measures how far anything in view moves between two frames, in pixels, so motion blur takes only the samples a frame needs.
 - `TitleCompositor` is public, with an `encode` that takes the title's opacity and rise directly, for a scene that times its own title.
+- `CardPose.surfaceAmount` lets a card's surface light (tooth, sheen, foil, satin) step back, so its media shows as it is. The backdrop adds no alpha to the scene, which leaves the scene's alpha as the cards' coverage, and `FinishFrame.bloomOnSubject` uses it to keep bloom off the cards' faces.
+- Depth of field measures depth along the view, so focus lies on a plane.
 
 Parts of the editor (`Sources/OOOStudio`: the theme, type, controls, live stage, export sheet and document) are adapted from Drift's `StudioKit`, as marked in each file.
+
+## Sparkle
+
+In-app updates use Sparkle 2.10.0 (github.com/sparkle-project/Sparkle), embedded unchanged as `Contents/Frameworks/Sparkle.framework` with the signature its makers gave it. Copyright (c) 2006–2013 Andy Matuschak and the other authors named in its licence. Released under the MIT License, with the external licences of the code it includes (bsdiff, sais-lite, ed25519 and others); the full text is in `Resources/Licenses/Sparkle-LICENSE.txt`, and in the app at `Contents/Resources/Licenses/Sparkle-LICENSE.txt`. `Sources/Updates/AppUpdates.swift` is Drift's, unchanged.
 
 ## webgl-noise
 

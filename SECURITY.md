@@ -12,9 +12,9 @@ The maintainers aim to acknowledge a report within 5 business days and to agree 
 
 ## What OOO does and does not do
 
-- Everything runs locally. OOO makes no network requests: no account, analytics, updater or cloud service.
+- Everything runs locally: no account, analytics or cloud service. OOO's only network request is its updater (Sparkle) reading this repository's latest release, once a day and when you choose **Check for Updates…**. It installs an update only if it is signed with pitch.dog's EdDSA key, whose public half is built into the app; see `docs/UPDATES.md`.
 - Speech recognition runs on this Mac (`requiresOnDeviceRecognition` where the language supports it). macOS asks for permission the first time.
 - OOO runs with normal user permissions and is **not sandboxed**. Builds are ad-hoc signed and not notarized; ad-hoc signing is not Developer ID signing.
 - A document is a package holding `project.json` and copies of the slide and voiceover. Parsing flaws in PDF, image or audio files are handled by macOS frameworks (Core Graphics, Image I/O, AVFoundation).
 
-Security fixes target `main`. Please allow reasonable time to fix and ship before public disclosure.
+Security fixes target `main` and ship as a release, which installed copies offer as an update. Please allow reasonable time to fix and ship before public disclosure.

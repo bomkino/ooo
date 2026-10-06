@@ -29,14 +29,26 @@ The motion is the point, so it is built carefully.
 - **Speed limits.** A move timed for you never outruns 2.6 e-folds of scale a second at its peak, and every interval keeps part of its time still, so each detail is seen, not just passed.
 - **Composed for the canvas.** A framing seen at an angle is not the rectangle a flat view assumes, so the camera's distance and aim are solved against the framing's real outline on screen, and fitted into the part of the canvas no app interface covers.
 - **Sharp at any zoom.** The whole slide lives in one texture; when the camera needs more, the part it sees is drawn again from the slide's vectors at the resolution that frame needs, snapped to a half-octave ladder so neighbouring frames share it, and drawn half a second before the frame needs it.
-- **A real lens.** Depth of field follows the framed point and deepens as the camera goes in, so a close-up becomes a macro shot. Motion blur is a 180° film shutter, averaged from many moments a frame, and never smears across a cut. Each frame measures how far anything on screen moves while its shutter is open and takes only the moments that motion needs: one while the camera holds, the most in a fast move. On the review renders that saves about a third of the GPU's work at Good and over half at Best, and no frame falls below 49 dB PSNR against full sampling.
+- **The slide as it is, while it is read.** When the camera holds, the surface's sheen steps back and the lens's glow stays in the room around the slide, so black type lands as dark as it is on the slide. The sheen comes back as the camera moves on.
+- **A real lens.** Depth of field focuses on a plane through the framed point, as a lens does, and deepens as the camera goes in, so a close-up becomes a macro shot. Motion blur is a 180° film shutter, averaged from many moments a frame, and never smears across a cut. Each frame measures how far anything on screen moves while its shutter is open and takes only the moments that motion needs: one while the camera holds, the most in a fast move. On the review renders that saves about a third of the GPU's work at Good and over half at Best, and no frame falls below 49 dB PSNR against full sampling.
+- **Made to loop.** A Reel plays on repeat, so the backdrop runs whole cycles over the video's length and, with the Leave ending, drifts back to where it began: the last frame leads into the first.
 - **A director that reads.** Vision reads the text, then reads the slide again in close-ups so the 4-point footnote is found too; the ink that is not text shows where the figures are. The director groups lines into blocks, gives each a role and plans the tour. With a voiceover, each shot lands 150 ms before the words that name it.
 
-Everything runs on your Mac. Nothing is uploaded.
+Everything runs on your Mac. Nothing is uploaded. The only thing OOO fetches is its own updates.
 
 ## Install
 
-Download `OOO.dmg` from the latest build or release, open it and drag OOO to Applications. OOO is ad-hoc signed and not notarized, so the first time, Control-click it and choose **Open** (or allow it under System Settings › Privacy & Security).
+Download `OOO-0.2.0-macOS-arm64.dmg` from the [latest release](https://github.com/bomkino/ooo/releases/latest), open it and drag OOO onto Applications. If macOS offers to install the app for you and then says "Could not install", click OK and drag it instead: macOS only installs that way for apps notarized by Apple. A ZIP of the app is on the release page too.
+
+OOO is signed ad hoc and not notarized, so the first time you open it, macOS stops it. Open System Settings › Privacy & Security, scroll down and click **Open Anyway** (Control-click › Open no longer works from macOS Sequoia on). A copy downloaded from Terminal opens straight away, because nothing marks it as downloaded from the web:
+
+```bash
+gh release download -R bomkino/ooo -p 'OOO-*-macOS-arm64.zip' && ditto -x -k OOO-*-macOS-arm64.zip /Applications
+```
+
+## Updates
+
+From 0.2.0, OOO checks this repository's releases once a day and offers new versions itself (**Check for Updates…** in the OOO menu checks now). An update installs and relaunches in a few seconds, with no second trip to Privacy & Security. Updates are signed with pitch.dog's own EdDSA key and OOO refuses anything not signed with it; no Apple developer account is involved. Install 0.2.0 by hand once, and every version after it arrives by itself. How releases are made and signed is in [`docs/UPDATES.md`](docs/UPDATES.md).
 
 ## Build
 
@@ -47,7 +59,10 @@ swift build -c release          # everything
 swift test                      # the camera's maths, the director, documents and the renderer
 swift run -c release OOO        # the app, unbundled
 bash scripts/build-app.sh       # dist/OOO.app and dist/OOO.dmg
+bash scripts/test-update.sh     # in-app updates: a signed one installs, a tampered one is refused
 ```
+
+The first build fetches Sparkle 2.10.0 through Swift Package Manager. `bash scripts/make-release.sh <folder> [notes.md]` then makes a release's disk image, update ZIP, signed `appcast.xml` and checksums (see [`docs/UPDATES.md`](docs/UPDATES.md)).
 
 ## Headless checks
 
@@ -63,11 +78,13 @@ swift run -c release ooo-lab landings --out dir            # a still at the open
 swift run -c release ooo-lab openings --out grid.png       # the opening at five angles and three floors
 swift run -c release ooo-lab titles --title "…" --out t.png # the opening title in four faces, and in time
 swift run -c release ooo-lab blurcheck --quality good      # adaptive motion blur against full sampling
+swift run -c release ooo-lab inkcheck                      # how dark the type lands at every hold, against the slide
+swift run -c release ooo-lab loopcheck --ending leave      # the step from the last frame back to the first
 swift run -c release ooo-lab path --out path.csv           # the camera's path, sampled at 120 Hz
 swift run -c release ooo-lab fixture --kind wide --out wide.png # a 2576 × 1080 test slide
 ```
 
-Every command takes `--project file.ooo` (the sample by default) or `--slide file.pdf|png` (read and directed as the app does on a drop), `--format reel|portrait|square|landscape|uhd`, `--floor none|soft|mirror` and `--title "…"`. `scripts/ci-renders.sh` renders the review set CI keeps for every change: pitch.dog's real case, wide slides as pictures and PDFs in a 1080 × 1920 reel.
+Every command takes `--project file.ooo` (the sample by default) or `--slide file.pdf|png` (read and directed as the app does on a drop), `--format reel|portrait|square|landscape|uhd`, `--floor none|soft|mirror`, `--ending hold|pullBack|fade|leave` and `--title "…"`. `scripts/ci-renders.sh` renders the review set CI keeps for every change: pitch.dog's real case, wide slides as pictures and PDFs in a 1080 × 1920 reel.
 
 ## Layout
 
@@ -79,6 +96,7 @@ Every command takes `--project file.ooo` (the sample by default) or `--slide fil
 | `Sources/OOOMotion` | The camera's maths, the arrivals, the choreography and the director, in plain Swift that tests anywhere |
 | `Sources/OOOCore` | The slide (PDF, picture, sample), sharp detail at any zoom, the voiceover and its words, slide analysis, rendering and export |
 | `Sources/OOOStudio` | The editor: live stage, slide map, timeline, inspector, export |
+| `Sources/Updates` | In-app updates from this repository's releases (Sparkle), shared with Drift |
 | `Sources/OOOApp` | The app |
 | `Sources/OOOLab` | `ooo-lab`, headless renders and checks |
 

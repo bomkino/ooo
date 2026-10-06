@@ -416,19 +416,17 @@ public final class OOOSession {
                     self.busy = nil
                     // A new slide waits for its tour to arrive; it arrives now either way.
                     let fresh = self.pendingDrop != nil
-                    func arrive() {
-                        guard fresh else { return }
-                        self.selection = .overview
-                        self.clock.time = 0
-                        self.clock.playing = true
-                    }
                     switch result {
                     case .success(let found):
                         self.details = (ref, found)
                         let shots = Director.shots(self.project.directorInput(found))
                         guard !shots.isEmpty else {
                             self.finishDrop()
-                            arrive()
+                            if fresh {
+                                self.selection = .overview
+                                self.clock.time = 0
+                                self.clock.playing = true
+                            }
                             self.message = "OOO found nothing to read on this slide. Draw framings on the slide map to choose what the camera visits."
                             return
                         }
@@ -445,7 +443,11 @@ public final class OOOSession {
                         self.clock.playing = true
                     case .failure(let error):
                         self.finishDrop()
-                        arrive()
+                        if fresh {
+                            self.selection = .overview
+                            self.clock.time = 0
+                            self.clock.playing = true
+                        }
                         self.message = "Couldn't read the slide: \(readable(error))"
                     }
                 }

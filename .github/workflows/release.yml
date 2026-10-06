@@ -75,9 +75,13 @@ jobs:
           XML
           xmllint --noout "$OUT/appcast.xml"
           (cd "$OUT" && shasum -a 256 "$DMG" "$ZIP" > SHA256SUMS.txt)
-          # The release notes: this version's section of the changelog.
-          awk -v v="## $VERSION" 'index($0, v) == 1 { on = 1; next } /^## / { on = 0 } on' CHANGELOG.md > notes.md
-          [ -s notes.md ] || { echo "::error::CHANGELOG.md has no section for $VERSION"; exit 1; }
+          # The release notes: how to install, then this version's section of the changelog.
+          awk -v v="## $VERSION" 'index($0, v) == 1 { on = 1; next } /^## / { on = 0 } on' CHANGELOG.md > changes.md
+          [ -s changes.md ] || { echo "::error::CHANGELOG.md has no section for $VERSION"; exit 1; }
+          {
+            echo "**For Apple silicon Macs with macOS 14 or later.** Download \`$DMG\`, open it and drag OOO onto Applications. The first time you open it, macOS stops it: open System Settings › Privacy & Security, scroll down and click **Open Anyway**. From this version on, OOO updates itself."
+            cat changes.md
+          } > notes.md
           ls -l "$OUT"; cat "$OUT/appcast.xml" "$OUT/SHA256SUMS.txt"
       - name: Publish the release, marked Latest
         env:
