@@ -88,12 +88,18 @@ cp "$SRC/$ZIP" "$T/cast/"
 awk -v v="## $VERSION" 'index($0, v) == 1 { on = 1; next } /^## / { on = 0 } on' CHANGELOG.md > "$T/cast/${ZIP%.zip}.md"
 [ -s "$T/cast/${ZIP%.zip}.md" ] || rm "$T/cast/${ZIP%.zip}.md"
 "$SPARKLE_BIN/generate_appcast" --ed-key-file "$SPARKLE_KEY" --download-url-prefix "$DOWNLOAD_URL" \
-  --link "https://github.com/$REPO/releases" --embed-release-notes --maximum-versions 1 -o "$T/appcast.xml" "$T/cast" >/dev/null
+  --link "https://github.com/$REPO/releases" --embed-release-notes --maximum-versions 1 -o "$T/appcast.xml" "$T/cast" \
+  > "$T/generate.log" || { cat "$T/generate.log"; fail "generate_appcast failed"; }
 xmllint --noout "$T/appcast.xml"
 grep -Eq "shortVersionString(>|=\")$VERSION[<\"]" "$T/appcast.xml" || fail "the appcast doesn't name $VERSION"
 grep -q "url=\"$DOWNLOAD_URL$ZIP\"" "$T/appcast.xml" || fail "the appcast doesn't point at $DOWNLOAD_URL$ZIP"
-SIG="$(grep -o 'sparkle:edSignature="[^"]*"' "$T/appcast.xml" | head -1 | cut -d'"' -f2)"
-[ -n "$SIG" ] || fail "the appcast carries no signature"
+SIG="$(sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p' "$T/appcast.xml" | head -1)"
+# Sparkle signs only with the key whose public half is in the app; with any
+# other key it warns and leaves the appcast unsigned.
+if [ -z "$SIG" ]; then
+  grep -i "warning\|error" "$T/generate.log" || true
+  fail "the app wouldn't accept this appcast: Sparkle left it unsigned. Is SPARKLE_KEY the key whose public half is $PUBLIC?"
+fi
 
 echo "== 4. Checking the signature with the key inside the app"
 cat > "$T/verify.swift" <<'SWIFT'
