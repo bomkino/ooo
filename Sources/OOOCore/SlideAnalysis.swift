@@ -7,79 +7,37 @@ import Vision
 /// Reads a slide the way a viewer would: its text, line by line, and the
 /// parts that draw the eye. Runs on this Mac.
 public enum SlideAnalysis {
-    /// Reads the whole slide, then reads its small print again in close-ups
-    /// drawn just around it: the 4-point footnote is often the detail most
-    /// worth a look, and at the whole slide's scale it is found but misread.
-    /// Only the small print is drawn again, not every quarter of the slide,
-    /// so a wide slide reads in a third of the time (`ooo-lab readcheck`
-    /// compares the two). Figures come from the slide's ink.
+    /// Reads the whole slide, then reads it again in close-ups for the small
+    /// print the whole slide is too coarse to show: the 4-point footnote is
+    /// often the detail most worth a look. Figures come from the slide's ink.
     public static func read(_ source: SlideSource, side: Int = 3200) throws -> [SlideDetail] {
         guard let whole = source.renderWhole(side: side) else { throw RenderError.io("Could not draw the slide.") }
         var found = try lines(in: whole)
-        let seen = found
-        let regions = smallPrint(seen)
-        var closeUps = [[SlideDetail]](repeating: [], count: regions.count)
-        let lock = NSLock()
-        DispatchQueue.concurrentPerform(iterations: regions.count) { i in
-            let r = regions[i]
-            // The line a good 40 pixels tall, the close-up no more than 3200 across.
-            let small = seen.filter { $0.kind == .text && contains(r, $0.frame.bounds) }.map(\.frame.size.y).min() ?? 0.01
-            var perHeight = max(40 / max(small, 1e-3), Float(side) / max(source.aspect, 1))
-            perHeight = min(perHeight, 3200 / max((r.z - r.x) * source.aspect, 1e-3), 3200 / max(r.w - r.y, 1e-3))
-            let w = max(1, Int(((r.z - r.x) * source.aspect * perHeight).rounded()))
-            let h = max(1, Int(((r.w - r.y) * perHeight).rounded()))
-            guard let image = source.render(region: r, width: w, height: h), let read = try? lines(in: image) else { return }
-            let mapped = read.map { d -> SlideDetail in
-                var d = d
-                d.frame = ShotFrame(center: Vec2(r.x + d.frame.center.x * (r.z - r.x), r.y + d.frame.center.y * (r.w - r.y)),
-                                    size: Vec2(d.frame.size.x * (r.z - r.x), d.frame.size.y * (r.w - r.y)))
-                return d
+        // A picture has no more detail to give than its (sharpened) pixels;
+        // read twice its size, its small print comes out of the blur.
+        if source.densityLimit.map({ $0 > Float(whole.height) * 1.25 }) ?? true {
+            let tiles: [SIMD4<Float>] = [(0, 0), (1, 0), (0, 1), (1, 1)].map { c, r in
+                let u0: Float = c == 0 ? 0 : 0.44, v0: Float = r == 0 ? 0 : 0.44
+                return SIMD4(u0, v0, u0 + 0.56, v0 + 0.56)
             }
-            lock.lock(); closeUps[i] = mapped; lock.unlock()
-        }
-        // A close-up's reading of a line replaces the whole slide's.
-        for (r, read) in zip(regions, closeUps) where !read.isEmpty {
-            found.removeAll { d in
-                d.kind == .text && d.frame.size.y < smallLine && contains(r, d.frame.bounds)
-                    && read.contains { overlap($0.frame.bounds, d.frame.bounds) > 0 }
-            }
-        }
-        found = Director.merge(found, closeUps: closeUps.flatMap { $0 }, smallerThan: smallLine)
-        return found + figures(in: whole, text: found.map(\.frame.bounds))
-    }
-
-    /// Lines shorter than this (a share of the slide's height) are small print.
-    static let smallLine: Float = 0.022
-
-    /// Where the small print is: each small line with room around it, run
-    /// together where they meet, as (u0, v0, u1, v1).
-    static func smallPrint(_ found: [SlideDetail]) -> [SIMD4<Float>] {
-        var regions: [SIMD4<Float>] = found.filter { $0.kind == .text && $0.frame.size.y < smallLine }.map { d in
-            let b = d.frame.bounds, mx = 0.02 + 0.1 * d.frame.size.x, my = 1.5 * d.frame.size.y
-            return SIMD4(max(b.x - mx, 0), max(b.y - my, 0), min(b.z + mx, 1), min(b.w + my, 1))
-        }
-        var merged = true
-        while merged {
-            merged = false
-            outer: for i in regions.indices {
-                for j in regions.indices where j > i && overlap(regions[i], regions[j]) > 0 {
-                    let a = regions[i], b = regions[j]
-                    regions[i] = SIMD4(min(a.x, b.x), min(a.y, b.y), max(a.z, b.z), max(a.w, b.w))
-                    regions.remove(at: j)
-                    merged = true
-                    break outer
+            var closeUps = [[SlideDetail]](repeating: [], count: tiles.count)
+            let lock = NSLock()
+            DispatchQueue.concurrentPerform(iterations: tiles.count) { i in
+                let r = tiles[i]
+                let h = max(1, Int((Float(side) * (r.w - r.y) / ((r.z - r.x) * source.aspect)).rounded()))
+                guard let image = source.render(region: r, width: side, height: h),
+                      let read = try? lines(in: image) else { return }
+                let mapped = read.map { d -> SlideDetail in
+                    var d = d
+                    d.frame = ShotFrame(center: Vec2(r.x + d.frame.center.x * (r.z - r.x), r.y + d.frame.center.y * (r.w - r.y)),
+                                        size: Vec2(d.frame.size.x * (r.z - r.x), d.frame.size.y * (r.w - r.y)))
+                    return d
                 }
+                lock.lock(); closeUps[i] = mapped; lock.unlock()
             }
+            found = Director.merge(found, closeUps: closeUps.flatMap { $0 })
         }
-        return regions
-    }
-
-    static func overlap(_ a: SIMD4<Float>, _ b: SIMD4<Float>) -> Float {
-        max(0, min(a.z, b.z) - max(a.x, b.x)) * max(0, min(a.w, b.w) - max(a.y, b.y))
-    }
-
-    static func contains(_ r: SIMD4<Float>, _ b: SIMD4<Float>) -> Bool {
-        b.x >= r.x - 1e-4 && b.y >= r.y - 1e-4 && b.z <= r.z + 1e-4 && b.w <= r.w + 1e-4
+        return found + figures(in: whole, text: found.map(\.frame.bounds))
     }
 
     /// The lines of text in an image, in its own space (v down).

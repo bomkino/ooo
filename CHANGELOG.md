@@ -2,7 +2,7 @@
 
 ## 0.3.0 — 6 October 2026 (not released on its own)
 
-A milestone on the way to 1.0: every fix the 0.2.0 audit found, motion that never rushes, and the room and arrivals.
+A milestone on the way to 1.0: the fixes the 0.2.0 audit found, motion that never rushes, and the room and arrivals.
 
 **The slide as it is**
 - **Black type stays black.** What is left of a surface's light at rest stays off the ink, so on the wide test slide a headline lands at most 7 levels (of 255) above the slide as supplied, down from 18 in 0.2.0.
@@ -25,10 +25,9 @@ A milestone on the way to 1.0: every fix the 0.2.0 audit found, motion that neve
 - **Develop comes up like a print**: a blank sheet settles where it lies and the image comes up in it, the darks first.
 - **The kicker** above an opening title can be set as typed, as well as in capitals.
 
-**Faster, and checked**
-- **Reading the slide is faster**: OOO reads the whole slide, then only its small print again, in close-ups drawn just around it, instead of every quarter of the slide.
-- The editor fits a 1024-point-wide screen. "Busy" tracks every running job.
-- CI now screenshots the real editor window (`OOO --snapshot`), fails on any `motioncheck` problem, measures ink like for like, and renders every look (`ooo-lab backdrops`), every arrival (`ooo-lab arrivals`) and the read against close-ups (`ooo-lab readcheck`).
+**Checked**
+- The editor's window narrows to 960 points, so it fits a 1024-point-wide screen. "Busy" tracks every running job.
+- CI now screenshots the real editor window (`OOO --snapshot`), fails on any `motioncheck` problem, measures ink like for like, and renders every look (`ooo-lab backdrops`) and every arrival (`ooo-lab arrivals`).
 
 ## 0.2.0 — 6 October 2026
 
