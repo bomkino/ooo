@@ -20,10 +20,10 @@ extension FocusedValues {
 }
 
 public enum OOOCommands {
-    /// Chooses a new slide, or (`replacing`) a corrected version of this
-    /// one that keeps the tour.
+    /// Chooses a new slide, or (`replacing`) a corrected version of slide
+    /// `page` that keeps its tour.
     @MainActor
-    public static func chooseSlide(_ session: OOOSession, replacing: Bool = false) {
+    public static func chooseSlide(_ session: OOOSession, replacing: Bool = false, page: Int = 0) {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
@@ -34,7 +34,7 @@ public enum OOOCommands {
         panel.prompt = replacing ? "Replace" : "Choose"
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
-            MainActor.assumeIsolated { replacing ? session.replaceSlide(url) : session.importSlide(url) }
+            MainActor.assumeIsolated { replacing ? session.replaceSlide(url, page: page) : session.importSlide(url) }
         }
     }
 
@@ -133,7 +133,11 @@ public struct OOOMenuCommands: Commands {
             Button("Choose Voiceover…") { if let session { OOOCommands.chooseVoice(session) } }
                 .keyboardShortcut("i", modifiers: [.command, .option])
                 .disabled(session == nil)
-            Button("Choose Cover…") { if let session { OOOCommands.chooseCover(session) } }
+            Button((session?.recorder.isActive ?? false) ? "Stop Recording" : "Record Voiceover") { session?.toggleRecording() }
+                .keyboardShortcut("r", modifiers: [.command, .option])
+                .disabled(session == nil || session?.hasSlide == false)
+            Button("Add Slide…") { if let session { OOOCommands.addSlides(session) } }
+                .keyboardShortcut("i", modifiers: [.command, .control])
                 .disabled(session == nil || session?.hasSlide == false)
             Button("Replace Slide…") { if let session { OOOCommands.chooseSlide(session, replacing: true) } }
                 .keyboardShortcut("i", modifiers: [.command, .shift])
@@ -153,6 +157,10 @@ public struct OOOMenuCommands: Commands {
                 .disabled(session == nil || session?.hasSlide == false)
         }
         CommandMenu("Camera") {
+            Button((session?.pen.on ?? false) ? "Put the Pen Away" : "Draw on the Slide") { session?.togglePen() }
+                .keyboardShortcut("p", modifiers: [.command, .shift])
+                .disabled(session == nil || session?.hasSlide == false)
+            Divider()
             Button("Direct for Me") { session?.autoDirect() }
                 .keyboardShortcut("d", modifiers: [.command, .shift])
                 .disabled(session == nil || session?.busy != nil)

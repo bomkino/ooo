@@ -37,8 +37,21 @@ struct MapLayout {
 /// over it as the outline of what the video shows there. Drag a framing to
 /// move it, a corner to go closer or further, Option-drag to turn the camera; draw on
 /// the slide to add a framing at the playhead.
+/// The slide map for the slide the inspector is about: the selected
+/// shot's, or the one face up at the playhead.
+struct MapHost: View {
+    let session: OOOSession
+    @Bindable var clock: PlaybackClock
+
+    var body: some View {
+        SlideMap(session: session, page: session.mapPage(at: clock.time))
+    }
+}
+
 struct SlideMap: View {
     @Bindable var session: OOOSession
+    /// The slide shown (0 is the first).
+    let page: Int
     @State private var gesture: MapGesture?
     @State private var drawing: CGRect?
     @State private var hovered: UUID?
@@ -51,13 +64,13 @@ struct SlideMap: View {
     }
 
     var body: some View {
-        let A = CGFloat(session.project.slideAspect)
+        let A = CGFloat(session.project.slide(page).aspect)
         GeometryReader { geo in
             let layout = MapLayout(size: geo.size, slideAspect: A)
             ZStack(alignment: .topLeading) {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(Theme.surround)
-                if let img = session.slidePreview {
+                if let img = session.preview(page) {
                     Image(decorative: img, scale: 1)
                         .resizable()
                         .interpolation(.high)
@@ -74,7 +87,7 @@ struct SlideMap: View {
                         ctx.stroke(path, with: .color(Theme.camera), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
                     }
                 }
-                CameraFootprint(session: session, clock: session.clock, layout: layout)
+                CameraFootprint(session: session, clock: session.clock, layout: layout, page: page)
                     .allowsHitTesting(false)
             }
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -123,7 +136,7 @@ struct SlideMap: View {
 
     private func finder(_ shot: Shot, index: Int, layout: MapLayout) -> Finder {
         let p = session.project
-        let A = p.slideAspect, C = p.canvasAspect
+        let A = p.slide(page).aspect, C = p.canvasAspect
         let pose = CameraPose(shot: shot, slideAspect: A, canvasAspect: C, safe: p.format.safeArea)
         var outline: [CGPoint] = []
         for (x, y) in [(Float(-1), Float(1)), (1, 1), (1, -1), (-1, -1)] {
@@ -138,7 +151,9 @@ struct SlideMap: View {
     }
 
     private func finders(_ layout: MapLayout) -> [Finder] {
-        session.orderedShots.enumerated().map { i, s in finder(s, index: i, layout: layout) }
+        session.orderedShots.enumerated().compactMap { i, s in
+            session.project.pageIndex(s.page) == page ? finder(s, index: i, layout: layout) : nil
+        }
     }
 
     private func path(_ outline: [CGPoint]) -> Path {
@@ -154,12 +169,13 @@ struct SlideMap: View {
             if case .shot(let id) = session.selection { return id }
             return nil
         }()
-        if session.selection == .overview {
+        if session.selection == .overview && page == 0 {
             let f = finder(p.overview, index: 0, layout: layout)
             ctx.stroke(path(f.outline), with: .color(Theme.camera.opacity(0.85)), style: StrokeStyle(lineWidth: 1.2, lineJoin: .round, dash: [5, 4]))
         }
         // The route the camera takes, from framing to framing.
-        let route = [p.overview.frame.center] + session.orderedShots.map(\.frame.center)
+        let mine = session.orderedShots.filter { p.pageIndex($0.page) == page }.map(\.frame.center)
+        let route = (page == 0 ? [p.overview.frame.center] : []) + mine
         if route.count > 1 {
             var path = Path()
             path.move(to: layout.point(route[0].x, route[0].y))
@@ -300,7 +316,7 @@ struct SlideMap: View {
         case .create:
             if let r = drawing, r.width > 10, r.height > 10 {
                 let a = layout.uv(CGPoint(x: r.minX, y: r.minY)), b = layout.uv(CGPoint(x: r.maxX, y: r.maxY))
-                session.addShot(frame: ShotFrame(center: (a + b) / 2, size: b - a))
+                session.addShot(frame: ShotFrame(center: (a + b) / 2, size: b - a), page: page)
             } else if !moved {
                 session.select(.overview, show: false)
             }
@@ -314,12 +330,15 @@ struct CameraFootprint: View {
     let session: OOOSession
     @Bindable var clock: PlaybackClock
     let layout: MapLayout
+    let page: Int
 
     var body: some View {
         Canvas { ctx, _ in
             let p = session.project
+            // Only while this slide is the one face up.
+            guard session.choreography.page(at: clock.time) == page else { return }
             let pose = session.choreography.pose(at: clock.time)
-            let A = p.slideAspect, C = p.canvasAspect
+            let A = p.slide(page).aspect, C = p.canvasAspect
             let ndc: [(Float, Float)] = [(-1, 1), (1, 1), (1, -1), (-1, -1)]
             var points: [CGPoint] = []
             for (x, y) in ndc {

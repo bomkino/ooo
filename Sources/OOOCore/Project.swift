@@ -182,26 +182,27 @@ public struct OpeningTitle: Codable, Hashable, Sendable {
     }
 }
 
-/// A cover the video opens on: another slide, usually the deck's first, on
-/// the front of the card. It rests a moment, turns over to the slide the
-/// video is about, and can turn back to it before the end.
-public struct Cover: Codable, Hashable, Sendable {
+/// Another slide in a video over several: after the slide before it, the
+/// card turns over to it, or it melts into the card where you are looking.
+public struct Page: Codable, Hashable, Sendable, Identifiable {
+    public var id: UUID
     public var slide: SlideRef
-    /// Seconds from the start when it turns over.
-    public var turn: Double
-    /// Turns back to the cover before the end.
-    public var turnBack: Bool
-    /// When it starts to turn back; nil places it once the tour is over.
-    public var backAt: Double?
+    /// What Direct for Me last read on it; nil until read, and cleared when
+    /// the slide changes.
+    public var reading: [SlideDetail]?
+    /// How the card changes to it.
+    public var change: PageChange
+    /// Seconds from the start when the card starts to change to it, if set
+    /// by hand; nil finds its own moment.
+    public var at: Double?
 
-    public init(slide: SlideRef, turn: Double, turnBack: Bool = true, backAt: Double? = nil) {
+    public init(id: UUID = UUID(), slide: SlideRef, reading: [SlideDetail]? = nil, change: PageChange = .turn, at: Double? = nil) {
+        self.id = id
         self.slide = slide
-        self.turn = turn
-        self.turnBack = turnBack
-        self.backAt = backAt
+        self.reading = reading
+        self.change = change
+        self.at = at
     }
-
-    public var timing: CoverTiming { CoverTiming(turn: turn, turnBack: turnBack, backAt: backAt) }
 }
 
 /// One OOO document: a slide, the moves over it, and how it all looks.
@@ -213,17 +214,18 @@ public struct OOOProject: Codable, Hashable, Sendable {
     public var minimumReaderVersion: Int? = OOOProject.readerVersion
     /// The newest files this build reads in full. Raise it, and say in
     /// `neededReader` what needs it, when a setting older builds would drop arrives.
-    /// 1: OOO 0.2. 2: OOO 1.0 (Weave, a kicker as typed). 3: OOO 1.0.1 (a
-    /// cover, room for you).
+    /// 1: OOO 0.2. 2: OOO 1.0 (Weave, a kicker as typed). 3: OOO 1.0.1
+    /// (several slides, room for you, marks drawn on the card).
     public static let readerVersion = 3
 
     /// The oldest reader that draws everything this project uses, written as
     /// `minimumReaderVersion`: a file 0.2 can draw still opens there.
     public var neededReader: Int {
         let typedKicker = title.map { !$0.kickerCaps && !$0.kicker.trimmingCharacters(in: .whitespaces).isEmpty } ?? false
-        if cover != nil || !(lift?.isEmpty ?? true) { return 3 }
+        if !(pages?.isEmpty ?? true) || !(lift?.isEmpty ?? true) || !(marks?.isEmpty ?? true) { return 3 }
         return arrive.kind == .weave || typedKicker ? 2 : 1
     }
+    /// The slide the video opens on (in a video over several, the first).
     public var slide: SlideRef
     /// The establishing framing the slide arrives into.
     public var overview: Shot
@@ -247,8 +249,13 @@ public struct OOOProject: Codable, Hashable, Sendable {
     /// and the tour can follow the canvas or a corrected slide. Nil until
     /// read, and cleared when the slide changes.
     public var reading: [SlideDetail]?
-    /// The slide the video opens on before turning over to this one; nil for none.
-    public var cover: Cover?
+    /// The slides after the first, in order; nil or empty for one slide.
+    public var pages: [Page]?
+    /// Turning back to the first slide before the end, in a video over
+    /// several; nil stays on the last.
+    public var home: HomeTiming?
+    /// Marks drawn on the card by hand; nil for none.
+    public var marks: [Mark]?
     /// Room for you: where the stage rises to leave the bottom of the frame
     /// clear for a talking head; nil or no spans for never.
     public var lift: Lift?
@@ -327,6 +334,163 @@ public struct OOOProject: Codable, Hashable, Sendable {
                       start: tourStart, safe: format.safeArea, minViewHeight: sharpViewHeight, overview: overview, style: style)
     }
 
+    // MARK: Slides
+
+    /// The slides after the first.
+    public var morePages: [Page] { pages ?? [] }
+    /// How many slides the video goes through.
+    public var slideCount: Int { 1 + morePages.count }
+    /// Every slide, the first first.
+    public var allSlides: [SlideRef] { [slide] + morePages.map(\.slide) }
+
+    /// Which slide a page id names (0 is the first); a slide no longer in the
+    /// video counts as the first.
+    public func pageIndex(_ id: UUID?) -> Int {
+        guard let id, let k = morePages.firstIndex(where: { $0.id == id }) else { return 0 }
+        return k + 1
+    }
+
+    /// The id the `k`th slide goes by on shots and marks: nil for the first.
+    public func pageID(_ k: Int) -> UUID? { k > 0 && k <= morePages.count ? morePages[k - 1].id : nil }
+
+    /// The `k`th slide (0 is the first).
+    public func slide(_ k: Int) -> SlideRef { k > 0 && k <= morePages.count ? morePages[k - 1].slide : slide }
+
+    /// What Direct for Me last read on the `k`th slide.
+    public func reading(_ k: Int) -> [SlideDetail]? { k > 0 && k <= morePages.count ? morePages[k - 1].reading : reading }
+
+    /// What Direct for Me plans from over several slides: each one's reading,
+    /// given in order with the first's.
+    public func pageReadings(_ found: [[SlideDetail]]) -> [PageReading] {
+        allSlides.indices.map { k in
+            let ref = slide(k)
+            let page = k > 0 ? morePages[k - 1] : nil
+            return PageReading(id: page?.id, details: k < found.count ? found[k] : [], aspect: ref.aspect,
+                               change: page?.change ?? .turn, at: page?.at,
+                               minViewHeight: ref.sharpViewHeight(canvasHeight: format.height))
+        }
+    }
+
+    /// The tour Direct for Me plans from the slides' readings (the first's first).
+    public func plannedShots(_ found: [[SlideDetail]]) -> [Shot] {
+        guard let first = found.first else { return [] }
+        if morePages.isEmpty { return Director.shots(directorInput(first)) }
+        return Director.shots(directorInput(first), pages: pageReadings(found), arrive: arrive)
+    }
+
+    /// Every slide's reading, when every one has been read.
+    public var readings: [[SlideDetail]]? {
+        var all: [[SlideDetail]] = []
+        for k in 0..<slideCount {
+            guard let r = reading(k) else { return nil }
+            all.append(r)
+        }
+        return all
+    }
+
+    /// The slides after the first as the camera's path needs them.
+    public var pageTimings: [PageTiming] {
+        morePages.map { PageTiming(id: $0.id, aspect: $0.slide.aspect, change: $0.change, at: $0.at) }
+    }
+
+    /// Keeps every framing and lands each one just before the voice says its
+    /// words; over several slides, each slide's framings to the stretch of
+    /// the voice that talks about it.
+    public func retimed(to words: [SpokenWord]) -> [Shot] {
+        guard !morePages.isEmpty, let found = readings else {
+            return Director.retime(shots, words: words, start: tourStart)
+        }
+        let shares = Director.share(words, among: pageReadings(found))
+        var out: [Shot] = []
+        var earliest = tourStart
+        for k in 0..<slideCount {
+            let id = pageID(k)
+            let mine = shots.filter { pageIndex($0.page) == k }
+            guard !mine.isEmpty else { continue }
+            let start = k == 0 ? earliest : max(earliest, (shares[k].first?.start ?? earliest) - 0.2)
+            var timed = Director.retime(mine, words: shares[k], start: start)
+            if shares[k].isEmpty, let first = mine.map(\.time).min(), first < start {
+                // Nothing said about this slide: its framings keep their spacing after the last one's.
+                timed = mine.map { var s = $0; s.time += start - first; return s }
+            }
+            out += timed.map { var s = $0; s.page = id; return s }
+            // The next slide comes once this one has been seen and the card has changed.
+            let next = k + 1 < slideCount ? morePages[k].change : .turn
+            earliest = (timed.map(\.time).max() ?? start) + 2.0 + next.length + Choreography.turnSettle
+        }
+        return out
+    }
+
+    /// Moves slide `from` to `to` (0 is the first), each slide keeping its
+    /// own tour: the slides' stretches of the video are laid out again in
+    /// the new order, each keeping its own lead-in, and every change finds
+    /// its own moment again.
+    public mutating func moveSlide(_ from: Int, to: Int) {
+        let n = slideCount
+        guard from != to, (0..<n).contains(from), (0..<n).contains(to) else { return }
+        struct Entry {
+            var ref: SlideRef
+            var reading: [SlideDetail]?
+            var id: UUID
+            var change: PageChange
+            var shots: [Shot]
+            var marks: [Mark]
+            var lead: Double
+        }
+        let firstID = UUID()
+        let A = slideAspect, C = canvasAspect
+        var entries: [Entry] = (0..<n).map { k in
+            Entry(ref: slide(k), reading: reading(k), id: pageID(k) ?? firstID, change: k > 0 ? morePages[k - 1].change : .turn,
+                  shots: shots.filter { pageIndex($0.page) == k }, marks: (marks ?? []).filter { pageIndex($0.page) == k }, lead: 0)
+        }
+        // How long each slide's stretch takes to get going after the one before.
+        let ends = entries.map { $0.shots.map(\.time).max() }
+        for k in entries.indices {
+            let start = entries[k].shots.map(\.time).min()
+            if k > 0, let start, let end = ends[k - 1] { entries[k].lead = max(start - end, 3.5) } else { entries[k].lead = 4.5 }
+        }
+        let opening = entries[0].shots.map(\.time).min() ?? tourStart + 1
+        let moved = entries.remove(at: from)
+        entries.insert(moved, at: to)
+        var cursor: Double?
+        var allShots: [Shot] = []
+        var allMarks: [Mark] = []
+        for (k, e) in entries.enumerated() {
+            let start = e.shots.map(\.time).min() ?? (e.marks.map(\.time).min() ?? opening)
+            let wanted = cursor.map { $0 + e.lead } ?? opening
+            let shift = wanted - start
+            let id: UUID? = k == 0 ? nil : e.id
+            allShots += e.shots.map { var s = $0; s.time += shift; s.page = id; return s }
+            allMarks += e.marks.map { var m = $0; m.time += shift; m.page = id; return m }
+            cursor = e.shots.map(\.time).max().map { $0 + shift } ?? wanted
+        }
+        slide = entries[0].ref
+        reading = entries[0].reading
+        pages = entries.dropFirst().map { Page(id: $0.id, slide: $0.ref, reading: $0.reading, change: $0.change) }
+        shots = allShots
+        marks = marks == nil && allMarks.isEmpty ? nil : allMarks
+        adaptOverview(fromSlideAspect: A, canvasAspect: C)
+    }
+
+    /// Moves the change to slide `id` to `t`; what comes after it moves
+    /// with it, so every framing keeps its time on its slide.
+    @discardableResult
+    public mutating func moveChange(_ id: UUID, to t: Double, from was: Double) -> Double {
+        let k = pageIndex(id)
+        guard k > 0, var all = pages else { return was }
+        let at = max(t, arrive.end + 0.3)
+        let d = at - was
+        all[k - 1].at = at
+        for j in all.indices where j > k - 1 { all[j].at = all[j].at.map { $0 + d } }
+        pages = all
+        for i in shots.indices where pageIndex(shots[i].page) >= k { shots[i].time += d }
+        if var m = marks {
+            for i in m.indices where pageIndex(m[i].page) >= k { m[i].time += d }
+            marks = m
+        }
+        return at
+    }
+
     /// How long the whole slide holds under an opening title before the tour
     /// sets off: long enough to read its words, title and kicker together.
     public var titleHold: Double {
@@ -335,21 +499,14 @@ public struct OOOProject: Codable, Hashable, Sendable {
         return min(max(0.7 + 0.26 * Double(words), 1.2), 2.6)
     }
 
-    /// When the tour may set off: as the slide lands, once its title has been
-    /// read, or once a cover has turned over and settled.
-    public var tourStart: Double {
-        arrive.end + max(titleHold, Choreography.coverDelay(cover?.timing, arrive: arrive))
-    }
+    /// When the tour may set off: as the slide lands, or once its title has been read.
+    public var tourStart: Double { arrive.end + titleHold }
 
-    /// When a new cover turns over: once it has rested a moment after landing.
-    public var defaultCoverTurn: Double { arrive.end + Choreography.coverRest }
-
-    /// Gives a new opening title time to be read, or a new cover time to rest
-    /// and turn: without a voice to keep time with, the whole tour moves
-    /// later until the first move sets off once the opening is over. Moves
-    /// nothing when there is already room.
+    /// Gives a new opening title time to be read: without a voice to keep
+    /// time with, the whole tour moves later until the first move sets off
+    /// once the opening is over. Moves nothing when there is already room.
     public mutating func makeRoomForOpening() {
-        guard voice == nil, !(title?.isEmpty ?? true) || cover != nil, !shots.isEmpty else { return }
+        guard voice == nil, !(title?.isEmpty ?? true), !shots.isEmpty else { return }
         // The first move takes longer once it has more room, so this settles
         // in a step or two.
         for _ in 0..<3 {
@@ -361,6 +518,14 @@ public struct OOOProject: Codable, Hashable, Sendable {
             let shift = max(tourStart - beats[1].depart, beats[1].land - first)
             guard shift > 0.05 else { return }
             for i in shots.indices { shots[i].time += shift }
+            if var m = marks {
+                for i in m.indices { m[i].time += shift }
+                marks = m
+            }
+            if var all = pages {
+                for j in all.indices { all[j].at = all[j].at.map { $0 + shift } }
+                pages = all
+            }
         }
     }
 
@@ -373,7 +538,37 @@ public struct OOOProject: Codable, Hashable, Sendable {
         slide = ref
         reading = new
         adaptOverview(fromSlideAspect: A, canvasAspect: C)
-        shots = Director.follow(shots, from: old, to: new)
+        follow(page: 0, from: old, to: new)
+    }
+
+    /// A corrected version of one of the slides after the first, keeping its
+    /// tour, as `replaceSlide` does for the first.
+    public mutating func replacePage(_ id: UUID, with ref: SlideRef, reading new: [SlideDetail], from old: [SlideDetail]) {
+        guard var all = pages, let j = all.firstIndex(where: { $0.id == id }) else { return }
+        all[j].slide = ref
+        all[j].reading = new
+        pages = all
+        follow(page: j + 1, from: old, to: new)
+    }
+
+    /// The shots on slide `k` follow their details to the slide's new version.
+    mutating func follow(page k: Int, from old: [SlideDetail], to new: [SlideDetail]) {
+        let mine = shots.indices.filter { pageIndex(shots[$0].page) == k }
+        let moved = Director.follow(mine.map { shots[$0] }, from: old, to: new)
+        for (i, s) in zip(mine, moved) { shots[i] = s }
+    }
+
+    /// Framings Direct for Me planned, framed again for a new canvas, slide by slide.
+    public mutating func reframePlanned() {
+        guard shots.contains(where: \.isPlanned), let found = readings else { return }
+        let fresh = plannedShots(found)
+        var out = shots
+        for k in 0..<slideCount {
+            let mine = shots.indices.filter { pageIndex(shots[$0].page) == k }
+            let again = Director.reframe(mine.map { shots[$0] }, from: fresh.filter { pageIndex($0.page) == k })
+            for (i, s) in zip(mine, again) { out[i] = s }
+        }
+        shots = out
     }
 
     /// Follows a new slide or canvas shape with the opening, unless someone
@@ -389,19 +584,27 @@ public struct OOOProject: Codable, Hashable, Sendable {
     /// The video's length: as set, or long enough for every move and the whole voiceover.
     public var duration: Double {
         if let length { return max(length, 1) }
-        var d = Choreography.naturalDuration(shots: shots, arrive: arrive, ending: ending, cover: cover?.timing)
-        // Turning back, the last words go over the turn and the cover rests after them.
-        if let voice { d = max(d, voice.end + (cover?.turnBack == true ? 2.0 : 1.2)) }
+        var d = Choreography.naturalDuration(choreographyInput(duration: 0))
+        // Turning back, the last words go over the turn and the first slide rests after them.
+        if let voice { d = max(d, voice.end + (turnsHome ? 2.0 : 1.2)) }
+        // Every mark is drawn, and seen.
+        for m in marks ?? [] { d = max(d, m.fades ? m.gone + 0.4 : m.drawn + 1.2) }
         return d
     }
 
     /// The share of the frame an opening title keeps above the slide while the stage is up.
     public static let titleRoom: Float = 0.12
 
-    public var choreographyInput: ChoreographyInput {
+    /// Whether the card turns back to the first slide before the end.
+    public var turnsHome: Bool { home != nil && !morePages.isEmpty }
+
+    public var choreographyInput: ChoreographyInput { choreographyInput(duration: duration) }
+
+    func choreographyInput(duration: Double) -> ChoreographyInput {
         ChoreographyInput(overview: overview, shots: shots, arrive: arrive, ending: ending, duration: duration,
                           slideAspect: slideAspect, canvasAspect: canvasAspect, style: style, seed: seed, safe: format.safeArea,
-                          cover: cover?.timing, lift: lift, titleRoom: (title?.isEmpty ?? true) ? 0 : Self.titleRoom)
+                          pages: pageTimings, home: turnsHome ? home : nil, lift: lift,
+                          titleRoom: (title?.isEmpty ?? true) ? 0 : Self.titleRoom)
     }
 
     public func choreography() -> Choreography { Choreography(choreographyInput) }
@@ -456,7 +659,7 @@ public enum ProjectPackage {
         try fm.createDirectory(at: url.appendingPathComponent(mediaFolder), withIntermediateDirectories: true)
         try encode(project).write(to: url.appendingPathComponent(projectFile), options: .atomic)
         guard let media else { return }
-        for file in [project.slide.file, project.voice?.file, project.cover?.slide.file].compactMap({ $0 }) {
+        for file in (project.allSlides.map(\.file) + [project.voice?.file]).compactMap({ $0 }) {
             let src = media.appendingPathComponent(file), dst = url.appendingPathComponent(mediaFolder).appendingPathComponent(file)
             if fm.fileExists(atPath: src.path) && !fm.fileExists(atPath: dst.path) { try fm.copyItem(at: src, to: dst) }
         }

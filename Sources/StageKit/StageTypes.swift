@@ -98,6 +98,17 @@ public struct CardPose: Sendable {
     /// Whether the card shows in a mirror floor. A detail laid exactly over
     /// its card is already reflected with it.
     public var reflects = true
+    /// Another picture washing through the card, as (centre x, centre y,
+    /// radius, front) in world units on the plane z = 0: with a positive
+    /// front, only what lies within the radius shows (washing in); with a
+    /// negative one, only what lies beyond it (washing away). The front is
+    /// the width of its soft, ragged edge. A zero front: none.
+    public var melt: SIMD4<Float> = .zero
+    /// Ink drawn by hand, as (how far drawn 0…1, the pen head's softness, on,
+    /// unused). Its texture holds, premultiplied, when the pen reached each
+    /// texel (red, 0…1 through the drawing) and how much ink is there (green);
+    /// the ink is drawn in `color`.
+    public var ink: SIMD4<Float> = .zero
 
     /// A plain surface such as a mat, ledge or wire. Colour is sRGB.
     public static func solid(_ rgb: RGB, position: SIMD3<Float>, size: SIMD2<Float>, rotation: SIMD3<Float> = .zero,

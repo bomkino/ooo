@@ -48,12 +48,15 @@ final class CoreTests: XCTestCase {
         XCTAssertNoThrow(try ProjectPackage.decode(JSONSerialization.data(withJSONObject: json)))
     }
 
-    func testACoverOrRoomForYouNeedsOOO101() throws {
-        var covered = OOOProject.sample
-        covered.cover = Cover(slide: .sample, turn: covered.defaultCoverTurn)
+    func testSlidesMarksOrRoomForYouNeedOOO101() throws {
+        var more = OOOProject.sample
+        more.pages = [Page(slide: .sample, change: .melt)]
+        more.home = HomeTiming()
         var lifted = OOOProject.sample
         lifted.lift = Lift(spans: [LiftSpan(start: 3, end: 9)])
-        for p in [covered, lifted] {
+        var marked = OOOProject.sample
+        marked.marks = [Mark(time: 4, strokes: [[InkPoint(x: 0.2, y: 0.3, t: 0), InkPoint(x: 0.5, y: 0.32, t: 0.6)]], fades: true)]
+        for p in [more, lifted, marked] {
             let j = try XCTUnwrap(JSONSerialization.jsonObject(with: ProjectPackage.encode(p)) as? [String: Any])
             XCTAssertEqual(j["minimumReaderVersion"] as? Int, 3)
             XCTAssertEqual(try ProjectPackage.decode(ProjectPackage.encode(p)), p)
@@ -64,27 +67,30 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(j["minimumReaderVersion"] as? Int, 1)
     }
 
-    /// The cover is up until it turns, the slide after, and the cover again
-    /// once it has turned back; the faces swap only as the card passes
-    /// edge-on to the eye, so neither ever shows its back, and the card
-    /// lands exactly where the slide rests.
-    func testTheCoverTurnsOverEdgeOn() throws {
+    /// The first slide is up until the card turns, the next after, and the
+    /// first again once it has turned back; the faces swap only as the card
+    /// passes edge-on to the eye, so neither ever shows its back, and the
+    /// card lands exactly where the slide rests.
+    func testTheCardTurnsOverEdgeOn() throws {
         var p = OOOProject.sample
-        p.cover = Cover(slide: .sample, turn: p.defaultCoverTurn)
-        p.makeRoomForOpening()
+        p.pages = [Page(slide: .sample)]
+        p.home = HomeTiming()
         let scene = try SlideLoader.scene(for: p, media: nil)
-        XCTAssertNotNil(scene.cover)
+        XCTAssertEqual(scene.bases.count, 2)
         let c = scene.choreography
-        XCTAssertEqual(c.turns.count, 2)
-        XCTAssertGreaterThanOrEqual(c.beats[1].depart, c.turns[0].end, "the tour waits for the turn")
+        let turns = c.changes
+        XCTAssertEqual(turns.count, 2)
+        XCTAssertEqual(turns.map(\.kind), [.turn, .turn])
         let C = p.canvasAspect
         func card(_ t: Double) -> CardPose { scene.stageFrame(at: t, canvasAspect: C, outputWidth: 1080, patch: nil).cards[0] }
-        XCTAssertEqual(card(c.turns[0].start - 0.1).media, 2, "the cover is up before it turns")
-        XCTAssertEqual(card(c.turns[0].end + 0.5).media, 0, "the slide is up after")
-        XCTAssertEqual(card(c.turns[1].end + 0.2).media, 2, "and the cover again once it has turned back")
-        XCTAssertEqual(scene.slideShown(at: c.turns[0].start), 0)
-        XCTAssertEqual(scene.slideShown(at: c.turns[0].end + 0.5), 1, accuracy: 1e-4)
-        for turn in c.turns {
+        let first = scene.baseMedia(0), second = scene.baseMedia(1)
+        XCTAssertNotEqual(first, second)
+        XCTAssertEqual(card(turns[0].start - 0.1).media, first, "the first slide is up before it turns")
+        XCTAssertEqual(card(turns[0].end + 0.5).media, second, "the next is up after")
+        XCTAssertEqual(card(turns[1].end + 0.2).media, first, "and the first again once it has turned back")
+        XCTAssertEqual(scene.slideShown(at: turns[0].start), 0)
+        XCTAssertEqual(scene.slideShown(at: turns[0].end + 0.5), 1, accuracy: 1e-4)
+        for turn in turns {
             var last = card(turn.start + 1e-3).media
             var swaps = 0
             for t in stride(from: turn.start + 1e-3, to: turn.end, by: 1.0 / 480) {
@@ -105,6 +111,40 @@ final class CoreTests: XCTestCase {
             XCTAssertEqual(a.rotation.y, b.rotation.y, accuracy: 2e-3)
             XCTAssertEqual(a.size.x, b.size.x, accuracy: 1e-4)
         }
+    }
+
+    /// As one slide melts into the next, the camera cuts unseen and the old
+    /// slide is kept exactly where the eye had it, over the new one, until
+    /// the melt has washed it all away.
+    func testAMeltKeepsTheOldSlideWhereTheEyeHadIt() throws {
+        var p = OOOProject.sample
+        p.pages = [Page(slide: .sample, change: .melt)]
+        let scene = try SlideLoader.scene(for: p, media: nil)
+        let c = scene.choreography
+        let melt = try XCTUnwrap(c.changes.first)
+        XCTAssertEqual(melt.kind, .melt)
+        let C = p.canvasAspect
+        let t = melt.start + 1e-3
+        let cards = scene.stageFrame(at: t, canvasAspect: C, outputWidth: 1080, patch: nil).cards
+        let new = try XCTUnwrap(cards.first { $0.media == scene.baseMedia(1) })
+        let old = try XCTUnwrap(cards.first { $0.media == scene.baseMedia(0) })
+        XCTAssertGreaterThan(new.melt.w, 0, "the new slide washes in")
+        XCTAssertLessThan(old.melt.w, 0, "the old one washes away")
+        XCTAssertGreaterThan(old.layer, new.layer)
+        // Every corner of the old slide is seen from where it was seen before the cut.
+        let (a, b) = c.meltHandoff(melt)
+        let k = b.height / a.height
+        let A = p.slideAspect
+        for (x, y) in [(Float(-0.5), Float(-0.5)), (0.5, -0.5), (-0.5, 0.5), (0.5, 0.5)] {
+            let before = SIMD3<Float>(x * A, y, 0)
+            let now = old.position + SIMD3<Float>(x * old.size.x, y * old.size.y, 0)
+            let seenBefore = SIMD3(a.eye.x, a.eye.y, a.eye.z) - before
+            let seenNow = SIMD3(b.eye.x, b.eye.y, b.eye.z) - now
+            XCTAssertEqual(simd_length(seenNow - k * seenBefore), 0, accuracy: 1e-3 * k)
+        }
+        let after = scene.stageFrame(at: melt.end + 0.1, canvasAspect: C, outputWidth: 1080, patch: nil).cards
+        XCTAssertFalse(after.contains { $0.media == scene.baseMedia(0) }, "gone once it has melted")
+        XCTAssertEqual(after.first?.melt.w, 0)
     }
 
     func testTheSurfaceStepsBackWhileTheSlideIsRead() throws {
