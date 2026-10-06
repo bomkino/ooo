@@ -78,6 +78,10 @@ public final class GPU: @unchecked Sendable {
         case add
         /// Multiply colour into destination, used for shadows: dst * (1 - srcA)
         case darken
+        /// A glaze: dst * src, the destination's alpha kept
+        case multiply
+        /// Light laid over: src + dst * (1 - src), the destination's alpha kept
+        case screen
     }
 
     public struct PipelineKey: Hashable {
@@ -168,6 +172,22 @@ public final class GPU: @unchecked Sendable {
             a.sourceRGBBlendFactor = .zero
             a.sourceAlphaBlendFactor = .zero
             a.destinationRGBBlendFactor = .oneMinusSourceAlpha
+            a.destinationAlphaBlendFactor = .one
+        case .multiply:
+            a.isBlendingEnabled = true
+            a.rgbBlendOperation = .add
+            a.alphaBlendOperation = .add
+            a.sourceRGBBlendFactor = .zero
+            a.sourceAlphaBlendFactor = .zero
+            a.destinationRGBBlendFactor = .sourceColor
+            a.destinationAlphaBlendFactor = .one
+        case .screen:
+            a.isBlendingEnabled = true
+            a.rgbBlendOperation = .add
+            a.alphaBlendOperation = .add
+            a.sourceRGBBlendFactor = .one
+            a.sourceAlphaBlendFactor = .zero
+            a.destinationRGBBlendFactor = .oneMinusSourceColor
             a.destinationAlphaBlendFactor = .one
         }
     }

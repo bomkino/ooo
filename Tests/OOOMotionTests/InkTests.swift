@@ -32,10 +32,46 @@ final class InkTests: XCTestCase {
         XCTAssertFalse(right.isEmpty)
         XCTAssertFalse(left.isEmpty)
         XCTAssertLessThan(right.map { raster.when[$0] }.min() ?? 1, 0.05, "where it closed, the ink was first laid at the start")
-        // The left of the circle was drawn halfway round.
-        XCTAssertEqual(left.map { raster.when[$0] }.min() ?? 0, 0.47, accuracy: 0.04)
+        // The left of the circle was drawn halfway round (`when` runs through the ink's own length).
+        XCTAssertEqual(mark.inkLength, 1 + Mark.featherTime, accuracy: 1e-6)
+        XCTAssertEqual((left.map { raster.when[$0] }.min() ?? 0) * Float(mark.inkLength), 0.47, accuracy: 0.04)
         // Nothing in the middle.
         XCTAssertEqual(raster.cover[mid * raster.width + raster.width / 2], 0)
+    }
+
+    /// Ink lies as watercolour does: deepest along the line's edges, a faint
+    /// fringe just past them that creeps out a moment after the pen passed,
+    /// and none of it further out.
+    func testInkPoolsAtItsEdgesAndFeathersAfterThePen() throws {
+        let stroke = (0...40).map { i in InkPoint(x: 0.3 + 0.4 * Float(i) / 40, y: 0.5, t: 0.6 * Float(i) / 40) }
+        let mark = Mark(time: 0, strokes: [stroke])
+        let raster = try XCTUnwrap(InkRaster(mark, slideAspect: 1, pixelsPerHeight: 1400))
+        let w = raster.width, mid = raster.height / 2
+        let half = 0.5 * mark.width * 1400
+        // Down the middle of the line, away from where the pen touched down and lifted.
+        let columns = Array((w * 2 / 5)..<(w * 3 / 5))
+        func mean(_ values: [Float]) -> Float { values.reduce(0, +) / Float(max(values.count, 1)) }
+        let middle = mean(columns.map { raster.depth[mid * w + $0] })
+        let edgeRow = mid - Int(half * 0.85)
+        let edges = mean(columns.map { raster.depth[edgeRow * w + $0] })
+        XCTAssertGreaterThan(edges, middle + 0.08, "ink lies deepest along the line's edges")
+        // Just past the edge: no pen ink, a little fringe, laid after the pen passed.
+        let outRow = mid - Int((half * 1.3).rounded(.up))
+        let fringe = columns.map { outRow * w + $0 }
+        XCTAssertTrue(fringe.allSatisfy { raster.cover[$0] == 0 })
+        XCTAssertGreaterThan(mean(fringe.map { raster.halo[$0] }), 0.02)
+        XCTAssertLessThan(fringe.map { raster.halo[$0] }.max() ?? 1, 0.5)
+        for k in fringe.prefix(5) {
+            let laid = raster.when[mid * w + k % w], wet = raster.when[k]
+            XCTAssertGreaterThan(wet, laid, "the fringe comes after the pen")
+            XCTAssertLessThan((wet - laid) * Float(mark.inkLength), Float(Mark.featherTime) + 0.05)
+        }
+        // Well away from the line, nothing.
+        XCTAssertEqual(raster.halo[0], 0)
+        XCTAssertEqual(raster.cover[0], 0)
+        // The ink's last fringe arrives by the end of its length.
+        XCTAssertLessThanOrEqual(raster.when.max() ?? 2, 1)
+        XCTAssertEqual(mark.inkHead(at: mark.time + mark.inkLength) ?? 0, 1)
     }
 
     /// A mark that fades goes a moment after it is drawn; one that stays

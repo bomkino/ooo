@@ -12,6 +12,7 @@
 - `TitleCompositor` is public, with an `encode` that takes the title's opacity and rise directly, for a scene that times its own title.
 - `CardPose.surfaceAmount` lets a card's surface light (tooth, sheen, foil, satin) step back, so its media shows as it is. The backdrop adds no alpha to the scene, which leaves the scene's alpha as the cards' coverage, and `FinishFrame.bloomOnSubject` uses it to keep bloom off the cards' faces.
 - Depth of field measures depth along the view, so focus lies on a plane.
+- `CardPose.ink` lays a mark drawn by hand on its card, drawing on over time. In OOO 1.0.2 it became a glaze: the renderer draws it twice, multiplied in and then screened over, using the new `GPU.Blend` cases `multiply` and `screen`.
 
 Parts of the editor (`Sources/OOOStudio`: the theme, type, controls, live stage, export sheet and document) are adapted from Drift's `StudioKit`, and its headless screenshots (`Snapshot.swift`) from Backdrop's, as marked in each file.
 

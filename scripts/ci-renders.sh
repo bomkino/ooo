@@ -9,7 +9,8 @@
 # Then the titles, every backdrop look, every arrival (Weave and Develop also
 # as draft videos), three slides (a cover turning over to the wide slide,
 # melting into its corrected version, turning back home), marks drawn on
-# the card, the stage rising to leave room for a talking head (both also as full sets and a
+# the card (on a dark slide and two light ones, up close, and in 1.0.1's ink
+# beside them), the stage rising to leave room for a talking head (both also as full sets and a
 # Good video), the wide tour moved onto a corrected slide (Replace
 # Slide), the stills Save Stills writes, export timings, a bench (with the
 # machine it ran on), how colour survives the encoder, and summary.txt with
@@ -64,7 +65,9 @@ TITLE="How we grew 3.1× in nine months"
 mkdir -p "$OUT/slides" "$OUT/room"
 "$LAB" changes --slide "$COVER" --more "$WIDE,$REVISED" --melt 2 --home --out "$OUT/slides/changes.png"
 "$LAB" changes --slide "$COVER" --more "$OUT/fixtures/standard-1920x1080.png" --out "$OUT/slides/changes-standard.png"
-"$LAB" marks --slide "$WIDE" --more "$OUT/fixtures/standard-1920x1080.png" --marks demo --out "$OUT/slides/marks.png"
+MARKED=("$COVER" --more "$WIDE,$OUT/fixtures/standard-1920x1080.png" --marks demo)
+"$LAB" marks --slide "${MARKED[@]}" --close "$OUT/slides/marks-close.png" --out "$OUT/slides/marks.png"
+"$LAB" marks --slide "${MARKED[@]}" --ink flat --close "$OUT/slides/marks-close-1.0.1.png" --out "$OUT/slides/marks-1.0.1.png"
 "$LAB" lifts --slide "$WIDE" --lift 5-12,16- --title "$TITLE" --kicker "pitch.dog · Series A" --out "$OUT/room/lifts.png"
 "$LAB" landings --slide "$WIDE" --lift whole --title "$TITLE" --kicker "pitch.dog · Series A" --out "$OUT/room/whole"
 "$LAB" render --slide "$COVER" --more "$WIDE,$REVISED" --melt 2 --home --marks demo --lift 9-16 --quality good \

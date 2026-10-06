@@ -18,6 +18,11 @@ public struct SlideScene: @unchecked Sendable {
     public let details: [DetailCache?]
     /// The marks drawn on the card, in the project's order; nil for one not drawn yet.
     public let inks: [MTLTexture?]
+    /// How much body each mark's ink has, 0…1: on a light slide it is a
+    /// glaze the slide shows through, on a dark one it still shows.
+    let inkBodies: [Float]
+    /// Draws marks with 1.0.1's flat ink instead, for comparing the two.
+    public var flatInk = false
     /// Marks shown whole whenever their slide lies face up, whatever the
     /// time: the ones the pen is drawing now, so you see what you drew.
     public var pinned: Set<UUID> = []
@@ -33,8 +38,15 @@ public struct SlideScene: @unchecked Sendable {
         self.project = project
         // A slide still being drawn shows the first in its place for now.
         self.bases = (0..<project.slideCount).map { $0 < bases.count ? bases[$0] : bases[0] }
-        self.details = (0..<project.slideCount).map { $0 < details.count && $0 < bases.count ? details[$0] : nil }
+        let shownDetails = (0..<project.slideCount).map { $0 < details.count && $0 < bases.count ? details[$0] : nil }
+        self.details = shownDetails
         self.inks = (project.marks ?? []).indices.map { $0 < inks.count ? inks[$0] : nil }
+        let sources = shownDetails.map { $0?.source }
+        self.inkBodies = (project.marks ?? []).map { m in
+            let p = project.pageIndex(m.page)
+            let ground = p < sources.count ? sources[p].flatMap { InkCache.shared.ground(under: m, on: $0) } : nil
+            return InkCache.body(of: m.color, onGround: ground)
+        }
         let c = choreography ?? project.choreography()
         self.choreography = c
         title = nil
@@ -512,7 +524,7 @@ public struct SlideScene: @unchecked Sendable {
         var out: [CardPose] = []
         for (i, m) in marks.enumerated() where i < inks.count && inks[i] != nil {
             let pin = pinned.contains(m.id)
-            guard let head = pin ? 1 : m.head(at: t) else { continue }
+            guard let head = pin ? 1 : m.inkHead(at: t) else { continue }
             let p = project.pageIndex(m.page)
             let host: CardPose
             let layer: Float
@@ -536,12 +548,14 @@ public struct SlideScene: @unchecked Sendable {
             ink.occurrence = 100 + i
             ink.layer = layer
             ink.opacity = host.opacity * presence * hold
-            // The pen's head: soft over a few hundredths of a second.
-            let feather = Float(min(max(0.05 / m.drawLength, 0.01), 0.2))
-            ink.ink = SIMD4(head * (1 + feather), feather, 1, 0)
+            // The pen's head: soft over a few hundredths of a second. The ink
+            // is a glaze with some body, or 1.0.1's flat ink.
+            let soft = Float(min(max(0.05 / m.inkLength, 0.01), 0.2))
+            let body = i < inkBodies.count ? inkBodies[i] : 0.5
+            ink.ink = SIMD4<Float>(head * (1 + soft), soft, 1 + body, flatInk ? 0 : 1)
             let c = m.color.srgb
-            let linear = RGB(c.r, c.g, c.b).linear * light
-            ink.color = SIMD4(linear.x, linear.y, linear.z, 1)
+            let linear = RGB(c.r, c.g, c.b).linear
+            ink.color = SIMD4(linear.x, linear.y, linear.z, light)
             ink.surfaceAmount = 0
             ink.spotDim = 0
             out.append(ink)
@@ -746,8 +760,63 @@ public final class InkCache: @unchecked Sendable {
 
     private let lock = NSLock()
     private var made: [Int: MTLTexture] = [:]
+    private var grounds: [Int: Float] = [:]
 
     public init() {}
+
+    /// How much body ink of `color` has on a slide whose luminance under it
+    /// is `ground` (linear, 0…1): on a light slide it is mostly a glaze, so
+    /// the type it crosses still reads through it; on a dark one, where a
+    /// glaze would vanish, it lies thicker and still shows. Chalk is all body.
+    static func body(of color: InkColor, onGround ground: Float?) -> Float {
+        let body = 0.9 - 0.75 * smoothstep(0.04, 0.3, ground ?? 0.5)
+        return color == .white ? max(body, 0.85) : body
+    }
+
+    /// The mean linear luminance of the slide under `mark`, drawn small from `source`.
+    public func ground(under mark: Mark, on source: SlideSource) -> Float? {
+        guard let b = mark.bounds(slideAspect: source.aspect) else { return nil }
+        var h = Hasher()
+        h.combine(mark.strokes)
+        h.combine(mark.width)
+        h.combine(source.ref)
+        let key = h.finalize()
+        lock.lock()
+        if let hit = grounds[key] {
+            lock.unlock()
+            return hit
+        }
+        lock.unlock()
+        let r = SIMD4<Float>(max(b.u0, 0), max(b.v0, 0), min(b.u1, 1), min(b.v1, 1))
+        guard r.z > r.x, r.w > r.y else { return nil }
+        let w = 32, hgt = max(4, min(64, Int((Float(w) * (r.w - r.y) / ((r.z - r.x) * source.aspect)).rounded())))
+        guard let img = source.render(region: r, width: w, height: hgt) else { return nil }
+        var px = [UInt8](repeating: 0, count: w * hgt * 4)
+        let drawn = px.withUnsafeMutableBytes { bytes -> Bool in
+            guard let ctx = CGContext(data: bytes.baseAddress, width: w, height: hgt, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            ctx.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
+            ctx.fill(CGRect(x: 0, y: 0, width: w, height: hgt))
+            ctx.draw(img, in: CGRect(x: 0, y: 0, width: w, height: hgt))
+            return true
+        }
+        guard drawn else { return nil }
+        func linear(_ v: UInt8) -> Float {
+            let c = Float(v) / 255
+            return c <= 0.04045 ? c / 12.92 : powf((c + 0.055) / 1.055, 2.4)
+        }
+        var sum: Float = 0
+        for i in stride(from: 0, to: px.count, by: 4) {
+            sum += 0.2126 * linear(px[i]) + 0.7152 * linear(px[i + 1]) + 0.0722 * linear(px[i + 2])
+        }
+        let ground = sum / Float(w * hgt)
+        lock.lock()
+        if grounds.count > 256 { grounds.removeAll() }
+        grounds[key] = ground
+        lock.unlock()
+        return ground
+    }
 
     /// Every mark in the project, in its order.
     public func textures(for project: OOOProject) -> [MTLTexture?] {
@@ -774,42 +843,38 @@ public final class InkCache: @unchecked Sendable {
         return texture
     }
 
-    /// Red: when the pen got there, premultiplied by green: how much ink.
-    /// Each smaller level averages the one above, so a mark seen from far
-    /// off stays smooth and draws on at the same moments.
+    /// Green: the pen's own ink; blue: the wet fringe past its edge; alpha:
+    /// how deep the pen's ink lies, premultiplied by green; red: when the ink
+    /// got there, premultiplied by green and blue together. Each smaller level
+    /// averages the one above, so a mark seen from far off stays smooth and
+    /// draws on at the same moments.
     static func upload(_ r: InkRaster) -> MTLTexture? {
-        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rg16Unorm, width: r.width, height: r.height, mipmapped: true)
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Unorm, width: r.width, height: r.height, mipmapped: true)
         d.usage = [.shaderRead]
         guard let texture = GPU.shared.device.makeTexture(descriptor: d) else { return nil }
         var w = r.width, h = r.height
-        var cover = r.cover
-        var when = zip(r.when, r.cover).map { $0 * $1 }
+        let amount = zip(r.cover, r.halo).map { $0 + $1 }
+        var planes = [zip(r.when, amount).map { $0 * $1 }, r.cover, r.halo, zip(r.depth, r.cover).map { $0 * $1 }]
         for level in 0..<texture.mipmapLevelCount {
-            var texels = [UInt16](repeating: 0, count: w * h * 2)
+            var texels = [UInt16](repeating: 0, count: w * h * 4)
             for i in 0..<(w * h) {
-                texels[2 * i] = UInt16((min(max(when[i], 0), 1) * 65535).rounded())
-                texels[2 * i + 1] = UInt16((min(max(cover[i], 0), 1) * 65535).rounded())
+                for c in 0..<4 { texels[4 * i + c] = UInt16((min(max(planes[c][i], 0), 1) * 65535).rounded()) }
             }
             texels.withUnsafeBytes { bytes in
-                texture.replace(region: MTLRegionMake2D(0, 0, w, h), mipmapLevel: level, withBytes: bytes.baseAddress!, bytesPerRow: w * 4)
+                texture.replace(region: MTLRegionMake2D(0, 0, w, h), mipmapLevel: level, withBytes: bytes.baseAddress!, bytesPerRow: w * 8)
             }
             guard level + 1 < texture.mipmapLevelCount else { break }
             let nw = max(w / 2, 1), nh = max(h / 2, 1)
-            var nc = [Float](repeating: 0, count: nw * nh), nt = nc
+            var next = [[Float]](repeating: [Float](repeating: 0, count: nw * nh), count: 4)
             for y in 0..<nh {
                 for x in 0..<nw {
-                    var c: Float = 0, t: Float = 0
                     for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
                         let i = min(2 * y + dy, h - 1) * w + min(2 * x + dx, w - 1)
-                        c += cover[i]
-                        t += when[i]
+                        for c in 0..<4 { next[c][y * nw + x] += planes[c][i] / 4 }
                     }
-                    nc[y * nw + x] = c / 4
-                    nt[y * nw + x] = t / 4
                 }
             }
-            cover = nc
-            when = nt
+            planes = next
             w = nw
             h = nh
         }

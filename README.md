@@ -21,7 +21,7 @@ It is for the slide you spent a week on: the chart whose curve you redrew eleven
 
 **More than one slide?** Add Slide (⌃⌘I), or drop several at once, and the same card in your hand goes through them: it turns over to the next slide, or the next melts in where you're looking while whatever the two share holds still. Open on your deck's cover, follow a number from one slide to the next, and turn back to the first at the end.
 
-**Point at something.** Draw on the Slide (⇧⌘P) and circle a number or underline a word with one fine marker. In the video the mark draws on just as your hand drew it, then stays until the slide changes or fades a moment later.
+**Point at something.** Draw on the Slide (⇧⌘P) and circle a number or underline a word with one fine pen. Its ink lies like watercolour: the slide shows through it, and it gathers at the edges and feathers a hair as it dries. In the video the mark draws on just as your hand drew it, then stays until the slide changes or fades a moment later.
 
 **Leave room for you.** Room for You lifts the stage into the top of the frame for as long as you choose, leaving the bottom clear for your talking head in Edits or Premiere.
 
