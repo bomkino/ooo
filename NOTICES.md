@@ -7,6 +7,7 @@
 - `CardPose` gains `window` (a texture that holds one region of its media, so a sharp detail can be laid exactly over its card), `edgeScale`, a soft spotlight (`spot`, `spotDim`, `spotFeather`) and `shadowGround` (a cut-out's shadow falls on the sheet it was lifted from).
 - `StageRenderer.Request.backdropUV` and the `copy_uv_fragment` shader let the background answer the camera with a touch of parallax.
 - The near plane adapts to the camera's distance, so extreme close-ups keep their depth precision.
+- `CardPose.softEdge` fades a card's edges (a detail lifted off a slide blends into it), `CardPose.reflects` keeps an overlaid detail out of the mirror floor, and `StageFrame.reflectionFade` and `reflectionBlur` make a soft floor.
 
 Parts of the editor (`Sources/OOOStudio`: the theme, type, controls, live stage, export sheet and document) are adapted from Drift's `StudioKit`, as marked in each file.
 

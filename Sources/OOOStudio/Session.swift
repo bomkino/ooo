@@ -108,7 +108,11 @@ public final class OOOSession {
     @ObservationIgnored private var slideBase: SlideBase?
     @ObservationIgnored private var slideToken = 0
     @ObservationIgnored private var sceneCache: SlideScene?
-    @ObservationIgnored private var details: [SlideDetail]?
+    /// The last reading of a slide, and which slide it was.
+    @ObservationIgnored private var details: (ref: SlideRef, found: [SlideDetail])?
+    /// A dropped slide whose tour is still being planned: the drop and its
+    /// tour become one undo step when the plan lands.
+    @ObservationIgnored private var pendingDrop: (before: OOOProject, name: String)?
     @ObservationIgnored private var voiceTrack: AudioTrack?
     @ObservationIgnored private var voiceFile: String?
     @ObservationIgnored private var placedCache: (key: VoiceKey, track: AudioTrack)?
@@ -137,6 +141,7 @@ public final class OOOSession {
 
     /// Applies a change as one undoable step. A gesture still open is closed first.
     public func update(_ actionName: String, _ change: (inout OOOProject) -> Void) {
+        finishDrop()
         let openGesture = pendingEditStart != nil ? pendingEditName : nil
         let wasOpen = pendingEditStart != nil
         if wasOpen { commitEdit(pendingEditName ?? "Edit") }
@@ -156,6 +161,7 @@ public final class OOOSession {
 
     /// Call at the start of a continuous gesture (a slider drag, a drag on the map).
     public func beginEdit(_ name: String? = nil) {
+        finishDrop()
         if pendingEditStart != nil, pendingEditName != name { commitEdit(pendingEditName ?? "Edit") }
         if pendingEditStart == nil {
             pendingEditStart = project
@@ -178,9 +184,29 @@ public final class OOOSession {
         if start != project { registerUndo(from: start, name: actionName) }
     }
 
+    /// Closes a drop as one undo step: the slide, and its tour if it has one by now.
+    private func finishDrop() {
+        guard let drop = pendingDrop else { return }
+        pendingDrop = nil
+        if drop.before != project { registerUndo(from: drop.before, name: drop.name) }
+    }
+
+    /// A new slide (or page) and its tour, undone together.
+    private func drop(_ name: String, _ change: (inout OOOProject) -> Void) {
+        if pendingEditStart != nil { commitEdit(pendingEditName ?? "Edit") }
+        finishDrop()
+        let before = project
+        var after = project
+        change(&after)
+        guard after != before else { return }
+        set(after)
+        pendingDrop = (before, name)
+    }
+
     private func set(_ p: OOOProject) {
         let slideChanged = p.slide != project.slide
         let voiceChanged = p.voice?.file != project.voice?.file
+        if slideChanged || p.format != project.format { thumbs = [:] }
         project = p
         document.project = p
         choreography = p.choreography()
@@ -202,6 +228,8 @@ public final class OOOSession {
         um.registerUndo(withTarget: document) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
+                // Undoing past a drop still being planned drops its plan too.
+                self.pendingDrop = nil
                 self.set(old)
                 if self.pendingEditStart != nil { self.pendingEditStart = old }
                 self.registerUndo(from: current, name: name)
@@ -263,7 +291,6 @@ public final class OOOSession {
         }
         slidePreview = base.preview
         thumbs = [:]
-        details = nil
         sceneCache = nil
         if base.ref.kind == .pdf, let file = base.ref.file {
             pageCount = SlideSource.pageCount(document.media.url(for: file))
@@ -287,9 +314,11 @@ public final class OOOSession {
             message = "Couldn't copy the slide: \(error.localizedDescription)"
             return
         }
-        update("Change Slide") { p in
+        drop("Change Slide") { p in
+            let (A, C) = (p.slideAspect, p.canvasAspect)
             p.slide = ref
             p.shots = []
+            p.adaptOverview(fromSlideAspect: A, canvasAspect: C)
         }
         selection = .overview
         clock.time = 0
@@ -304,9 +333,11 @@ public final class OOOSession {
         guard n != project.slide.page, var ref = SlideSource.inspect(document.media.url(for: file), page: n) else { return }
         ref.file = file
         ref.name = project.slide.name
-        update("Change Page") { p in
+        drop("Change Page") { p in
+            let (A, C) = (p.slideAspect, p.canvasAspect)
             p.slide = ref
             p.shots = []
+            p.adaptOverview(fromSlideAspect: A, canvasAspect: C)
         }
         selection = .overview
         clock.time = 0
@@ -335,7 +366,8 @@ public final class OOOSession {
     public func autoDirect() {
         let ref = project.slide
         let media = document.media.directory
-        let cached = details
+        // Only this slide's own reading will do: a new slide or page is read afresh.
+        let cached = details?.ref == ref ? details?.found : nil
         busy = "Reading the slide"
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = Result { () throws -> [SlideDetail] in
@@ -348,19 +380,26 @@ public final class OOOSession {
                     self.busy = nil
                     switch result {
                     case .success(let found):
-                        self.details = found
-                        let p = self.project
-                        let shots = Director.shots(DirectorInput(details: found, words: p.voice?.words, slideAspect: p.slideAspect,
-                                                                 canvasAspect: p.canvasAspect, start: p.arrive.end))
+                        self.details = (ref, found)
+                        let shots = Director.shots(self.project.directorInput(found))
                         guard !shots.isEmpty else {
+                            self.finishDrop()
                             self.message = "OOO found nothing to read on this slide. Draw framings on the slide map to choose what the camera visits."
                             return
                         }
-                        self.update("Direct") { $0.shots = shots }
+                        if self.pendingDrop != nil {
+                            var p = self.project
+                            p.shots = shots
+                            self.set(p)
+                            self.finishDrop()
+                        } else {
+                            self.update("Direct") { $0.shots = shots }
+                        }
                         self.selection = .overview
                         self.clock.time = 0
                         self.clock.playing = true
                     case .failure(let error):
+                        self.finishDrop()
                         self.message = "Couldn't read the slide: \(error)"
                     }
                 }
@@ -472,7 +511,11 @@ public final class OOOSession {
     }
 
     public func setFormat(_ f: CanvasFormat) {
-        update("Canvas") { $0.format = f }
+        update("Canvas") { p in
+            let (A, C) = (p.slideAspect, p.canvasAspect)
+            p.format = f
+            p.adaptOverview(fromSlideAspect: A, canvasAspect: C)
+        }
     }
 
     // MARK: Voiceover

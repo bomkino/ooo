@@ -11,9 +11,11 @@ public struct ChoreographyInput: Sendable {
     public var canvasAspect: Float
     public var style: MotionStyle
     public var seed: UInt32
+    /// The part of the canvas framings sit in.
+    public var safe: SafeArea
 
     public init(overview: Shot, shots: [Shot], arrive: Arrive, ending: Ending, duration: Double,
-                slideAspect: Float, canvasAspect: Float, style: MotionStyle, seed: UInt32 = 1) {
+                slideAspect: Float, canvasAspect: Float, style: MotionStyle, seed: UInt32 = 1, safe: SafeArea = .none) {
         self.overview = overview
         self.shots = shots
         self.arrive = arrive
@@ -23,6 +25,7 @@ public struct ChoreographyInput: Sendable {
         self.canvasAspect = canvasAspect
         self.style = style
         self.seed = seed
+        self.safe = safe
     }
 }
 
@@ -34,8 +37,10 @@ public struct ChoreographyInput: Sendable {
 /// move keeps a little of its momentum as it lands and the hold bleeds it away
 /// along the same path, so the camera glides into each framing and settles,
 /// with continuous speed everywhere. While a shot holds it can breathe (a slow
-/// push-in that starts and ends at rest). On top of the path the camera leans
-/// with its own speed (swing) and drifts as if held; both are smooth in time.
+/// push-in that starts and ends at rest) and read along (glide across a line
+/// too long to show whole at a readable size, starting and ending at rest).
+/// On top of the path the camera leans with its own speed (swing) and drifts
+/// as if held; both are smooth in time.
 public struct Choreography: Sendable {
     public struct Beat: Sendable {
         public let shot: Shot
@@ -58,6 +63,9 @@ public struct Choreography: Sendable {
         /// Natural-log push-in over the hold.
         let breathe: Float
         let arcSign: Float
+        /// Reading along: the framing the hold glides to, and when the glide ends.
+        public let sweepTo: CameraPose?
+        public let sweepEnd: Double
 
         public var travel: Double { land - depart }
         public var hold: Double { leave - land }
@@ -103,7 +111,8 @@ public struct Choreography: Sendable {
         if input.ending == .pullBack {
             var back = input.overview
             back.id = UUID(uuidString: "00000000-0000-0000-0000-00000000B4CC")!
-            back.time = max(last + 0.9, duration - 0.45)
+            // Lands with time to settle and rest on the whole slide before the end.
+            back.time = max(last + 1.6, duration - 1.1)
             back.travel = nil
             back.ease = .breathe
             back.breathe = 0
@@ -112,7 +121,12 @@ public struct Choreography: Sendable {
             plan.append((back, true))
         }
 
-        let poses = plan.map { CameraPose(shot: $0.shot, slideAspect: A, canvasAspect: C) }
+        let poses = plan.map { CameraPose(shot: $0.shot, slideAspect: A, canvasAspect: C, safe: input.safe) }
+        let sweeps: [CameraPose?] = plan.map {
+            $0.shot.sweep == nil ? nil : CameraPose(sweepEndOf: $0.shot, slideAspect: A, canvasAspect: C, safe: input.safe)
+        }
+        /// Where a beat's hold leaves the camera, before its breath.
+        let rests = poses.indices.map { sweeps[$0] ?? poses[$0] }
         let w = { (h: Float) -> Float in h * C.squareRoot() }
         let rho = input.style.rho
         let settleScale = input.style.paceScale.squareRoot()
@@ -133,7 +147,7 @@ public struct Choreography: Sendable {
             // Keep part of every interval still, so each detail is seen, not just passed.
             let interval = land - prevLand
             let gap = interval - max(Choreography.minimumHold, min(0.32 * interval, 1.0))
-            let wanted = item.shot.travel ?? Choreography.autoTravel(from: poses[i - 1], to: poses[i], ease: item.shot.ease,
+            let wanted = item.shot.travel ?? Choreography.autoTravel(from: rests[i - 1], to: poses[i], ease: item.shot.ease,
                                                                        style: input.style, canvasAspect: C)
             let travel = gap < 0.25 ? max(land - prevLand - 0.05, 0.08) : min(max(wanted, 0.25), gap)
             departs.append(land - travel)
@@ -152,7 +166,7 @@ public struct Choreography: Sendable {
             if i == 0 {
                 from = Arrival.cameraStart(pose, arrive: input.arrive)
             } else {
-                from = poses[i - 1]
+                from = rests[i - 1]
                 from.height *= expf(-built[i - 1].breathe)
             }
             // Short holds keep still: a breath needs room to be a breath.
@@ -174,9 +188,12 @@ public struct Choreography: Sendable {
                 tail = Float(hold / s)
             }
             let dx = pose.target.x - from.target.x
+            // The glide along a line keeps clear of the move out.
+            let glide = hold > 0.5 ? sweeps[i] : nil
+            let sweepEnd = land + min(item.shot.sweepTime ?? hold * 0.82, hold - 0.2)
             built.append(Beat(shot: item.shot, isOverview: item.overview, pose: pose, depart: depart, land: land, leave: leave,
                               from: from, path: path, curve: curve, overrun: overrun, tail: tail,
-                              breathe: breathe, arcSign: dx >= 0 ? 1 : -1))
+                              breathe: breathe, arcSign: dx >= 0 ? 1 : -1, sweepTo: glide, sweepEnd: max(sweepEnd, land + 0.3)))
         }
         beats = built
     }
@@ -273,6 +290,13 @@ public struct Choreography: Sendable {
         let left = Float(max(1 - x / hold, 0))
         let rest = beat.overrun > 0 ? beat.overrun * powf(left, beat.tail) : 0
         var p = interpolate(beat, 1 - rest, time: 1)
+        if let to = beat.sweepTo {
+            let e = Curves.along(Float(x / max(beat.sweepEnd - beat.land, 1e-3)))
+            p.target += (to.target - beat.pose.target) * e
+            p.height *= powf(to.height / max(beat.pose.height, 1e-5), e)
+            p.yaw = lerp(p.yaw, to.yaw, e)
+            p.pitch = lerp(p.pitch, to.pitch, e)
+        }
         if beat.breathe > 0 {
             p.height *= expf(-beat.breathe * smootherstep(Float(x / hold)))
         }
@@ -341,9 +365,12 @@ public struct Choreography: Sendable {
     /// A natural length for a video with these shots and no voiceover.
     public static func naturalDuration(shots: [Shot], arrive: Arrive, ending: Ending) -> Double {
         let last = max(shots.map(\.time).max() ?? arrive.end, arrive.end)
-        var d = last + (shots.isEmpty ? 2.6 : 2.4)
+        // A shot that reads along a line holds for its glide.
+        let lastShot = shots.max { $0.time < $1.time }
+        let glide = lastShot?.sweep == nil ? 0 : max((lastShot?.sweepTime ?? 1.6) - 1.2, 0)
+        var d = last + (shots.isEmpty ? 2.6 : 2.4) + glide
         switch ending {
-        case .pullBack: d += 2.0
+        case .pullBack: d += 2.6
         case .fade: d += 0.6
         case .leave: d += 1.0
         case .hold: break

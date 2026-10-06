@@ -35,6 +35,12 @@ public struct SlideScene: @unchecked Sendable {
         return Arrival.slide(at: t, arrive: project.arrive, canvasAspect: canvasAspect)
     }
 
+    /// How far a spotlight has come in at `t` (0…1): the room dims with it.
+    public func spotlight(at t: Double) -> Float {
+        guard let e = choreography.emphasis(at: t), choreography.beats[e.beat].shot.emphasis == .spotlight else { return 0 }
+        return e.amount
+    }
+
     /// How much of the picture is left as a fade ending closes (1 = all).
     public func presence(at t: Double) -> Float {
         project.ending == .fade ? 1 - choreography.endingProgress(at: t) : 1
@@ -46,7 +52,7 @@ public struct SlideScene: @unchecked Sendable {
     public func look(at t: Double, canvasAspect: Float) -> StageLook {
         var l = project.look
         let cam = choreography.pose(at: t)
-        let overview = CameraPose(shot: project.overview, slideAspect: project.slideAspect, canvasAspect: canvasAspect)
+        let overview = choreography.beats.first?.pose ?? cam
         let closer = max(log2f(overview.height / max(cam.height, 1e-4)), 0)
         l.depthOfField = clamp01(project.look.depthOfField * (0.3 + 1.4 * cam.aperture) * (1 + 0.3 * min(closer, 4)))
         l.bend = slidePose(at: t, canvasAspect: canvasAspect).paper ? .paper : .card
@@ -72,7 +78,7 @@ public struct SlideScene: @unchecked Sendable {
         let cam = choreography.pose(at: t)
         let fovV = radians(cam.fov)
         let fovH = 2 * atanf(tanf(fovV / 2) * C)
-        let overview = CameraPose(shot: project.overview, slideAspect: project.slideAspect, canvasAspect: C)
+        let overview = choreography.beats.first?.pose ?? cam
         let closer = clamp01(logf(overview.height / max(cam.height, 1e-4)) / logf(12))
         let s: Float = 0.86 * (1 - 0.05 * closer)
         let room = (1 - s) / 2
@@ -97,6 +103,22 @@ public struct SlideScene: @unchecked Sendable {
 
         let sp = slidePose(at: t, canvasAspect: C)
         let shown = self.presence(at: t)
+        // The floor the slide stands on: a tall frame's empty lower half
+        // holds its reflection instead of plain backdrop.
+        let px = Float(outputWidth) / 1080
+        frame.floorY = -0.506
+        switch project.floorKind {
+        case .none:
+            break
+        case .soft:
+            frame.reflection = 0.2 * shown
+            frame.reflectionFade = 4.2
+            frame.reflectionBlur = 7 * px
+        case .mirror:
+            frame.reflection = 0.34 * shown
+            frame.reflectionFade = 2.4
+            frame.reflectionBlur = 1.2 * px
+        }
         var slide = CardPose(media: 0, occurrence: 0, position: sp.offset, rotation: sp.rotation, size: SIMD2(A, 1))
         slide.curl = sp.curl
         slide.fold = sp.fold
@@ -118,16 +140,22 @@ public struct SlideScene: @unchecked Sendable {
         if atRest, let emphasis = choreography.emphasis(at: t) {
             let amount = emphasis.amount
             let shot = choreography.beats[emphasis.beat].shot
-            let r = Self.padded(shot.frame.bounds, by: 0.04)
+            let focus = shot.focus ?? shot.frame
+            // Softness in slide heights; the engine measures it against the slide's shorter side.
+            let side = min((focus.size.x) * A, focus.size.y)
+            let unit = min(A, 1)
             switch shot.emphasis {
             case .spotlight:
-                slide.spot = r
-                slide.spotDim = 0.62 * amount
-                slide.spotFeather = 0.035
+                // A soft pool of light on the detail, not a box: the rest of
+                // the slide falls away gently, and the room dims with it.
+                slide.spot = Self.padded(focus.bounds, by: 0.08)
+                slide.spotDim = 0.42 * amount
+                slide.spotFeather = max(0.45 * side, 0.03) / unit
             case .lift:
+                let r = Self.padded(focus.bounds, by: 0.18)
                 slide.spot = r
-                slide.spotDim = 0.22 * amount
-                slide.spotFeather = 0.05
+                slide.spotDim = 0.2 * amount
+                slide.spotFeather = max(0.35 * side, 0.02) / unit
                 lifted = Self.cutOut(r, slideAspect: A, amount: amount, patch: patch, light: light)
             case .none:
                 break
@@ -147,6 +175,7 @@ public struct SlideScene: @unchecked Sendable {
             detail.edgeScale = 0
             detail.shadow = 0
             detail.layer = 1
+            detail.reflects = false
             cards.append(detail)
         }
         if let lifted { cards.append(lifted) }
@@ -181,9 +210,13 @@ public struct SlideScene: @unchecked Sendable {
         c.window = SIMD4(lo.x, lo.y, hi.x, hi.y)
         c.mediaAspect = A * ru / rv
         c.fit = .fill
-        c.corner = 0.06
-        c.edgeScale = 0.5
-        c.shadow = amount
+        // It fades into the slide at its edges, so what rises is the detail,
+        // not a rectangle cut through whatever surrounds it.
+        c.corner = 0.25
+        c.softEdge = 0.22 * min(A * ru, rv) * grow
+        c.edgeScale = 0
+        c.reflects = false
+        c.shadow = amount * 0.75
         c.shadowGround = 0
         c.layer = 2
         c.opacity = smoothstep(amount / 0.25)
@@ -219,7 +252,7 @@ public final class SlideStage: @unchecked Sendable {
         let fps = max(scene.project.fps, 1)
         let shutter = Double(look.shutter) / Double(fps)
         var backdrop = scene.project.backdrop
-        backdrop.brightness *= scene.presence(at: t)
+        backdrop.brightness *= scene.presence(at: t) * (1 - 0.3 * scene.spotlight(at: t))
         var request = StageRenderer.Request(
             width: output.width, height: output.height, backdrop: backdrop, backdropPhase: t / 12, look: look,
             samples: look.shutter > 0.01 ? max(samples, 1) : 1, frameIndex: frameIndex, keepAlpha: transparent,

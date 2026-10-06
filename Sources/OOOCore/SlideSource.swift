@@ -1,4 +1,6 @@
 import CoreGraphics
+import CoreImage
+import CoreImage.CIFilterBuiltins
 import Foundation
 import ImageIO
 import Metal
@@ -19,6 +21,10 @@ public final class SlideSource: @unchecked Sendable {
 
     /// Longest side of the texture that holds the whole slide.
     public static let baseSide = 4096
+    /// How far past its own pixels a picture is drawn: with a Lanczos
+    /// resample and a light unsharp mask, text drawn at twice a picture's
+    /// size stays crisp where the GPU's bilinear magnification goes soft.
+    public static let pictureUpscale: Float = SlideRef.pictureUpscale
 
     public init(ref: SlideRef, media: URL?) throws {
         self.ref = ref
@@ -91,9 +97,21 @@ public final class SlideSource: @unchecked Sendable {
         return CGImageSourceCreateThumbnailAtIndex(source, 0, thumb as CFDictionary) ?? img
     }
 
-    /// The most pixels per slide height worth drawing: a picture's own, or
-    /// unlimited for vectors.
+    /// A picture's own pixels per slide height; nil for vectors.
     public var nativeHeight: Int? { image?.height }
+
+    /// The most pixels per slide height worth drawing: twice a picture's own
+    /// (see `pictureUpscale`), or unlimited for vectors.
+    public var densityLimit: Float? { image.map { Float($0.height) * Self.pictureUpscale } }
+
+    /// Longest side of the whole-slide texture. A picture gets its sharpened
+    /// double, so close-ups need no further drawing, up to a size that stays
+    /// light on memory; vectors get `baseSide` and draw sharper detail as needed.
+    public var wholeSide: Int {
+        guard let image else { return Self.baseSide }
+        let long = Float(max(image.width, image.height))
+        return Int(min(long * Self.pictureUpscale, max(long, 6144)).rounded())
+    }
 
     /// The region grown outwards to whole pixels of a picture, so a detail cut
     /// from it lines up exactly with the whole slide; vectors need no snapping.
@@ -119,13 +137,15 @@ public final class SlideSource: @unchecked Sendable {
         }
     }
 
-    /// The whole slide, longest side `side` pixels (never more than a picture has).
-    public func renderWhole(side: Int = SlideSource.baseSide) -> CGImage? {
+    /// The whole slide, longest side `side` pixels (never more than twice
+    /// what a picture has).
+    public func renderWhole(side: Int? = nil) -> CGImage? {
+        let side = side ?? wholeSide
         var w = aspect >= 1 ? side : Int((Float(side) * aspect).rounded())
         var h = aspect >= 1 ? Int((Float(side) / aspect).rounded()) : side
-        if let image, image.height < h {
-            w = image.width
-            h = image.height
+        if let image, let limit = densityLimit, Float(h) > limit {
+            h = Int(limit)
+            w = Int((Float(image.width) * Self.pictureUpscale).rounded())
         }
         return render(region: SIMD4(0, 0, 1, 1), width: max(w, 1), height: max(h, 1))
     }
@@ -170,7 +190,13 @@ public final class SlideSource: @unchecked Sendable {
         let x0 = (CGFloat(r.x) * iw).rounded(), y0 = (CGFloat(r.y) * ih).rounded()
         let crop = CGRect(x: x0, y: y0, width: max((CGFloat(r.z) * iw).rounded() - x0, 1), height: max((CGFloat(r.w) * ih).rounded() - y0, 1))
         guard let part = image.cropping(to: crop) else { return nil }
-        // Never more pixels than the picture has: the GPU magnifies the rest.
+        // Past the picture's own pixels: a sharpened resample, up to twice
+        // its size; the GPU magnifies the rest.
+        let up = min(Float(width) / Float(part.width), Float(height) / Float(part.height), pictureUpscale)
+        if up > 1.02 {
+            return Upscaler.sharpened(part, width: Int((Float(part.width) * up).rounded()),
+                                      height: Int((Float(part.height) * up).rounded()))
+        }
         let w = min(width, part.width), h = min(height, part.height)
         guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
                                   space: CGColorSpace(name: CGColorSpace.sRGB)!,
@@ -178,5 +204,28 @@ public final class SlideSource: @unchecked Sendable {
         ctx.interpolationQuality = .high
         ctx.draw(part, in: CGRect(x: 0, y: 0, width: w, height: h))
         return ctx.makeImage()
+    }
+}
+
+/// Draws a picture larger than its pixels the way a careful retoucher would:
+/// a Lanczos resample, then a light unsharp mask scaled to the enlargement,
+/// so text keeps its edges.
+enum Upscaler {
+    static let context = CIContext(options: [.workingColorSpace: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                             .cacheIntermediates: false])
+
+    static func sharpened(_ image: CGImage, width: Int, height: Int) -> CGImage? {
+        let sx = Float(width) / Float(max(image.width, 1)), sy = Float(height) / Float(max(image.height, 1))
+        let scale = CIFilter.lanczosScaleTransform()
+        scale.inputImage = CIImage(cgImage: image).clampedToExtent()
+        scale.scale = sy
+        scale.aspectRatio = sx / max(sy, 1e-6)
+        let sharpen = CIFilter.unsharpMask()
+        sharpen.inputImage = scale.outputImage
+        sharpen.radius = 0.9 * sy
+        sharpen.intensity = 0.55
+        let rect = CGRect(x: 0, y: 0, width: width, height: height)
+        guard let out = sharpen.outputImage?.cropped(to: rect) else { return nil }
+        return context.createCGImage(out, from: rect, format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
     }
 }

@@ -189,6 +189,22 @@ struct ShotInspector: View {
                 ChoiceRow(Emphasis.allCases.map { ($0, $0.title) },
                           selection: session.choiceShot(id, \.emphasis, fallback: .none, "Emphasis"))
                 Text(emphasisSummary(shot.emphasis)).textStyle(.caption).foregroundStyle(.secondary)
+                Toggle("Read along: glide across while it holds", isOn: Binding(
+                    get: { session.project.shots.first { $0.id == id }?.sweep != nil },
+                    set: { on in
+                        session.updateShot(id, "Read Along") { s in
+                            s.sweep = on ? Vec2(s.frame.size.x, 0) : nil
+                            if !on { s.sweepTime = nil }
+                        }
+                    }))
+                    .toggleStyle(.checkbox)
+                    .textStyle(.bodyCompact)
+                if shot.sweep != nil {
+                    Dial(session: session, label: "Glide", value: glide(id), range: -4...4, defaultValue: 1,
+                         format: { String(format: "%.1f frames", $0) }, undo: "Read Along")
+                    Text("For a line too long to show at a size that reads: the camera lands on its start and glides to its end.")
+                        .textStyle(.caption).foregroundStyle(.tertiary)
+                }
             }
             Hairline()
             HStack(spacing: 6) {
@@ -225,6 +241,16 @@ struct ShotInspector: View {
                     s.frame.size *= powf(2, now - z)
                 }
             })
+    }
+
+    /// How far the framing glides while it holds, in framing widths (negative: leftwards).
+    private func glide(_ id: UUID) -> Binding<Float> {
+        Binding(
+            get: {
+                guard let s = session.project.shots.first(where: { $0.id == id }), let sweep = s.sweep else { return 0 }
+                return sweep.x / max(s.frame.size.x, 1e-4)
+            },
+            set: { k in session.liveShot(id) { s in s.sweep = Vec2(k * s.frame.size.x, s.sweep?.y ?? 0) } })
     }
 
     /// Focal length on a full-frame camera, from the vertical field of view.
@@ -368,6 +394,13 @@ struct LookInspector: View {
     var body: some View {
         let p = session.project
         VStack(alignment: .leading, spacing: 0) {
+            InspectorSection("Floor") {
+                ChoiceRow(FloorKind.allCases.map { ($0, $0.title) },
+                          selection: Binding(get: { session.project.floorKind }, set: { v in session.update("Floor") { $0.floor = v } }))
+                Text("What the slide stands on. In a tall frame its reflection fills the space below it.")
+                    .textStyle(.caption).foregroundStyle(.secondary)
+            }
+            Hairline()
             InspectorSection("Surface") {
                 ChoiceRow(SurfaceKind.allCases.map { ($0, $0.title) }, selection: session.choice(\.look.surface, "Surface"))
                 Text(p.look.surface.summary).textStyle(.caption).foregroundStyle(.secondary)

@@ -3,8 +3,9 @@
 # pitch.dog designs at (2576 × 1080 and 1920 × 1080, as pictures and as a
 # PDF), each taken through the app's journey (read, Direct for Me, render) in
 # a 1080 × 1920 reel, plus the vector sample. For each slide: the director's
-# plan, a contact sheet, a still at the opening and at every landing, and a
-# draft video. Then export timings.
+# plan, a contact sheet, a still at the opening and at every landing, the
+# opening at five angles and three floors, and a draft video. Then export
+# timings.
 #
 #   bash scripts/ci-renders.sh [out-dir]
 set -eo pipefail
@@ -29,6 +30,7 @@ render_set() {
   "$LAB" analyze "$@" | tee "$dir/plan.txt"
   "$LAB" sheet "$@" --out "$dir/sheet.png"
   "$LAB" landings "$@" --out "$dir/landings"
+  "$LAB" openings "$@" --out "$dir/openings.png"
   "$LAB" render "$@" --quality draft --scale 0.5 --out "$dir/draft.mp4"
 }
 

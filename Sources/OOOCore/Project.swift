@@ -39,6 +39,17 @@ public struct CanvasFormat: Codable, Hashable, Identifiable, Sendable {
     public static let uhd = CanvasFormat(id: "uhd", name: "4K", detail: "Big screens", width: 3840, height: 2160)
 
     public static let presets: [CanvasFormat] = [.reel, .portrait, .square, .landscape, .uhd]
+
+    /// The part of the frame the platform's interface leaves clear, which
+    /// framings sit in: on a Reel the profile covers the top tenth and the
+    /// caption and buttons the bottom fifth.
+    public var safeArea: SafeArea {
+        switch id {
+        case "reel": return .reel
+        case "portrait": return .feed
+        default: return .none
+        }
+    }
 }
 
 /// Where the slide comes from.
@@ -76,12 +87,15 @@ public struct SlideRef: Codable, Hashable, Sendable {
 
     public static let sample = SlideRef(kind: .sample, aspect: 16.0 / 9.0, name: "Sample slide")
 
-    /// How many times closer than the whole slide the camera can go before a
-    /// picture runs out of pixels on a canvas `canvasHeight` pixels tall
-    /// (vector slides never do).
-    public func sharpLimit(canvasHeight: Int, slideHeightOnCanvas: Float) -> Float? {
-        guard kind == .image, let h = pixelHeight else { return nil }
-        return Float(h) / max(Float(canvasHeight) * slideHeightOnCanvas, 1)
+    /// How far past its own pixels a picture is drawn (sharpened; see `SlideSource`).
+    public static let pictureUpscale: Float = 2
+
+    /// The least view height, in slide heights, at which a picture stays
+    /// sharp on a canvas `canvasHeight` pixels tall; nil for vectors, which
+    /// stay sharp at any distance.
+    public func sharpViewHeight(canvasHeight: Int) -> Float? {
+        guard kind == .image, let h = pixelHeight, h > 0 else { return nil }
+        return Float(canvasHeight) / (Float(h) * SlideRef.pictureUpscale)
     }
 }
 
@@ -115,6 +129,25 @@ public struct Voiceover: Codable, Hashable, Sendable {
     public var end: Double { offset + duration }
 }
 
+/// What the slide stands on.
+public enum FloorKind: String, Codable, CaseIterable, Sendable, Identifiable {
+    /// Nothing: the slide floats in front of the backdrop.
+    case none
+    /// A soft, blurred reflection that fades within a short distance.
+    case soft
+    /// A glossy mirror floor.
+    case mirror
+
+    public var id: String { rawValue }
+    public var title: String {
+        switch self {
+        case .none: return "None"
+        case .soft: return "Soft"
+        case .mirror: return "Mirror"
+        }
+    }
+}
+
 /// One OOO document: a slide, the moves over it, and how it all looks.
 public struct OOOProject: Codable, Hashable, Sendable {
     public var version: Int = 1
@@ -133,12 +166,14 @@ public struct OOOProject: Codable, Hashable, Sendable {
     public var length: Double?
     public var voice: Voiceover?
     public var seed: UInt32 = 1
+    /// What the slide stands on; nil (documents from before floors) is `defaultFloor`.
+    public var floor: FloorKind?
 
-    public init(slide: SlideRef, overview: Shot = .overview(), shots: [Shot] = [], arrive: Arrive = Arrive(kind: .rise),
+    public init(slide: SlideRef, overview: Shot? = nil, shots: [Shot] = [], arrive: Arrive = Arrive(kind: .rise),
                 ending: Ending = .pullBack, style: MotionStyle = MotionStyle(), look: StageLook = OOOProject.defaultLook,
                 backdrop: BackdropSettings = OOOProject.defaultBackdrop, format: CanvasFormat = .reel) {
         self.slide = slide
-        self.overview = overview
+        self.overview = overview ?? .overview(slideAspect: slide.aspect, canvasAspect: format.aspect)
         self.shots = shots
         self.arrive = arrive
         self.ending = ending
@@ -187,6 +222,37 @@ public struct OOOProject: Codable, Hashable, Sendable {
     public var slideAspect: Float { slide.aspect }
     public var canvasAspect: Float { format.aspect }
 
+    public static let defaultFloor: FloorKind = .soft
+    public var floorKind: FloorKind { floor ?? Self.defaultFloor }
+
+    /// The least view height at which the slide stays sharp on this canvas;
+    /// nil for vectors.
+    public var sharpViewHeight: Float? { slide.sharpViewHeight(canvasHeight: format.height) }
+
+    /// How many times closer than the opening the camera can go on this
+    /// slide and canvas and stay sharp; nil when it always can.
+    public var sharpZoom: Float? {
+        guard let h = sharpViewHeight else { return nil }
+        let opening = CameraPose(shot: overview, slideAspect: slideAspect, canvasAspect: canvasAspect, safe: format.safeArea)
+        return opening.height / h
+    }
+
+    /// What Direct for Me plans from: the slide's reading, the voice, the canvas.
+    public func directorInput(_ details: [SlideDetail]) -> DirectorInput {
+        DirectorInput(details: details, words: voice?.words, slideAspect: slideAspect, canvasAspect: canvasAspect,
+                      start: arrive.end, safe: format.safeArea, minViewHeight: sharpViewHeight, overview: overview)
+    }
+
+    /// Follows a new slide or canvas shape with the opening, unless someone
+    /// has set the opening themselves.
+    public mutating func adaptOverview(fromSlideAspect A: Float, canvasAspect C: Float) {
+        guard overview.isDefaultOverview(slideAspect: A, canvasAspect: C) else { return }
+        let d = Shot.overview(slideAspect: slideAspect, canvasAspect: canvasAspect)
+        overview.frame = d.frame
+        overview.yaw = d.yaw
+        overview.pitch = d.pitch
+    }
+
     /// The video's length: as set, or long enough for every move and the whole voiceover.
     public var duration: Double {
         if let length { return max(length, 1) }
@@ -197,7 +263,7 @@ public struct OOOProject: Codable, Hashable, Sendable {
 
     public var choreographyInput: ChoreographyInput {
         ChoreographyInput(overview: overview, shots: shots, arrive: arrive, ending: ending, duration: duration,
-                          slideAspect: slideAspect, canvasAspect: canvasAspect, style: style, seed: seed)
+                          slideAspect: slideAspect, canvasAspect: canvasAspect, style: style, seed: seed, safe: format.safeArea)
     }
 
     public func choreography() -> Choreography { Choreography(choreographyInput) }

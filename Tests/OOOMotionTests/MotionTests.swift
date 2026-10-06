@@ -234,4 +234,77 @@ final class ChoreographyTests: XCTestCase {
             XCTAssertEqual(Arrival.slide(at: arrive.duration, arrive: arrive, canvasAspect: C), .rest)
         }
     }
+
+    func testComposerFitsAFramingAtAnAngle() {
+        let A: Float = 2576.0 / 1080
+        let frame = ShotFrame.whole(margin: 0.06)
+        for (yaw, pitch) in [(Float(0), Float(0)), (-34, 9), (20, -6)] {
+            let shot = Shot(time: 0, frame: frame, yaw: yaw, pitch: pitch)
+            let pose = CameraPose(shot: shot, slideAspect: A, canvasAspect: C, safe: .reel)
+            let corners = [Vec2(frame.minU, frame.minV), Vec2(frame.maxU, frame.minV), Vec2(frame.minU, frame.maxV), Vec2(frame.maxU, frame.maxV)]
+                .map { Vec3(($0.x - 0.5) * A, 0.5 - $0.y, 0) }
+            guard let box = pose.bounds(of: corners, canvasAspect: C) else { return XCTFail() }
+            let safe = SafeArea.reel.rect
+            // Inside the clear part of a Reel, touching it on one side, and centred in it.
+            XCTAssertGreaterThanOrEqual(box.x, safe.x - 1e-3, "yaw \(yaw)")
+            XCTAssertLessThanOrEqual(box.z, safe.z + 1e-3, "yaw \(yaw)")
+            XCTAssertGreaterThanOrEqual(box.y, safe.y - 1e-3, "yaw \(yaw)")
+            XCTAssertLessThanOrEqual(box.w, safe.w + 1e-3, "yaw \(yaw)")
+            let fill = max((box.z - box.x) / (safe.z - safe.x), (box.w - box.y) / (safe.w - safe.y))
+            XCTAssertEqual(fill, 1, accuracy: 0.01, "yaw \(yaw)")
+            XCTAssertEqual((box.x + box.z) / 2, (safe.x + safe.z) / 2, accuracy: 0.01, "yaw \(yaw)")
+            XCTAssertEqual((box.y + box.w) / 2, (safe.y + safe.w) / 2, accuracy: 0.01, "yaw \(yaw)")
+        }
+        // Turned, a wide slide stands taller in a tall frame than seen flat.
+        let flat = CameraPose(shot: Shot(time: 0, frame: frame), slideAspect: A, canvasAspect: C, safe: .reel)
+        let turned = CameraPose(shot: Shot(time: 0, frame: frame, yaw: -34, pitch: 9), slideAspect: A, canvasAspect: C, safe: .reel)
+        XCTAssertLessThan(turned.height, flat.height * 0.9)
+    }
+
+    func readingAlong() -> Choreography {
+        let shots = [
+            Shot(time: 3.5, frame: ShotFrame(center: Vec2(0.15, 0.25), size: Vec2(0.12, 0.4)), sweep: Vec2(0.3, 0), sweepTime: 2.2),
+            Shot(time: 8, frame: ShotFrame(center: Vec2(0.7, 0.6), size: Vec2(0.2, 0.5)), breathe: 0.5),
+        ]
+        return Choreography(ChoreographyInput(overview: .overview(slideAspect: A, canvasAspect: C), shots: shots, arrive: Arrive(kind: .rise),
+                                              ending: .pullBack, duration: 13, slideAspect: A, canvasAspect: C, style: MotionStyle(),
+                                              safe: .reel))
+    }
+
+    func testReadingAlongGlidesFromStartToEnd() {
+        let c = readingAlong()
+        let beat = c.beats[1]
+        guard let to = beat.sweepTo else { return XCTFail("no glide") }
+        XCTAssertEqual(beat.sweepEnd, beat.land + 2.2, accuracy: 1e-9)
+        let start = c.basePose(at: beat.land + 0.01), end = c.basePose(at: beat.sweepEnd)
+        XCTAssertEqual(start.target.x, beat.pose.target.x, accuracy: beat.pose.height * 0.05)
+        XCTAssertEqual(end.target.x, to.target.x, accuracy: beat.pose.height * 0.05)
+        XCTAssertGreaterThan(to.target.x - beat.pose.target.x, 0.3 * A * 0.9)
+        // The next move leaves from where the glide ended.
+        let next = c.beats[2]
+        XCTAssertEqual(c.basePose(at: next.depart).target.x, to.target.x, accuracy: beat.pose.height * 0.05)
+    }
+
+    func testReadingAlongHasNoJumps() {
+        let c = readingAlong()
+        let dt = 1.0 / 240
+        var prev = c.pose(at: 0)
+        var prevV: Vec3?
+        var t = dt
+        while t <= c.duration {
+            let p = c.pose(at: t)
+            XCTAssertLessThan((p.target - prev.target).length / max(p.height, 1e-3), 0.06, "jump at \(t)")
+            let v = Vec3((p.target.x - prev.target.x) / p.height, (p.target.y - prev.target.y) / p.height, logf(p.height / prev.height)) / Float(dt)
+            if let pv = prevV { XCTAssertLessThan((v - pv).length, 0.6, "velocity kink at \(t)") }
+            prevV = v
+            prev = p
+            t += dt
+        }
+    }
+
+    func testPullBackRestsBeforeTheEnd() {
+        let c = sample(ending: .pullBack)
+        guard let back = c.beats.last, back.isOverview else { return XCTFail() }
+        XCTAssertGreaterThanOrEqual(c.duration - back.land, 1.0)
+    }
 }

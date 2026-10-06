@@ -146,6 +146,22 @@ public enum Curves {
     /// Accelerates from rest like a falling object, landing at u = 1.
     public static func fall(_ u: Float) -> Float { let t = clamp01(u); return t * t }
 
+    /// Reading along a line: eases up to an even pace, keeps it, and eases
+    /// to rest, so the middle of the line passes at reading speed.
+    public static func along(_ u: Float, ramp r: Float = 0.24) -> Float {
+        let t = clamp01(u)
+        func integral(_ x: Float) -> Float { x * x * x - x * x * x * x / 2 }
+        let p: Float
+        if t < r {
+            p = r * integral(t / r)
+        } else if t > 1 - r {
+            p = r / 2 + (1 - 2 * r) + r * (0.5 - integral((1 - t) / r))
+        } else {
+            p = r / 2 + (t - r)
+        }
+        return p / (1 - r)
+    }
+
     /// A bell 0 → 1 → 0 over 0…1, smooth at both ends.
     public static func bump(_ u: Float) -> Float {
         let t = clamp01(u)

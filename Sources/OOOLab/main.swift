@@ -17,10 +17,12 @@ import StageKit
 //   ooo-lab landings --out dir              a still at the opening and at every landing
 //   ooo-lab fixture --kind wide|standard --out f.png|f.pdf [--scale 2]
 //                                           draw a test slide: 2576 × 1080 or 1920 × 1080
+//   ooo-lab openings --out grid.png         the opening at five angles (across) and
+//                                           three floors (down: none, soft, mirror)
 //
 // Every command takes --project <file.ooo> (default: the sample), or
 // --slide <file> (a PDF or picture, read and directed as the app would on a
-// drop), and --format reel|portrait|square|landscape.
+// drop), --format reel|portrait|square|landscape and --floor none|soft|mirror.
 
 let args = CommandLine.arguments
 func value(_ name: String) -> String? {
@@ -44,7 +46,13 @@ if let path = value("--project") {
 }
 if let id = value("--format") {
     guard let f = CanvasFormat.presets.first(where: { $0.id == id }) else { fail("unknown format \(id)") }
+    let (A, C) = (project.slideAspect, project.canvasAspect)
     project.format = f
+    project.adaptOverview(fromSlideAspect: A, canvasAspect: C)
+}
+if let f = value("--floor") {
+    guard let floor = FloorKind(rawValue: f) else { fail("unknown floor \(f)") }
+    project.floor = floor
 }
 if let path = value("--slide") {
     // The app's drop: copy the file in, read it, plan a tour.
@@ -59,13 +67,13 @@ if let path = value("--slide") {
         fail("could not copy \(path): \(error)")
     }
     ref.file = file
-    let format = project.format
+    let (format, floor) = (project.format, project.floor)
     project = OOOProject(slide: ref, format: format)
+    project.floor = floor
     media = dir
     do {
         let details = try SlideAnalysis.read(SlideSource(ref: ref, media: dir))
-        project.shots = Director.shots(DirectorInput(details: details, words: project.voice?.words, slideAspect: project.slideAspect,
-                                                     canvasAspect: project.canvasAspect, start: project.arrive.end))
+        project.shots = Director.shots(project.directorInput(details))
     } catch {
         fail("could not read \(path): \(error)")
     }
@@ -167,9 +175,7 @@ case "analyze":
         for d in details {
             print(d.kind.rawValue, String(format: "%.3f %.3f %.3f %.3f", d.frame.minU, d.frame.minV, d.frame.maxU, d.frame.maxV), d.text)
         }
-        let shots = Director.shots(DirectorInput(details: details, slideAspect: project.slideAspect,
-                                                 canvasAspect: project.canvasAspect, start: project.arrive.end))
-        printPlan(shots)
+        printPlan(Director.shots(project.directorInput(details)))
     } catch {
         fail("analyze failed: \(error)")
     }
@@ -197,6 +203,36 @@ case "landings":
         }
     } catch {
         fail("landings failed: \(error)")
+    }
+
+case "openings":
+    // The opening as the slide comes to rest, at five angles and three floors.
+    let base = loadScene()
+    let out = URL(fileURLWithPath: value("--out") ?? "openings.png")
+    let yaws: [Float] = [-9, -20, -28, -34, -40]
+    let floors: [FloorKind] = [.none, .soft, .mirror]
+    let cw = project.format.width / 3, ch = project.format.height / 3
+    do {
+        let stage = try SlideStage()
+        guard let ctx = CGContext(data: nil, width: cw * yaws.count, height: ch * floors.count, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { fail("no context") }
+        for (r, floor) in floors.enumerated() {
+            for (c, yaw) in yaws.enumerated() {
+                var p = project
+                p.overview.yaw = yaw
+                p.floor = floor
+                p.shots = []
+                p.length = p.arrive.end + 3
+                let scene = SlideScene(project: p, base: base.base, details: base.details)
+                let img = try stage.still(scene, at: p.arrive.end + 1.2, width: cw, height: ch, samples: 4)
+                ctx.draw(img, in: CGRect(x: c * cw, y: (floors.count - 1 - r) * ch, width: cw, height: ch))
+            }
+        }
+        try ImageOutput.writePNG(ctx.makeImage()!, to: out)
+        print("openings \(out.path): yaw \(yaws) across, floors \(floors.map(\.rawValue)) down")
+    } catch {
+        fail("openings failed: \(error)")
     }
 
 case "fixture":
@@ -230,23 +266,28 @@ case "path":
 default:
     print("""
     ooo-lab — headless renders and checks for OOO
-      shaders | still | sheet | render | analyze | path | landings | fixture
-      --project file.ooo | --slide file.pdf|png  --format reel|portrait|square|landscape  --out path
+      shaders | still | sheet | render | analyze | path | landings | openings | fixture
+      --project file.ooo | --slide file.pdf|png  --format reel|portrait|square|landscape  --floor none|soft|mirror  --out path
     """)
 }
 
-/// The tour, one line a shot: when it lands, how close it goes, how it moves.
+/// The tour, one line a shot: when it lands, how close it goes (times closer
+/// than the opening, and how tall the slide's text stands on the canvas),
+/// how it moves.
 func printPlan(_ shots: [Shot]) {
-    let A = project.slideAspect, C = project.canvasAspect
-    if let h = project.slide.pixelHeight {
-        print(String(format: "picture %d px tall; whole slide %.0f px tall on a %d px canvas", h,
-                     Float(project.format.height) / project.overview.frame.visible(slideAspect: A, canvasAspect: C).size.y,
-                     project.format.height))
+    let A = project.slideAspect, C = project.canvasAspect, safe = project.format.safeArea
+    let opening = CameraPose(shot: project.overview, slideAspect: A, canvasAspect: C, safe: safe)
+    print(String(format: "opening: the slide stands %.0f%% of the frame's height", 100 / opening.height))
+    if let h = project.slide.pixelHeight, let zoom = project.sharpZoom {
+        print(String(format: "picture %d px tall: sharp to %.1f× closer than the opening", h, zoom))
     }
     for s in shots.sorted(by: { $0.time < $1.time }) {
-        let zoom = s.frame.magnification(slideAspect: A, canvasAspect: C)
-        print(String(format: "shot %6.2f s  %5.2f×  centre %.3f %.3f  size %.3f %.3f  ", s.time, zoom, s.frame.center.x, s.frame.center.y,
-                     s.frame.size.x, s.frame.size.y) + "\(s.move.rawValue) \(s.ease.rawValue) \(s.emphasis.rawValue)  \(s.label ?? "")")
+        let pose = CameraPose(shot: s, slideAspect: A, canvasAspect: C, safe: safe)
+        var line = String(format: "shot %6.2f s  %5.2f×  slide %4.0f%% of frame  centre %.3f %.3f  size %.3f %.3f  ", s.time,
+                          opening.height / pose.height, 100 / pose.height, s.frame.center.x, s.frame.center.y, s.frame.size.x, s.frame.size.y)
+        line += "\(s.move.rawValue) \(s.ease.rawValue) \(s.emphasis.rawValue)"
+        if let sweep = s.sweep { line += String(format: " reads along %.3f over %.1f s", sweep.x, s.sweepTime ?? 0) }
+        print(line + "  \(s.label ?? "")")
     }
 }
 

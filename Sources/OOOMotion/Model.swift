@@ -123,11 +123,21 @@ public struct Shot: Codable, Hashable, Sendable, Identifiable {
     /// The words in the voiceover this shot lands on, if any. "Cut to Voice"
     /// lands the camera just before they are said.
     public var cue: String?
+    /// Reading along: how far the framing glides while the shot holds, in
+    /// slide space, so a line too long to show at a readable size is read
+    /// from its start to its end. Nil holds still.
+    public var sweep: Vec2?
+    /// Seconds the glide takes from the landing; nil takes most of the hold.
+    public var sweepTime: Double?
+    /// The detail the shot is about, which its emphasis lights or lifts;
+    /// nil is the whole framing.
+    public var focus: ShotFrame?
 
     public init(id: UUID = UUID(), time: Double, travel: Double? = nil, frame: ShotFrame,
                 yaw: Float = 0, pitch: Float = 0, roll: Float = 0, lens: Float = 28, aperture: Float = 0.4,
                 move: MoveKind = .glide, ease: EaseKind = .glide, breathe: Float = 0.5,
-                emphasis: Emphasis = .none, label: String? = nil, cue: String? = nil) {
+                emphasis: Emphasis = .none, label: String? = nil, cue: String? = nil, sweep: Vec2? = nil, sweepTime: Double? = nil,
+                focus: ShotFrame? = nil) {
         self.id = id
         self.time = time
         self.travel = travel
@@ -143,13 +153,36 @@ public struct Shot: Codable, Hashable, Sendable, Identifiable {
         self.emphasis = emphasis
         self.label = label
         self.cue = cue
+        self.sweep = sweep
+        self.sweepTime = sweepTime
+        self.focus = focus
     }
 
     /// The establishing framing the slide arrives into: the whole slide at a
-    /// gentle angle, so the first frame already has depth.
-    public static func overview(slideAspect: Float = 16.0 / 9.0) -> Shot {
-        Shot(time: 0, frame: .whole(), yaw: -9, pitch: 7, roll: 0, lens: 28, aperture: 0.3,
-             move: .glide, ease: .glide, breathe: 0.45, label: "The whole slide")
+    /// gentle angle, so the first frame already has depth. A slide much wider
+    /// than its canvas (a wide slide in a Reel) is turned further: seen at an
+    /// angle it stands taller in the frame, and the frame gains depth where
+    /// a flat view would leave a thin strip in a field of backdrop.
+    public static func overview(slideAspect: Float = 16.0 / 9.0, canvasAspect: Float = 16.0 / 9.0) -> Shot {
+        let angle = overviewAngle(slideAspect: slideAspect, canvasAspect: canvasAspect)
+        return Shot(time: 0, frame: .whole(margin: angle.margin), yaw: angle.yaw, pitch: angle.pitch, roll: 0, lens: 28,
+                    aperture: 0.3, move: .glide, ease: .glide, breathe: 0.45, label: "The whole slide")
+    }
+
+    /// The opening's angle (degrees) and margin for a slide on a canvas.
+    public static func overviewAngle(slideAspect A: Float, canvasAspect C: Float) -> (yaw: Float, pitch: Float, margin: Float) {
+        // How much wider the slide is than the canvas: 1 or less fits as is;
+        // a 2.39:1 slide in 9:16 is 4.2.
+        let gap = A / max(C, 0.05)
+        let k = smoothstep((gap - 1.4) / 2.2)
+        return (lerp(-9, -34, k), lerp(7, 9, k), lerp(0.12, 0.06, k))
+    }
+
+    /// True when the shot is the default opening for some slide and canvas,
+    /// so it may follow the canvas when that changes.
+    public func isDefaultOverview(slideAspect: Float, canvasAspect: Float) -> Bool {
+        let d = Shot.overview(slideAspect: slideAspect, canvasAspect: canvasAspect)
+        return abs(yaw - d.yaw) < 0.01 && abs(pitch - d.pitch) < 0.01 && abs(roll) < 0.01 && frame == d.frame && lens == d.lens
     }
 }
 

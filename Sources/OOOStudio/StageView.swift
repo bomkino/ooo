@@ -23,6 +23,8 @@ final class StageCoordinator: NSObject, MTKViewDelegate {
     private var lastSize: CGSize = .zero
     private var liveSamples = 4
     private var gpuMs: Double = 0
+    /// Display refreshes in a row with nothing new to draw.
+    private var idle = 0
 
     init(session: OOOSession) {
         self.session = session
@@ -52,7 +54,15 @@ final class StageCoordinator: NSObject, MTKViewDelegate {
         }
         let version = session.version
         let needs = clock.playing || version != lastVersion || clock.time != lastDrawn || view.drawableSize != lastSize
-        guard needs, let drawable = view.currentDrawable, let cb = GPU.shared.queue.makeCommandBuffer() else { return }
+        if !needs {
+            // Half a second with nothing to draw: stop waking the display
+            // until something the stage shows changes.
+            idle += 1
+            if idle > 30 { sleep(view, session: session) }
+            return
+        }
+        idle = 0
+        guard let drawable = view.currentDrawable, let cb = GPU.shared.queue.makeCommandBuffer() else { return }
         if let scene = session.scene, let stage = OOOShared.stage {
             let samples = clock.playing ? liveSamples : 8
             let frameIndex = UInt32(max(0, clock.time * Double(scene.project.fps)))
@@ -81,6 +91,26 @@ final class StageCoordinator: NSObject, MTKViewDelegate {
         lastVersion = version
         lastDrawn = clock.time
         lastSize = view.drawableSize
+    }
+
+    @MainActor
+    private func sleep(_ view: MTKView, session: OOOSession) {
+        guard !view.isPaused else { return }
+        view.isPaused = true
+        idle = 0
+        withObservationTracking {
+            _ = session.version
+            _ = session.clock.playing
+            _ = session.clock.time
+        } onChange: { [weak view, weak self] in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    // Time asleep is not time played.
+                    self?.lastTime = CACurrentMediaTime()
+                    view?.isPaused = false
+                }
+            }
+        }
     }
 
     /// Four samples read as blur; two show as double edges, so it is four,
@@ -168,6 +198,7 @@ struct StagePreview: NSViewRepresentable {
         context.coordinator.session = session
         if v.drawableSize != pixelSize, pixelSize.width > 1, pixelSize.height > 1 {
             v.drawableSize = pixelSize
+            v.isPaused = false
         }
     }
 }
@@ -269,6 +300,12 @@ struct StageStatus: View {
                     .buttonStyle(QuietButtonStyle())
             } else {
                 Text(session.project.slide.name).textStyle(.label).foregroundStyle(.primary).lineLimit(1)
+                if let zoom = session.project.sharpZoom, let h = session.project.slide.pixelHeight {
+                    Text(String(format: "Sharp to %.1f× closer", zoom))
+                        .textStyle(.caption).foregroundStyle(.secondary)
+                        .help("This picture is \(h) pixels tall. OOO draws it at up to twice that, sharpened, and Direct for Me "
+                            + "stays within it. For closer looks, export the slide as a PDF, or as a picture at 2× or 3×.")
+                }
                 if session.pageCount > 1 {
                     HStack(spacing: 2) {
                         IconButton("chevron.left", label: "Previous Page", size: 10) { session.showPage(session.project.slide.page - 1) }

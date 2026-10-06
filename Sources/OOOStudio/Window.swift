@@ -222,8 +222,13 @@ struct DirectButton: View {
         .help("Read the slide and plan the camera's tour: the headline, the details worth a look, the small print last (⇧⌘D)")
         .disabled(session.busy != nil || !session.hasSlide)
         .shadow(color: Theme.camera.opacity(glow && pulse ? 0.8 : 0), radius: 6)
-        .onAppear {
-            withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) { pulse = true }
+        // The pulse runs only while the glow shows; otherwise nothing animates.
+        .onChange(of: glow, initial: true) { _, on in
+            if on {
+                withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) { pulse = true }
+            } else {
+                withTransaction(Transaction(animation: nil)) { pulse = false }
+            }
         }
     }
 }

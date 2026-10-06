@@ -276,8 +276,9 @@ public final class StageRenderer {
         if frame.reflection > 0.001 {
             for i in order {
                 let card = frame.cards[i]
-                guard let tex = texture(for: card, textures), card.opacity > 0.001 else { continue }
-                var cu = cardUniforms(card, look: look, mirror: SIMD4(1, frame.floorY, frame.reflection, 3.2))
+                guard card.reflects, let tex = texture(for: card, textures), card.opacity > 0.001 else { continue }
+                var cu = cardUniforms(card, look: look, mirror: SIMD4(1, frame.floorY, frame.reflection, frame.reflectionFade))
+                cu.fx.y += frame.reflectionBlur
                 enc.setRenderPipelineState(p.card)
                 enc.setVertexBytes(&cu, length: MemoryLayout<CardUniforms>.stride, index: 2)
                 enc.setFragmentBytes(&cu, length: MemoryLayout<CardUniforms>.stride, index: 2)
@@ -365,6 +366,7 @@ public final class StageRenderer {
         var window: SIMD4<Float>
         var spot: SIMD4<Float>
         var spotP: SIMD4<Float>
+        var soft: SIMD4<Float>
     }
 
     func frameUniforms(frame: StageFrame, look: StageLook, aspect: Float, width: Int, height: Int) -> FrameUniforms {
@@ -428,7 +430,8 @@ public final class StageRenderer {
             band: c.band,
             window: c.window,
             spot: c.spot,
-            spotP: SIMD4(c.spotDim, c.spotFeather, c.shadowGround == nil ? 0 : 1, c.shadowGround ?? 0))
+            spotP: SIMD4(c.spotDim, c.spotFeather, c.shadowGround == nil ? 0 : 1, c.shadowGround ?? 0),
+            soft: SIMD4(c.softEdge, 0, 0, 0))
     }
 }
 

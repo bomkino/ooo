@@ -32,6 +32,7 @@ struct CardU {
     float4 window;      // the region of the whole media this texture holds: u0, v0, u1, v1
     float4 spot;        // spotlight region in the whole card's uv: u0, v0, u1, v1
     float4 spotP;       // spotlight dim (+ outside, − inside), feather, own shadow ground (1), its z
+    float4 soft;        // x: width (world) over which the card's edges fade out; 0 = crisp
 };
 
 // 1 inside a card's spotlight region, 0 outside, with a soft edge.
@@ -255,6 +256,7 @@ fragment float4 card_fragment(CardVOut in [[stage_in]], bool facing [[front_faci
     coc += c.fx.y;
     float feather = pxWorld * (0.85 + coc * 0.9);
     float mask = 1.0 - smoothstep(-feather, feather, d);
+    if (c.soft.x > 0.0) mask *= smoothstep(0.0, c.soft.x, -d);
     float rim = bandRim(in.uv, c);
     if (c.band.y > 0.0) {
         float core = c.band.x;
