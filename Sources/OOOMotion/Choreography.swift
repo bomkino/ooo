@@ -13,9 +13,17 @@ public struct ChoreographyInput: Sendable {
     public var seed: UInt32
     /// The part of the canvas framings sit in.
     public var safe: SafeArea
+    /// The cover the video opens on, and when it turns; nil for none.
+    public var cover: CoverTiming?
+    /// Where the stage rises to leave room below; nil for never.
+    public var lift: Lift?
+    /// The share of the frame an opening title needs above the slide while
+    /// the stage is up (0 without one).
+    public var titleRoom: Float
 
     public init(overview: Shot, shots: [Shot], arrive: Arrive, ending: Ending, duration: Double,
-                slideAspect: Float, canvasAspect: Float, style: MotionStyle, seed: UInt32 = 1, safe: SafeArea = .none) {
+                slideAspect: Float, canvasAspect: Float, style: MotionStyle, seed: UInt32 = 1, safe: SafeArea = .none,
+                cover: CoverTiming? = nil, lift: Lift? = nil, titleRoom: Float = 0) {
         self.overview = overview
         self.shots = shots
         self.arrive = arrive
@@ -26,6 +34,9 @@ public struct ChoreographyInput: Sendable {
         self.style = style
         self.seed = seed
         self.safe = safe
+        self.cover = cover
+        self.lift = lift
+        self.titleRoom = titleRoom
     }
 }
 
@@ -41,6 +52,12 @@ public struct ChoreographyInput: Sendable {
 /// too long to show whole at a readable size, starting and ending at rest).
 /// On top of the path the camera leans with its own speed (swing) and drifts
 /// as if held; both are smooth in time.
+///
+/// With a cover, the camera rests on the whole slide while the cover turns
+/// over to it, and comes back to rest there before it turns back. With a
+/// Lift, every beat is framed twice, for the whole canvas and for the part
+/// left above the room, and the camera eases from one path to the other as
+/// the stage rises and settles.
 public struct Choreography: Sendable {
     public struct Beat: Sendable {
         public let shot: Shot
@@ -69,12 +86,25 @@ public struct Choreography: Sendable {
         public let sweepTo: CameraPose?
         public let sweepStart: Double
         public let sweepEnd: Double
+        /// The travel this move would take with all the room it wants.
+        public let wanted: Double
+        /// How long the hold takes to bleed away the last of the move: the
+        /// whole hold, or less where the card turns soon after landing.
+        let settling: Double
 
         public var travel: Double { land - depart }
         public var hold: Double { leave - land }
     }
 
     public let beats: [Beat]
+    /// The same beats framed in the part of the canvas above a Lift's room
+    /// (same times, same moves); nil without a Lift.
+    public let lifted: [Beat]?
+    public let lift: Lift?
+    /// The cover turning over to the slide, and back to it: none, one or two.
+    public let turns: [Turn]
+    /// Which way the card turns (see `turnDirection`).
+    public let turnSign: Float
     public let duration: Double
     public let style: MotionStyle
     public let slideAspect: Float
@@ -85,6 +115,16 @@ public struct Choreography: Sendable {
     /// The shortest hold the camera keeps between two landings (a third of the
     /// interval, up to a second, when there is room).
     public static let minimumHold = 0.12
+    /// After a turn, the card settles a moment before the camera sets off.
+    public static let turnSettle = 0.3
+    /// The camera lands on the whole slide this long before it turns back.
+    public static let backLead = 0.4
+    /// How long the cover rests before it turns over, at the least, and
+    /// after it has turned back, before the ending.
+    public static let coverRest = 1.6
+    /// The overview the camera comes back to before the card turns back.
+    public static let backToCover = UUID(uuidString: "00000000-0000-0000-0000-00000000C0E2")!
+    static let pullBackID = UUID(uuidString: "00000000-0000-0000-0000-00000000B4CC")!
 
     public init(_ input: ChoreographyInput) {
         duration = max(input.duration, 0.1)
@@ -92,6 +132,7 @@ public struct Choreography: Sendable {
         slideAspect = input.slideAspect
         canvasAspect = input.canvasAspect
         ending = input.ending
+        turnSign = turnDirection(overviewYaw: input.overview.yaw)
         let seed = Int(input.seed)
         phases = (hashSigned(seed, 11) * .pi, hashSigned(seed, 12) * .pi, hashSigned(seed, 13) * .pi,
                   hashSigned(seed, 14) * .pi, hashSigned(seed, 15) * .pi, hashSigned(seed, 16) * .pi)
@@ -99,21 +140,58 @@ public struct Choreography: Sendable {
         let A = input.slideAspect, C = input.canvasAspect
         let arriveEnd = min(input.arrive.end, duration)
 
+        // The cover rests on the overview until it turns over; the tour sets
+        // off once the slide on its back has settled.
+        var turns: [Turn] = []
+        var holdOpening = arriveEnd
+        if let cover = input.cover {
+            let latest = max(duration - Turn.length - 0.2, arriveEnd)
+            let over = Turn(start: min(max(cover.turn, arriveEnd + 0.3), latest), back: false)
+            turns.append(over)
+            holdOpening = over.end + Self.turnSettle
+        }
+
         // The overview, then the shots in time order, never before the slide has
-        // arrived and never two on the same moment.
+        // arrived (or the cover has turned) and never two on the same moment.
         var plan: [(shot: Shot, overview: Bool)] = []
         var overview = input.overview
         overview.time = arriveEnd
         plan.append((overview, true))
         var last = arriveEnd
-        for var s in input.shots.sorted(by: { $0.time < $1.time }) {
+        for (k, var s) in input.shots.sorted(by: { $0.time < $1.time }).enumerated() {
             s.time = max(s.time, last + 0.25)
+            if k == 0 && !turns.isEmpty && s.move != .cut {
+                // The first move sets off once the card has settled, and takes the time it wants.
+                let from = CameraPose(shot: overview, slideAspect: A, canvasAspect: C, safe: input.safe)
+                let to = CameraPose(shot: s, slideAspect: A, canvasAspect: C, safe: input.safe)
+                let want = s.travel ?? Choreography.autoTravel(from: from, to: to, ease: s.ease, move: s.move, style: input.style,
+                                                               canvasAspect: C)
+                s.time = max(s.time, holdOpening + max(want, 0.6))
+            } else if k == 0 && !turns.isEmpty {
+                s.time = max(s.time, holdOpening + 0.3)
+            }
             last = s.time
             plan.append((s, false))
         }
-        if input.ending == .pullBack {
+        if let cover = input.cover, cover.turnBack {
+            // Back to the whole slide, settled, before it turns back to the cover.
+            last = max(last, holdOpening)
             var back = input.overview
-            back.id = UUID(uuidString: "00000000-0000-0000-0000-00000000B4CC")!
+            back.id = Self.backToCover
+            let auto = duration - (Self.backLead + Turn.length + Self.coverRest + Self.endingTail(input.ending))
+            var land = max(last + 1.6, cover.backAt.map { $0 - Self.backLead } ?? auto)
+            land = max(min(land, duration - Self.backLead - Turn.length - 0.2), last + 0.25)
+            back.time = land
+            back.travel = nil
+            back.ease = .breathe
+            back.breathe = 0
+            back.label = "Back to the cover"
+            last = land
+            plan.append((back, true))
+            turns.append(Turn(start: land + Self.backLead, back: true))
+        } else if input.ending == .pullBack {
+            var back = input.overview
+            back.id = Self.pullBackID
             // Lands with time to settle and rest on the whole slide before the end.
             back.time = max(last + 1.6, duration - 1.1)
             back.travel = nil
@@ -123,6 +201,7 @@ public struct Choreography: Sendable {
             last = back.time
             plan.append((back, true))
         }
+        self.turns = turns
 
         let poses = plan.map { CameraPose(shot: $0.shot, slideAspect: A, canvasAspect: C, safe: input.safe) }
         let sweeps: [CameraPose?] = plan.map {
@@ -130,38 +209,81 @@ public struct Choreography: Sendable {
         }
         /// Where a beat's hold leaves the camera, before its breath.
         let rests = poses.indices.map { sweeps[$0] ?? poses[$0] }
-        let w = { (h: Float) -> Float in h * C.squareRoot() }
-        let rho = input.style.rho
-        let settleScale = input.style.paceScale.squareRoot()
 
         // Travel times first (they decide the holds, which decide the breaths).
         var departs: [Double] = []
+        var wanted: [Double] = []
         for (i, item) in plan.enumerated() {
             let land = item.shot.time
             if i == 0 {
                 departs.append(input.arrive.kind == .none ? land : 0)
+                wanted.append(0)
                 continue
             }
             if item.shot.move == .cut {
                 departs.append(land)
+                wanted.append(0)
                 continue
             }
             let prevLand = plan[i - 1].shot.time
             // Keep part of every interval still, so each detail is seen, not just passed.
             let interval = land - prevLand
             let gap = interval - max(Choreography.minimumHold, min(0.32 * interval, 1.0))
-            let wanted = item.shot.travel ?? Choreography.autoTravel(from: rests[i - 1], to: poses[i], ease: item.shot.ease,
-                                                                       move: item.shot.move, style: input.style, canvasAspect: C)
-            let travel = gap < 0.25 ? max(land - prevLand - 0.05, 0.08) : min(max(wanted, 0.25), gap)
-            departs.append(land - travel)
+            let want = item.shot.travel ?? Choreography.autoTravel(from: rests[i - 1], to: poses[i], ease: item.shot.ease,
+                                                                     move: item.shot.move, style: input.style, canvasAspect: C)
+            let travel = gap < 0.25 ? max(land - prevLand - 0.05, 0.08) : min(max(want, 0.25), gap)
+            var depart = land - travel
+            // Nothing sets off while the card is still turning.
+            if i == 1 && !turns.isEmpty { depart = min(max(depart, holdOpening), land - 0.08) }
+            departs.append(depart)
+            wanted.append(want)
         }
 
+        beats = Self.build(plan, poses: poses, sweeps: sweeps, departs: departs, wanted: wanted, turns: turns,
+                           input: input, duration: duration)
+
+        if let lift = input.lift, !lift.isEmpty {
+            // The same tour, framed above the room.
+            let up = lift.safe(input.safe)
+            var opening = up
+            opening.top = min(up.top + input.titleRoom, 1 - up.bottom - 0.25)
+            let safe = { (i: Int) -> SafeArea in plan[i].overview ? opening : up }
+            let liftedPoses = plan.indices.map { CameraPose(shot: plan[$0].shot, slideAspect: A, canvasAspect: C, safe: safe($0)) }
+            let liftedSweeps: [CameraPose?] = plan.indices.map {
+                plan[$0].shot.sweep == nil ? nil : CameraPose(sweepEndOf: plan[$0].shot, slideAspect: A, canvasAspect: C, safe: safe($0))
+            }
+            lifted = Self.build(plan, poses: liftedPoses, sweeps: liftedSweeps, departs: departs, wanted: wanted, turns: turns,
+                                input: input, duration: duration)
+            self.lift = lift
+        } else {
+            lifted = nil
+            self.lift = nil
+        }
+    }
+
+    /// The beats for one framing of the plan: each move from where the last
+    /// rested to its pose, its landing, hold, breath and read-along.
+    private static func build(_ plan: [(shot: Shot, overview: Bool)], poses: [CameraPose], sweeps: [CameraPose?],
+                              departs: [Double], wanted: [Double], turns: [Turn], input: ChoreographyInput,
+                              duration: Double) -> [Beat] {
+        let C = input.canvasAspect
+        let rests = poses.indices.map { sweeps[$0] ?? poses[$0] }
+        let w = { (h: Float) -> Float in h * C.squareRoot() }
+        let rho = input.style.rho
+        let settleScale = input.style.paceScale.squareRoot()
         var built: [Beat] = []
         for (i, item) in plan.enumerated() {
             let land = item.shot.time
             let depart = departs[i]
             let leave = i + 1 < plan.count ? departs[i + 1] : duration
             let hold = max(leave - land, 0)
+            // The camera is still before a card turns: the last of the move is
+            // taken in by the time the turn starts (or soon after it starts,
+            // for the cover that turns early).
+            var settling = hold
+            if let turn = turns.first(where: { $0.start >= land - 1e-9 && $0.start < leave }) {
+                settling = min(hold, max(turn.start - land, 0.6))
+            }
             let pose = poses[i]
             // Where the move starts: the previous beat at the end of its breath,
             // or for the overview the camera's opening position.
@@ -183,12 +305,12 @@ public struct Choreography: Sendable {
             // steadily to rest as the hold ends. n ≥ 2.5 keeps that ending smooth.
             var overrun: Float = 0
             var tail: Float = 3
-            if travel > 1e-3 && hold > 1e-3 {
+            if travel > 1e-3 && settling > 1e-3 {
                 let slope = Double(max(curve.landingSpeed, 1e-4))
-                let s = min(item.shot.ease.settle * settleScale, hold / 2.5, 0.25 * travel / slope)
+                let s = min(item.shot.ease.settle * settleScale, settling / 2.5, 0.25 * travel / slope)
                 let k = slope * s / travel
                 overrun = Float(k / (1 + k))
-                tail = Float(hold / s)
+                tail = Float(settling / s)
             }
             let dx = pose.target.x - from.target.x
             // The glide along a line keeps clear of the move out.
@@ -198,9 +320,18 @@ public struct Choreography: Sendable {
             built.append(Beat(shot: item.shot, isOverview: item.overview, pose: pose, depart: depart, land: land, leave: leave,
                               from: from, path: path, curve: curve, overrun: overrun, tail: tail,
                               breathe: breathe, arcSign: dx >= 0 ? 1 : -1, sweepTo: glide,
-                              sweepStart: sweepStart, sweepEnd: sweepEnd))
+                              sweepStart: sweepStart, sweepEnd: sweepEnd, wanted: wanted[i], settling: settling))
         }
-        beats = built
+        return built
+    }
+
+    /// How long an ending takes at the very end of the video.
+    public static func endingTail(_ ending: Ending) -> Double {
+        switch ending {
+        case .hold, .pullBack: return 0
+        case .fade: return 1.1
+        case .leave: return leaveLength
+        }
     }
 
     // MARK: Timing
@@ -303,11 +434,28 @@ public struct Choreography: Sendable {
             p.pitch += k * radians(0.4) * sinf(0.083 * tt + ph.5)
             p.roll += k * radians(0.12) * sinf(0.047 * tt + ph.1)
         }
+        // While the card turns, the camera gives it a little room.
+        for turn in turns where turn.contains(t) {
+            p.height *= 1 + CardTurn.cameraRoom(turn.progress(at: t))
+        }
         return p
     }
 
-    /// The camera at `t` without swing or drift.
+    /// The camera at `t` without swing or drift: on the tour as framed for
+    /// the whole canvas, or above a Lift's room as far as the stage has risen.
     public func basePose(at t: Double) -> CameraPose {
+        let p = pose(in: beats, at: t)
+        guard let lifted else { return p }
+        let w = liftAmount(at: t)
+        return w > 0 ? .blend(p, pose(in: lifted, at: t), w) : p
+    }
+
+    /// How far the stage has risen at `t`, 0…1.
+    public func liftAmount(at t: Double) -> Float {
+        lift?.amount(at: t, duration: duration) ?? 0
+    }
+
+    private func pose(in beats: [Beat], at t: Double) -> CameraPose {
         guard !beats.isEmpty else { return CameraPose(target: .zero, height: 1) }
         let i = beatIndex(at: t)
         let beat = beats[i]
@@ -321,7 +469,7 @@ public struct Choreography: Sendable {
         // Holding: take in the last of the move, and breathe.
         let x = t - beat.land
         let hold = max(beat.leave - beat.land, 1e-6)
-        let left = Float(max(1 - x / hold, 0))
+        let left = Float(max(1 - x / max(beat.settling, 1e-6), 0))
         let rest = beat.overrun > 0 ? beat.overrun * powf(left, beat.tail) : 0
         var p = interpolate(beat, 1 - rest, time: 1)
         if let to = beat.sweepTo {
@@ -440,15 +588,34 @@ public struct Choreography: Sendable {
     /// How long a read-along rests on the start of its line before gliding.
     public static let readLead = 0.4
 
-    /// A natural length for a video with these shots and no voiceover.
-    public static func naturalDuration(shots: [Shot], arrive: Arrive, ending: Ending) -> Double {
-        let last = max(shots.map(\.time).max() ?? arrive.end, arrive.end)
+    /// How much later than the arrival the tour can set off with this cover:
+    /// once it has rested, turned over and settled.
+    public static func coverDelay(_ cover: CoverTiming?, arrive: Arrive) -> Double {
+        guard let cover else { return 0 }
+        return max(cover.turn, arrive.end + 0.3) + Turn.length + turnSettle - arrive.end
+    }
+
+    /// A natural length for a video with these shots and no voiceover: with a
+    /// cover, time for it to rest and turn over first and, turning back, for
+    /// the flight back to the whole slide, the turn and a rest on the cover.
+    public static func naturalDuration(shots: [Shot], arrive: Arrive, ending: Ending, cover: CoverTiming? = nil) -> Double {
+        var last = max(shots.map(\.time).max() ?? arrive.end, arrive.end)
+        if let cover {
+            let turned = max(cover.turn, arrive.end + 0.3) + Turn.length + turnSettle
+            last = max(last, shots.isEmpty ? turned : turned + 2.0)
+        }
         // A shot that reads along a line holds for its glide; one with more
         // to read than a glance holds for that.
         let lastShot = shots.max { $0.time < $1.time }
         let glide = lastShot?.sweep == nil ? 0 : max(readLead + (lastShot?.sweepTime ?? 1.6) - 1.2, 0)
         let reading = lastShot?.sweep == nil ? min(readingTime(lastShot?.cue), 2.4) : 0
         var d = last + (shots.isEmpty ? 2.6 : 2.4) + glide + reading
+        if let cover, cover.turnBack {
+            let tail = backLead + Turn.length + coverRest + endingTail(ending)
+            d += 2.3 + tail
+            if let at = cover.backAt { d = max(d, at + Turn.length + coverRest + endingTail(ending)) }
+            return d
+        }
         switch ending {
         // The pull-back's flight comes out of this, so the last shot still holds.
         case .pullBack: d += 3.4

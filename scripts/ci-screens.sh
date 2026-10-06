@@ -2,7 +2,8 @@
 # Screenshots of the real editor, for review: the built OOO.app opened
 # headlessly (see OOOSnapshot in Sources/OOOStudio/Snapshot.swift) on the
 # sample slide and on the test slides, dark and light, on each inspector tab,
-# with a shot selected, a title, the safe areas and the export sheet.
+# with a shot selected, a title, the safe areas and the export sheet, a cover
+# halfway through its turn, and the stage up with room for you.
 #
 #   bash scripts/ci-screens.sh [out-dir] [fixtures-dir]
 #
@@ -60,6 +61,10 @@ shot wide-opening --slide "$WIDE" --time 2.4
 shot wide-shot --slide "$WIDE" --shot 3 --size 1440x1500
 shot wide-safe-areas --slide "$WIDE" --shot 2 --safe-areas
 shot standard-title --slide "$STANDARD" --title 'A $4.2B market nobody designs for.' --kicker 'pitch.dog' --time 2.6 --size 1440x1500
+echo "== A cover, and room for you"
+shot cover-turning --slide "$WIDE" --cover "$FIX/cover-2576x1080.png" --time 4.5 --size 1440x1500
+shot room --slide "$WIDE" --lift whole --title 'How we grew 3.1× in nine months' --kicker 'pitch.dog' --time 9 --size 1440x1500
+shot room-light --scheme light --slide "$WIDE" --lift 5-12,16- --time 8 --size 1440x900
 
 echo "screens: $failures failed"
 exit $((failures > 0 ? 1 : 0))

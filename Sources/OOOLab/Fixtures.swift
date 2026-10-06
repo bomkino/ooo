@@ -17,10 +17,12 @@ enum Fixture: String, CaseIterable {
     case wideRevised = "wide-revised"
     /// 1920 × 1080, dark: a market slide with rings, a paragraph, wordmarks.
     case standard
+    /// 2576 × 1080, dark: the deck's cover, for the wide slide to turn over to.
+    case cover
 
     var size: CGSize {
         switch self {
-        case .wide, .wideRevised: return CGSize(width: 2576, height: 1080)
+        case .wide, .wideRevised, .cover: return CGSize(width: 2576, height: 1080)
         case .standard: return CGSize(width: 1920, height: 1080)
         }
     }
@@ -62,6 +64,7 @@ enum Fixture: String, CaseIterable {
         case .wide: Self.drawWide(ctx)
         case .wideRevised: Self.drawWide(ctx, revised: true)
         case .standard: Self.drawStandard(ctx)
+        case .cover: Self.drawCover(ctx)
         }
     }
 
@@ -212,6 +215,37 @@ enum Fixture: String, CaseIterable {
         let page = "03"
         text(ctx, page, font: font("AvenirNext-DemiBold", 16), color: soft,
              at: CGPoint(x: W - 120 - width(page, font: font("AvenirNext-DemiBold", 16)), y: 1012))
+    }
+
+    // MARK: - Cover
+
+    static func drawCover(_ ctx: CGContext) {
+        let W: CGFloat = 2576, H: CGFloat = 1080
+        let ink = rgb(0.075, 0.078, 0.090), paper = rgb(0.980, 0.976, 0.965)
+        let soft = rgb(0.980, 0.976, 0.965, 0.62), faint = rgb(0.980, 0.976, 0.965, 0.14)
+        let accent = rgb(0.18, 0.40, 1.0)
+        ctx.setFillColor(ink)
+        ctx.fill(CGRect(x: 0, y: 0, width: W, height: H))
+
+        // Rings off the right edge, the brand's one gesture.
+        let c = CGPoint(x: 2240, y: 540)
+        for (i, r) in [CGFloat(560), 430, 300].enumerated() {
+            ctx.setStrokeColor(i == 2 ? accent : faint)
+            ctx.setLineWidth(i == 2 ? 6 : 2)
+            ctx.strokeEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
+        }
+        ctx.setFillColor(accent)
+        ctx.fillEllipse(in: CGRect(x: c.x - 120, y: c.y - 120, width: 240, height: 240))
+
+        text(ctx, "pitch.dog", font: font("AvenirNext-DemiBold", 34), color: paper, at: CGPoint(x: 140, y: 150))
+        text(ctx, "SERIES A UPDATE", font: font("AvenirNext-DemiBold", 26), color: accent, at: CGPoint(x: 144, y: 452), tracking: 6)
+        text(ctx, "The year it clicked.", font: font("AvenirNext-Bold", 132), color: paper, at: CGPoint(x: 134, y: 600), tracking: -3)
+        text(ctx, "Nine months of one-slide updates, and what they did for our customers.",
+             font: font("AvenirNext-Regular", 34), color: soft, at: CGPoint(x: 142, y: 676))
+
+        ctx.setFillColor(faint)
+        ctx.fill(CGRect(x: 140, y: 952, width: 1500, height: 1))
+        text(ctx, "October 2026  ·  Confidential", font: font("AvenirNext-Regular", 22), color: soft, at: CGPoint(x: 140, y: 1006))
     }
 
     // MARK: - Type

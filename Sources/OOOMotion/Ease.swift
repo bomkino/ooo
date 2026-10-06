@@ -162,6 +162,16 @@ public enum Curves {
         return p / (1 - r)
     }
 
+    /// From rest to rest the way a hand moves something it cares about:
+    /// leaves softly, covers most of the way just before halfway, and comes
+    /// to rest so gently its last moments can't be told from stillness
+    /// (speed u²(1 − u)³, normalised: no jolt at either end).
+    public static func settle(_ u: Float) -> Float {
+        let t = clamp01(u)
+        let t3 = t * t * t
+        return t3 * (20 + t * (-45 + t * (36 - 10 * t)))
+    }
+
     /// A bell 0 → 1 → 0 over 0…1, smooth at both ends.
     public static func bump(_ u: Float) -> Float {
         let t = clamp01(u)

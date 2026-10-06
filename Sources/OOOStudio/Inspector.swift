@@ -314,6 +314,8 @@ struct OverviewInspector: View {
                 }
             }
             Hairline()
+            CoverSection(session: session)
+            Hairline()
             InspectorSection("Title") {
                 LiveField(session: session, placeholder: "Words over the opening", text: titleText(\.text), undo: "Title")
                 LiveField(session: session, placeholder: "A short line above them (optional)", text: titleText(\.kicker), undo: "Title")
@@ -331,6 +333,8 @@ struct OverviewInspector: View {
                 Text("Set in the space above the slide. It rises in as the slide lands, clears as the camera goes in, and comes back for a Pull Back.")
                     .textStyle(.caption).foregroundStyle(.secondary)
             }
+            Hairline()
+            RoomSection(session: session)
             Hairline()
             InspectorSection("Opening framing") {
                 // Defaults follow the slide's shape in the canvas: a wide slide in a tall frame turns further.
@@ -380,7 +384,7 @@ struct OverviewInspector: View {
                         var t = p.title ?? OpeningTitle()
                         t[keyPath: key] = v
                         p.title = t
-                        p.makeRoomForTitle()
+                        p.makeRoomForOpening()
                     }
                 })
     }

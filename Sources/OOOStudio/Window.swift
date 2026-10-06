@@ -133,6 +133,8 @@ public struct OOOMenuCommands: Commands {
             Button("Choose Voiceover…") { if let session { OOOCommands.chooseVoice(session) } }
                 .keyboardShortcut("i", modifiers: [.command, .option])
                 .disabled(session == nil)
+            Button("Choose Cover…") { if let session { OOOCommands.chooseCover(session) } }
+                .disabled(session == nil || session?.hasSlide == false)
             Button("Replace Slide…") { if let session { OOOCommands.chooseSlide(session, replacing: true) } }
                 .keyboardShortcut("i", modifiers: [.command, .shift])
                 .disabled(session == nil || session?.hasSlide == false)

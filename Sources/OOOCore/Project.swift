@@ -182,6 +182,28 @@ public struct OpeningTitle: Codable, Hashable, Sendable {
     }
 }
 
+/// A cover the video opens on: another slide, usually the deck's first, on
+/// the front of the card. It rests a moment, turns over to the slide the
+/// video is about, and can turn back to it before the end.
+public struct Cover: Codable, Hashable, Sendable {
+    public var slide: SlideRef
+    /// Seconds from the start when it turns over.
+    public var turn: Double
+    /// Turns back to the cover before the end.
+    public var turnBack: Bool
+    /// When it starts to turn back; nil places it once the tour is over.
+    public var backAt: Double?
+
+    public init(slide: SlideRef, turn: Double, turnBack: Bool = true, backAt: Double? = nil) {
+        self.slide = slide
+        self.turn = turn
+        self.turnBack = turnBack
+        self.backAt = backAt
+    }
+
+    public var timing: CoverTiming { CoverTiming(turn: turn, turnBack: turnBack, backAt: backAt) }
+}
+
 /// One OOO document: a slide, the moves over it, and how it all looks.
 public struct OOOProject: Codable, Hashable, Sendable {
     public var version: Int = 1
@@ -191,13 +213,15 @@ public struct OOOProject: Codable, Hashable, Sendable {
     public var minimumReaderVersion: Int? = OOOProject.readerVersion
     /// The newest files this build reads in full. Raise it, and say in
     /// `neededReader` what needs it, when a setting older builds would drop arrives.
-    /// 1: OOO 0.2. 2: OOO 1.0 (Weave, a kicker as typed).
-    public static let readerVersion = 2
+    /// 1: OOO 0.2. 2: OOO 1.0 (Weave, a kicker as typed). 3: OOO 1.0.1 (a
+    /// cover, room for you).
+    public static let readerVersion = 3
 
     /// The oldest reader that draws everything this project uses, written as
     /// `minimumReaderVersion`: a file 0.2 can draw still opens there.
     public var neededReader: Int {
         let typedKicker = title.map { !$0.kickerCaps && !$0.kicker.trimmingCharacters(in: .whitespaces).isEmpty } ?? false
+        if cover != nil || !(lift?.isEmpty ?? true) { return 3 }
         return arrive.kind == .weave || typedKicker ? 2 : 1
     }
     public var slide: SlideRef
@@ -223,6 +247,11 @@ public struct OOOProject: Codable, Hashable, Sendable {
     /// and the tour can follow the canvas or a corrected slide. Nil until
     /// read, and cleared when the slide changes.
     public var reading: [SlideDetail]?
+    /// The slide the video opens on before turning over to this one; nil for none.
+    public var cover: Cover?
+    /// Room for you: where the stage rises to leave the bottom of the frame
+    /// clear for a talking head; nil or no spans for never.
+    public var lift: Lift?
 
     public init(slide: SlideRef, overview: Shot? = nil, shots: [Shot] = [], arrive: Arrive = Arrive(kind: .rise),
                 ending: Ending = .pullBack, style: MotionStyle = MotionStyle(), look: StageLook = OOOProject.defaultLook,
@@ -306,20 +335,30 @@ public struct OOOProject: Codable, Hashable, Sendable {
         return min(max(0.7 + 0.26 * Double(words), 1.2), 2.6)
     }
 
-    /// When the tour may set off: as the slide lands, or once its title has been read.
-    public var tourStart: Double { arrive.end + titleHold }
+    /// When the tour may set off: as the slide lands, once its title has been
+    /// read, or once a cover has turned over and settled.
+    public var tourStart: Double {
+        arrive.end + max(titleHold, Choreography.coverDelay(cover?.timing, arrive: arrive))
+    }
 
-    /// Gives a new opening title time to be read: without a voice to keep
-    /// time with, the whole tour moves later until the first move sets off
-    /// once the title has been read. Moves nothing when there is already room.
-    public mutating func makeRoomForTitle() {
-        guard voice == nil, !(title?.isEmpty ?? true), !shots.isEmpty else { return }
+    /// When a new cover turns over: once it has rested a moment after landing.
+    public var defaultCoverTurn: Double { arrive.end + Choreography.coverRest }
+
+    /// Gives a new opening title time to be read, or a new cover time to rest
+    /// and turn: without a voice to keep time with, the whole tour moves
+    /// later until the first move sets off once the opening is over. Moves
+    /// nothing when there is already room.
+    public mutating func makeRoomForOpening() {
+        guard voice == nil, !(title?.isEmpty ?? true) || cover != nil, !shots.isEmpty else { return }
         // The first move takes longer once it has more room, so this settles
         // in a step or two.
         for _ in 0..<3 {
             let beats = choreography().beats
-            guard beats.count > 1 else { return }
-            let shift = tourStart - beats[1].depart
+            guard beats.count > 1, let first = shots.map(\.time).min() else { return }
+            // Later until the first move sets off once the opening is over, and
+            // as far as the camera would have held the first shot back anyway,
+            // so the shots after it keep their spacing.
+            let shift = max(tourStart - beats[1].depart, beats[1].land - first)
             guard shift > 0.05 else { return }
             for i in shots.indices { shots[i].time += shift }
         }
@@ -350,14 +389,19 @@ public struct OOOProject: Codable, Hashable, Sendable {
     /// The video's length: as set, or long enough for every move and the whole voiceover.
     public var duration: Double {
         if let length { return max(length, 1) }
-        var d = Choreography.naturalDuration(shots: shots, arrive: arrive, ending: ending)
-        if let voice { d = max(d, voice.end + 1.2) }
+        var d = Choreography.naturalDuration(shots: shots, arrive: arrive, ending: ending, cover: cover?.timing)
+        // Turning back, the last words go over the turn and the cover rests after them.
+        if let voice { d = max(d, voice.end + (cover?.turnBack == true ? 2.0 : 1.2)) }
         return d
     }
 
+    /// The share of the frame an opening title keeps above the slide while the stage is up.
+    public static let titleRoom: Float = 0.12
+
     public var choreographyInput: ChoreographyInput {
         ChoreographyInput(overview: overview, shots: shots, arrive: arrive, ending: ending, duration: duration,
-                          slideAspect: slideAspect, canvasAspect: canvasAspect, style: style, seed: seed, safe: format.safeArea)
+                          slideAspect: slideAspect, canvasAspect: canvasAspect, style: style, seed: seed, safe: format.safeArea,
+                          cover: cover?.timing, lift: lift, titleRoom: (title?.isEmpty ?? true) ? 0 : Self.titleRoom)
     }
 
     public func choreography() -> Choreography { Choreography(choreographyInput) }
@@ -412,7 +456,7 @@ public enum ProjectPackage {
         try fm.createDirectory(at: url.appendingPathComponent(mediaFolder), withIntermediateDirectories: true)
         try encode(project).write(to: url.appendingPathComponent(projectFile), options: .atomic)
         guard let media else { return }
-        for file in [project.slide.file, project.voice?.file].compactMap({ $0 }) {
+        for file in [project.slide.file, project.voice?.file, project.cover?.slide.file].compactMap({ $0 }) {
             let src = media.appendingPathComponent(file), dst = url.appendingPathComponent(mediaFolder).appendingPathComponent(file)
             if fm.fileExists(atPath: src.path) && !fm.fileExists(atPath: dst.path) { try fm.copyItem(at: src, to: dst) }
         }
