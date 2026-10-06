@@ -81,8 +81,8 @@ final class CoreTests: XCTestCase {
         p.title = OpeningTitle(text: "One slide, obsessed over.")
         let first = try XCTUnwrap(p.shots.map(\.time).min())
         p.makeRoomForTitle()
-        // The tour waits while the title is read, and only once.
-        XCTAssertEqual(p.shots.map(\.time).min() ?? 0, p.arrive.end + p.titleHold + Director.firstLanding, accuracy: 1e-9)
+        // The tour sets off once the title has been read, and waits only once.
+        XCTAssertEqual(p.choreography().beats[1].depart, p.tourStart, accuracy: 0.05)
         XCTAssertEqual(p.titleHold, 0.7 + 0.26 * 4, accuracy: 1e-9, "four words take a little under two seconds")
         XCTAssertGreaterThan(p.shots.map(\.time).min() ?? 0, first)
         let moved = p.shots
@@ -92,9 +92,9 @@ final class CoreTests: XCTestCase {
         let beats = c.beats
         XCTAssertGreaterThan(beats.count, 2)
         XCTAssertEqual(OpeningTitleArt.presence(c, at: 0).alpha, 0)
-        // Fully there for at least a second and a half before it clears.
+        // Fully there from just after the slide lands until the tour sets off.
         XCTAssertEqual(OpeningTitleArt.presence(c, at: beats[0].land + 0.4).alpha, 1, accuracy: 1e-3)
-        XCTAssertEqual(OpeningTitleArt.presence(c, at: beats[0].land + 1.9).alpha, 1, accuracy: 1e-3)
+        XCTAssertEqual(OpeningTitleArt.presence(c, at: beats[1].depart).alpha, 1, accuracy: 1e-3)
         XCTAssertEqual(OpeningTitleArt.presence(c, at: beats[1].depart + 0.6).alpha, 0, accuracy: 1e-3)
         XCTAssertEqual(OpeningTitleArt.presence(c, at: (beats[1].land + beats[1].leave) / 2).alpha, 0, accuracy: 1e-3)
         XCTAssertEqual(OpeningTitleArt.presence(c, at: c.duration).alpha, 1, accuracy: 1e-3)
@@ -144,8 +144,8 @@ final class CoreTests: XCTestCase {
         }
         let beats = scene.choreography.beats
         XCTAssertGreaterThan(beats.count, 2)
-        // Mid-move into the first landing, and well into its hold.
-        let move = try samples(at: (beats[1].depart + beats[1].land) / 2)
+        // The fastest part of the move into the first landing, and well into its hold.
+        let move = try (1...5).map { try samples(at: beats[1].depart + Double($0) / 6 * (beats[1].land - beats[1].depart)) }.max() ?? 0
         let hold = try samples(at: beats[1].land + 0.7 * (beats[1].leave - beats[1].land))
         XCTAssertGreaterThan(move, 4)
         XCTAssertLessThanOrEqual(hold, 2)

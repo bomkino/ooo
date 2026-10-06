@@ -285,12 +285,18 @@ public struct OOOProject: Codable, Hashable, Sendable {
 
     /// Gives a new opening title time to be read: without a voice to keep
     /// time with, the whole tour moves later until the first move sets off
-    /// after it. Moves nothing when there is already room.
+    /// once the title has been read. Moves nothing when there is already room.
     public mutating func makeRoomForTitle() {
-        guard voice == nil, !(title?.isEmpty ?? true), let first = shots.map(\.time).min() else { return }
-        let shift = tourStart + Director.firstLanding - first
-        guard shift > 0.05 else { return }
-        for i in shots.indices { shots[i].time += shift }
+        guard voice == nil, !(title?.isEmpty ?? true), !shots.isEmpty else { return }
+        // The first move takes longer once it has more room, so this settles
+        // in a step or two.
+        for _ in 0..<3 {
+            let beats = choreography().beats
+            guard beats.count > 1 else { return }
+            let shift = tourStart - beats[1].depart
+            guard shift > 0.05 else { return }
+            for i in shots.indices { shots[i].time += shift }
+        }
     }
 
     /// Follows a new slide or canvas shape with the opening, unless someone
