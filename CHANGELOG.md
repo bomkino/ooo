@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.3.0 — 6 October 2026 (not released on its own)
+
+A milestone on the way to 1.0: every fix the 0.2.0 audit found, motion that never rushes, and the room and arrivals.
+
+**The slide as it is**
+- **Black type stays black.** What is left of a surface's light at rest stays off the ink, so on the wide test slide a headline lands at most 7 levels (of 255) above the slide as supplied, down from 18 in 0.2.0.
+- **A larger wide opening.** A slide much wider than its canvas opens turned 44° with a 3% margin, so in a 1080 × 1920 reel it stands 29% of the frame's height (24% in 0.2.0). Documents from 0.2 keep following the canvas.
+- **Close-ups keep their detail near the middle of the frame**, hanging past the slide's edge if they must, so the small print no longer lands low in the reel.
+- **Lift's halo** follows a rounder outline, so its inner edge keeps round corners.
+- **No ghost under the floor.** A reflection only mirrors what stands above the floor, so Glide and Rise no longer show an upside-down slide above them as they come up.
+
+**Motion that never rushes**
+- **Every move gets its time.** Turning counts towards the speed limit (no planned move turns faster than 40° a second at its peak), and no move outruns the zoom-and-pan limit at any pace. On every test slide, `motioncheck` now finds no problem; in 0.2.0 it found one or two on each.
+- **Holds follow what there is to read**: about 0.3 s a word past the first four, more for numbers and figures, longest for the slide's point (its biggest number, else its figure, else its headline).
+- **With a voice, a flight it leaves no time for becomes a cut on the word**, instead of a rush. A block is named by its own words, so "revenue grew" lands the headline and the row of numbers waits for "sixty-two".
+- **Emphasis fits its hold**: quicker in a short one, never cut short, left out when there is no room. One emphasis peaks per tour, on the slide's point.
+- **Glide arrives on a bow** and comes the last stretch straight on, squaring up as it settles. An opening title holds until the first move sets off.
+
+**The room and the arrivals**
+- **Every backdrop shows its own dials** (Horizon, Drift, Light, …) with that look's defaults, and **Shuffle** gives a new arrangement of the same look.
+- **From Slide**: the room in the slide's own colours, at the room's own lightness, so the slide still stands out.
+- **Weave**, a new arrival: the slide knits itself together from 24 threads that shoot across from alternate sides, the same way in every export.
+- **Develop comes up like a print**: a blank sheet settles where it lies and the image comes up in it, the darks first.
+- **The kicker** above an opening title can be set as typed, as well as in capitals.
+
+**Faster, and checked**
+- **Reading the slide** draws it once, 2160 pixels tall, and reads it in one pass, instead of reading the whole and four close-ups.
+- The editor fits a 1024-point-wide screen. "Busy" tracks every running job.
+- CI now screenshots the real editor window (`OOO --snapshot`), fails on any `motioncheck` problem, measures ink like for like, and renders every look (`ooo-lab backdrops`), every arrival (`ooo-lab arrivals`) and the read against close-ups (`ooo-lab readcheck`).
+
 ## 0.2.0 — 6 October 2026
 
 OOO's first public release, made for pitch.dog's everyday case: a wide slide (2576 × 1080 or 1920 × 1080) in a 1080 × 1920 reel.
