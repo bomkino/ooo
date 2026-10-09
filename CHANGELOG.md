@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.2.0 — 9 October 2026
+
+OOO made for people: three modes you can always see, a timeline that says how long everything lasts and lets you stretch it, a slide map where drawing a new framing just works, and Live as a room you step into, check, start and close.
+
+**Frame, Draw and Live**
+- Three named modes sit in the middle of the toolbar: **Frame** (shape the tour), **Draw** (draw on the slide) and **Live** (talk it through while your Mac records you). ⌘1, ⌘2 and ⌘3 switch, Esc goes back to Frame, and you can always see which one you're in.
+- Draw and Go Live were switched off in 1.1 by a bug, so neither could be used. Both work now.
+- The line above the video coaches you in every mode: what the selected framing does and for how long, how to draw, what Live is waiting for.
+- Right-click everywhere: the video, every clip on the timeline, every framing on the map, the slide itself and the voiceover each have a menu of what you'd do there.
+
+**A timeline you can read and stretch**
+- The tour is laid out as clips, edge to edge: the opening, each framing (its move, then its hold), the slide changes and the ending. Each part shows how long it lasts, and the video's length sits at the end of the ruler.
+- Grab a clip's right edge to hold it longer or shorter, the line where it lands to make its move quicker or slower, or its middle to change when it lands. Everything after it slides along and keeps its own length, so nothing jumps. A bubble shows the new length as you drag; edges snap to tenths of a second and to the words of your voiceover (⌘ to move freely, ⌥ to let only the next clip give way).
+- ⌘-drag a clip to put it before or after another, or right-click it for Move Earlier and Move Later. Double-click a clip to watch it.
+- Pinch, or ⌘= and ⌘−, to zoom into the timeline; ⌘0 fits it again. Zoomed in, it follows the playhead.
+- The inspector gains **Timing** for the selected shot: Move in and Hold, with Let OOO Choose.
+
+**A slide map that draws**
+- Each framing is one flat box of what the video shows there. Drag anywhere on the slide, even over other framings, to draw a new one, already in the video's shape. Click a framing to pick it.
+- The picked framing has eight handles: corners go closer or wider from the opposite corner (⌥ from the middle), edges from the opposite side, and a readout shows how close it is. Drag inside it to move it, ⌥-drag to turn the camera, or drag any framing by its number tab. A turned camera says so on a small tag instead of drawing the box askew.
+- The line under the map says what a press would do wherever the pointer is.
+
+**Live, as a room**
+- Live opens a room: the slide as the take will open, you in the space under it, your microphone level, and nothing recording until you press **Start**. Preview the opening and the closing, choose them in the inspector, and see every position the camera can go to in a strip under the video.
+- While you talk, click a position in the strip or on the map, or press its number, to go straight there; → and Space go on, ← back, ↑ out to the whole slide, ↓ to the next slide.
+- **Close** brings it to an end: the ending plays as the take finishes, and the recording runs to the last frame. Then Play, Retake or Done.
+
+**Plainer words**
+- Moves are Fly, Straight, Swing and Cut; their feel is Smooth, Even, Brisk or Lingering. Closer is Zoom, Focus falloff is Background blur, Breathe is Drift in, the Arrival is the Opening, and Room for You is Space for You.
+
 ## 1.1.0 — 9 October 2026
 
 Go live: talk your video through and lead the camera yourself, filmed by your Mac into the room under the slide. And an editor that opens up, with the slide map beside the video and a pen that's easy to find.

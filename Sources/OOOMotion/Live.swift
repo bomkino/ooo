@@ -128,6 +128,59 @@ public struct LiveTake: Sendable {
         return send(target, stop: stop, at: now)
     }
 
+    /// Goes to stop `j` of the route, if it is on the slide face up. False
+    /// when it isn't, or the camera is already there or on its way.
+    @discardableResult
+    public mutating func go(to j: Int, at now: Double) -> Bool {
+        guard script.indices.contains(j), base.page(of: script[j]) == page else { return false }
+        if j == cursor, let last = choreography.beats.last, !last.isOverview, !last.shot.framesDifferently(from: script[j]) { return false }
+        return send(script[j], stop: j, at: now)
+    }
+
+    /// Turns or melts the card on to the next slide, setting off at `now` or
+    /// as soon as the camera can. False on the last slide.
+    @discardableResult
+    public mutating func nextSlide(at now: Double) -> Bool {
+        guard page + 1 < slideCount else { return false }
+        // The next slide's stops follow on from its first.
+        let first = script.firstIndex { base.page(of: $0) == page + 1 }
+        if let first { cursor = max(cursor, first - 1) } else { cursor = max(cursor, script.count - 1) }
+        return change(at: now)
+    }
+
+    /// The route's stops on slide `k`, by their place in `script`.
+    public func stops(on k: Int) -> [Int] {
+        script.indices.filter { base.page(of: script[$0]) == k }
+    }
+
+    /// The stop the camera is at or on its way to on the slide face up, if
+    /// it was sent to one of the route's stops (not the whole slide or a detail).
+    public var current: Int? {
+        guard cursor >= 0, cursor < script.count, base.page(of: script[cursor]) == page,
+              let last = choreography.beats.last, !last.isOverview, !last.shot.framesDifferently(from: script[cursor]) else { return nil }
+        return cursor
+    }
+
+    /// The path once you close at `end`, as it plays from there: the holds
+    /// you made still as they were while you talked, then the ending (and any
+    /// slide not gone on to) to the video's `length`. Up to `end` it is the
+    /// path you saw, so closing never jumps the camera.
+    public func closing(at end: Double, length: Double) -> Choreography {
+        let gone = Set(departures.filter { $0.at < end }.compactMap(\.id))
+        let (_, changed) = finished(at: end)
+        var i = base
+        i.shots = visits.filter { gone.contains($0.id) }
+        i.pages = base.pages.enumerated().map { k, p in
+            var p = p
+            p.at = k < changed.count ? changed[k] : p.at
+            return p
+        }
+        if i.home != nil { i.home?.at = nil }
+        i.duration = length
+        i.live = true
+        return Choreography(i)
+    }
+
     /// Keeps the path drawn well ahead of `now`. True when it moved on.
     @discardableResult
     public mutating func keepUp(at now: Double) -> Bool {
@@ -300,7 +353,11 @@ public struct LiveTake: Sendable {
             var need = d
             // The ending's first move sets off once you have finished.
             let last = c.beats.lastIndex { own.contains($0.shot.id) } ?? 0
-            if last + 1 < c.beats.count { need += max(end + 0.15 - c.beats[last + 1].depart, 0) }
+            if last + 1 < c.beats.count {
+                // Once a lit emphasis has faded and a read-along has finished, too.
+                let ready = max(end + 0.15, readyToLeave(c.beats[last], at: end))
+                need += max(ready - c.beats[last + 1].depart, 0)
+            }
             // Each of its moves takes the time it wants, however late your last press.
             for j in c.beats.indices where j > max(last, 0) && c.beats[j].wanted > 0 {
                 let short = c.beats[j - 1].land + Choreography.room(forTravel: c.beats[j].wanted) - c.beats[j].land

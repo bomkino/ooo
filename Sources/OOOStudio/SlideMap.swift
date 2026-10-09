@@ -48,10 +48,11 @@ struct MapHost: View {
     }
 }
 
-/// The slide seen from above, with every framing the camera lands on drawn
-/// over it as the outline of what the video shows there. Drag a framing to
-/// move it, a corner to go closer or further, Option-drag to turn the camera; draw on
-/// the slide to add a framing at the playhead.
+/// The slide seen from above, with each framing drawn as a flat box of what
+/// the video shows there. Drag on the slide to draw a new framing, anywhere,
+/// even over others; click a framing to pick it. The picked one has handles:
+/// drag inside it to move it, a corner to go closer or wider, ⌥-drag to turn
+/// the camera. A framing's number tab moves it without picking it first.
 struct SlideMap: View {
     @Bindable var session: OOOSession
     /// The slide shown (0 is the first).
@@ -59,12 +60,42 @@ struct SlideMap: View {
     @State private var gesture: MapGesture?
     @State private var drawing: CGRect?
     @State private var hovered: UUID?
+    /// Where the pointer was last, on the slide, for the menu. Not watched: it changes with every move.
+    @State private var last = MapPoint()
+
+    enum Handle: CaseIterable {
+        case topLeft, top, topRight, right, bottomRight, bottom, bottomLeft, left
+
+        var isCorner: Bool { [.topLeft, .topRight, .bottomRight, .bottomLeft].contains(self) }
+
+        /// Where it sits on a box, 0…1 across and down.
+        var at: CGPoint {
+            switch self {
+            case .topLeft: return CGPoint(x: 0, y: 0)
+            case .top: return CGPoint(x: 0.5, y: 0)
+            case .topRight: return CGPoint(x: 1, y: 0)
+            case .right: return CGPoint(x: 1, y: 0.5)
+            case .bottomRight: return CGPoint(x: 1, y: 1)
+            case .bottom: return CGPoint(x: 0.5, y: 1)
+            case .bottomLeft: return CGPoint(x: 0, y: 1)
+            case .left: return CGPoint(x: 0, y: 0.5)
+            }
+        }
+
+        func point(on r: CGRect) -> CGPoint { CGPoint(x: r.minX + at.x * r.width, y: r.minY + at.y * r.height) }
+
+        /// The point across the box from it, which stays put as it is dragged.
+        func anchor(on r: CGRect) -> CGPoint { CGPoint(x: r.minX + (1 - at.x) * r.width, y: r.minY + (1 - at.y) * r.height) }
+    }
 
     enum MapGesture {
-        case move(UUID, ShotFrame, CGPoint)
-        case resize(UUID, ShotFrame, CGPoint)
-        case tilt(UUID, Float, Float, CGPoint)
+        case move(UUID, ShotFrame)
+        case resize(UUID, ShotFrame, Handle, CGRect)
+        case tilt(UUID, Float, Float)
+        /// A press on the slide: a drag draws a new framing; a click picks the framing under it, if any.
         case create(CGPoint)
+        /// In Draw and Live, where the map only picks.
+        case pick
     }
 
     var body: some View {
@@ -89,6 +120,7 @@ struct SlideMap: View {
                         let path = Path(roundedRect: r, cornerRadius: 2)
                         ctx.fill(path, with: .color(Theme.cameraSoft))
                         ctx.stroke(path, with: .color(Theme.camera), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                        readout(ctx, closer(r, layout: layout), in: r, k: layout.mark)
                     }
                 }
                 CameraFootprint(session: session, clock: session.clock, layout: layout, page: page)
@@ -100,144 +132,219 @@ struct SlideMap: View {
             .onContinuousHover { phase in
                 switch phase {
                 case .active(let p):
-                    let hit = hitShot(p, layout: layout)
+                    last.uv = layout.uv(p)
+                    let hit = framing(at: p, layout: layout)
                     if hit != hovered { hovered = hit }
-                    if hitHandle(p, layout: layout) != nil {
-                        NSCursor.crosshair.set()
-                    } else if hit != nil {
-                        NSCursor.openHand.set()
-                    } else {
-                        NSCursor.arrow.set()
+                    if gesture == nil {
+                        pointer(at: p, layout: layout).set()
+                        let hint = hint(at: p, layout: layout)
+                        if session.mapHint != hint { session.mapHint = hint }
                     }
                 case .ended:
                     hovered = nil
-                    NSCursor.arrow.set()
+                    if gesture == nil { NSCursor.arrow.set() }
+                    if session.mapHint != nil { session.mapHint = nil }
                 }
             }
+            .contextMenu { MapMenu(session: session, page: page, shot: hovered, at: last) }
         }
         .aspectRatio(MapLayout.aspect(slideAspect: A), contentMode: .fit)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Slide map")
-        .accessibilityValue("\(session.project.shots.count) framings")
+        .accessibilityValue("\(boxes(nil).count) framings")
     }
 
-    // MARK: Drawing
+    // MARK: Boxes
 
-    /// What the camera shows once it lands on a shot: the canvas's outline on
-    /// the slide (a trapezoid when the shot is turned), and the framing it
-    /// keeps in the canvas's clear part.
-    struct Finder {
+    /// A framing as the map draws it: what the video shows, flat, with its number on a tab.
+    struct Box {
         let shot: Shot
-        let index: Int
-        let outline: [CGPoint]
-        let framing: CGRect
-        var bounds: CGRect {
-            let xs = outline.map(\.x), ys = outline.map(\.y)
-            return CGRect(x: xs.min() ?? 0, y: ys.min() ?? 0, width: (xs.max() ?? 0) - (xs.min() ?? 0),
-                          height: (ys.max() ?? 0) - (ys.min() ?? 0))
-        }
+        let number: Int
+        let rect: CGRect
+        let tab: CGRect
+        /// Beside the tab, how far a turned camera is turned.
+        let tag: CGRect?
+        var area: CGFloat { rect.width * rect.height }
+        static func turn(_ s: Shot) -> Float { max(abs(s.yaw), abs(s.pitch), abs(s.roll)) }
     }
 
-    private func finder(_ shot: Shot, index: Int, layout: MapLayout) -> Finder {
+    private var frameMode: Bool { session.mode == .frame }
+
+    private func boxes(_ layout: MapLayout?) -> [Box] {
         let p = session.project
         let A = p.slide(page).aspect, C = p.canvasAspect
-        let pose = CameraPose(shot: shot, slideAspect: A, canvasAspect: C, safe: p.format.safeArea)
-        var outline: [CGPoint] = []
-        for (x, y) in [(Float(-1), Float(1)), (1, 1), (1, -1), (-1, -1)] {
-            guard let w = pose.hit(x, y, canvasAspect: C) else { outline = []; break }
-            outline.append(layout.point(w.x / A + 0.5, 0.5 - w.y))
+        let live = session.mode == .live
+        var out: [Box] = []
+        // Tabs already placed, so that two framings sharing a corner keep both numbers readable.
+        var placed: [CGRect] = []
+        for (i, s) in session.orderedShots.enumerated() where p.pageIndex(s.page) == page {
+            let number = live ? (session.positionNumber(s.id) ?? i + 1) : i + 1
+            guard let layout else {
+                out.append(Box(shot: s, number: number, rect: .zero, tab: .zero, tag: nil))
+                continue
+            }
+            let r = layout.rect(s.frame.visible(slideAspect: A, canvasAspect: C))
+            let k = layout.mark
+            let w = (CGFloat(String(number).count) * 6 + 9) * k, h = 13 * k
+            let turn = Box.turn(s)
+            let tagW: CGFloat = turn > 0.5 ? (CGFloat(String(Int(turn.rounded())).count) * 5.5 + 25) * k : 0
+            // Above its top-left corner, or just inside when that would leave the map,
+            // and never past the map's edge, however far the framing reaches.
+            let y = r.minY - h - 2 * k >= 1 ? r.minY - h - 2 * k : max(r.minY, 0) + 2 * k
+            let right = 2 * layout.slide.minX + layout.slide.width - w - tagW - 4 * k
+            var tab = CGRect(x: min(max(r.minX, 1), max(right, 1)), y: y, width: w, height: h)
+            let span = { (t: CGRect) in CGRect(x: t.minX, y: t.minY, width: t.width + (tagW > 0 ? 3 * k + tagW : 0), height: t.height) }
+            var tries = 0
+            while tries < 12, let hit = placed.first(where: { $0.insetBy(dx: -2 * k, dy: 0).intersects(span(tab)) }) {
+                tab.origin.x = hit.maxX + 4 * k
+                tries += 1
+            }
+            placed.append(span(tab))
+            let tag = tagW > 0 ? CGRect(x: tab.maxX + 3 * k, y: tab.minY, width: tagW, height: h) : nil
+            out.append(Box(shot: s, number: number, rect: r, tab: tab, tag: tag))
         }
-        if outline.isEmpty {
-            let r = layout.rect(shot.frame.visible(slideAspect: A, canvasAspect: C))
-            outline = corners(r)
-        }
-        return Finder(shot: shot, index: index, outline: outline, framing: layout.rect(shot.frame))
+        return out
     }
 
-    private func finders(_ layout: MapLayout) -> [Finder] {
-        session.orderedShots.enumerated().compactMap { i, s in
-            session.project.pageIndex(s.page) == page ? finder(s, index: i, layout: layout) : nil
+    /// The shot the editor or the take is about.
+    private var selectedID: UUID? {
+        if session.mode == .live {
+            _ = session.version
+            guard let route = session.liveRoute, let j = route.current, route.script.indices.contains(j) else { return nil }
+            return route.script[j].id
         }
-    }
-
-    private func path(_ outline: [CGPoint]) -> Path {
-        var path = Path()
-        path.addLines(outline)
-        path.closeSubpath()
-        return path
+        if case .shot(let id) = session.selection { return id }
+        return nil
     }
 
     private func drawFramings(_ ctx: GraphicsContext, layout: MapLayout) {
         let p = session.project
-        let selectedID: UUID? = {
-            if case .shot(let id) = session.selection { return id }
-            return nil
-        }()
-        if session.selection == .overview && page == 0 {
-            let f = finder(p.overview, index: 0, layout: layout)
-            ctx.stroke(path(f.outline), with: .color(Theme.camera.opacity(0.85)), style: StrokeStyle(lineWidth: 1.2, lineJoin: .round, dash: [5, 4]))
-        }
+        let all = boxes(layout)
+        let picked = selectedID
+        let k = layout.mark
         // The route the camera takes, from framing to framing.
-        let mine = session.orderedShots.filter { p.pageIndex($0.page) == page }.map(\.frame.center)
-        let route = (page == 0 ? [p.overview.frame.center] : []) + mine
+        let route = (page == 0 ? [p.overview.frame.center] : []) + all.map(\.shot.frame.center)
         if route.count > 1 {
             var path = Path()
             path.move(to: layout.point(route[0].x, route[0].y))
             for c in route.dropFirst() { path.addLine(to: layout.point(c.x, c.y)) }
-            ctx.stroke(path, with: .color(Color.white.opacity(0.22)), style: StrokeStyle(lineWidth: 1, lineCap: .round, dash: [1, 4]))
+            ctx.stroke(path, with: .color(Color.white.opacity(0.2)), style: StrokeStyle(lineWidth: 1, lineCap: .round, dash: [1, 4]))
         }
-        for f in finders(layout) {
-            let selected = f.shot.id == selectedID
-            let hot = f.shot.id == hovered
-            let outline = path(f.outline)
+        // The picked one last, on top.
+        for b in all.sorted(by: { ($0.shot.id == picked ? 1 : 0, -$0.area) < ($1.shot.id == picked ? 1 : 0, -$1.area) }) {
+            let selected = b.shot.id == picked
+            let hot = b.shot.id == hovered
+            let box = Path(roundedRect: b.rect, cornerRadius: 2)
             if selected {
-                ctx.fill(outline, with: .color(Theme.cameraSoft))
-                ctx.stroke(outline, with: .color(Theme.camera), style: StrokeStyle(lineWidth: 1.6, lineJoin: .round))
-                // The part kept clear of a phone's interface.
-                ctx.stroke(Path(roundedRect: f.framing, cornerRadius: 2), with: .color(Theme.camera.opacity(0.7)),
-                           style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                let side = 7 * layout.mark
-                for corner in f.outline {
-                    let h = CGRect(x: corner.x - side / 2, y: corner.y - side / 2, width: side, height: side)
-                    ctx.fill(Path(roundedRect: h, cornerRadius: 1.5), with: .color(.white))
-                    ctx.stroke(Path(roundedRect: h, cornerRadius: 1.5), with: .color(Theme.camera), lineWidth: 1)
+                ctx.fill(box, with: .color(Theme.cameraSoft))
+                ctx.stroke(box, with: .color(Theme.camera), style: StrokeStyle(lineWidth: 1.6))
+                if frameMode {
+                    let side = 7 * k
+                    for h in Handle.allCases {
+                        let c = h.point(on: b.rect)
+                        let r = CGRect(x: c.x - side / 2, y: c.y - side / 2, width: side, height: side)
+                        ctx.fill(Path(roundedRect: r, cornerRadius: 1.5), with: .color(.white))
+                        ctx.stroke(Path(roundedRect: r, cornerRadius: 1.5), with: .color(Theme.camera), lineWidth: 1)
+                    }
                 }
+                if case .resize? = gesture { readout(ctx, closer(b.rect, layout: layout), in: b.rect, k: k) }
             } else {
-                ctx.stroke(outline, with: .color(Color.white.opacity(hot ? 0.9 : 0.5)), style: StrokeStyle(lineWidth: hot ? 1.3 : 1, lineJoin: .round))
+                // White over a dark edge, so it reads on a light slide and on the dark around it.
+                ctx.stroke(box, with: .color(Color.black.opacity(hot ? 0.55 : 0.4)), style: StrokeStyle(lineWidth: (hot ? 1.3 : 1) + 2))
+                ctx.stroke(box, with: .color(Color.white.opacity(hot ? 1 : 0.8)), style: StrokeStyle(lineWidth: hot ? 1.3 : 1))
             }
-            // The shot's number, in a small tab on its top-left corner.
-            let top = f.outline.min { $0.x + $0.y < $1.x + $1.y } ?? f.bounds.origin
-            let k = layout.mark
-            let label = ctx.resolve(Text("\(f.index + 1)").font(.system(size: 9 * k, weight: .bold)).foregroundColor(selected ? .white : .black))
-            let size = label.measure(in: CGSize(width: 60, height: 30))
-            let tab = CGRect(x: top.x, y: top.y - size.height - 3 * k, width: size.width + 8 * k, height: size.height + 3 * k)
-            ctx.fill(Path(roundedRect: tab, cornerRadius: 3), with: .color(selected ? Theme.camera : Color.white.opacity(hot ? 0.95 : 0.75)))
-            ctx.draw(label, at: CGPoint(x: tab.midX, y: tab.midY), anchor: .center)
+            // Its number, on a dark tab that reads on any slide.
+            let tabFill = selected ? Theme.camera : Color.black.opacity(hot ? 0.9 : 0.78)
+            let label = ctx.resolve(Text("\(b.number)").font(.system(size: 9 * k, weight: .bold)).foregroundColor(.white))
+            ctx.fill(Path(roundedRect: b.tab, cornerRadius: 3), with: .color(tabFill))
+            ctx.draw(label, at: CGPoint(x: b.tab.midX, y: b.tab.midY), anchor: .center)
+            // A turned camera, said on a tag rather than drawn askew.
+            if let r = b.tag {
+                let tag = ctx.resolve(Text("\(Image(systemName: "rotate.3d")) \(Int(Box.turn(b.shot).rounded()))°")
+                    .font(.system(size: 8.5 * k, weight: .semibold)).foregroundColor(.white))
+                ctx.fill(Path(roundedRect: r, cornerRadius: 3), with: .color(selected ? Theme.camera.opacity(0.85) : Color.black.opacity(0.72)))
+                ctx.draw(tag, at: CGPoint(x: r.midX, y: r.midY), anchor: .center)
+            }
         }
     }
 
-    private func corners(_ r: CGRect) -> [CGPoint] {
-        [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: r.minX, y: r.maxY)]
+    /// How close a box of the video's shape takes the camera, against the whole slide.
+    private func closer(_ r: CGRect, layout: MapLayout) -> Float {
+        let p = session.project
+        let f = ShotFrame(center: layout.uv(CGPoint(x: r.midX, y: r.midY)),
+                          size: Vec2(Float(r.width / layout.slide.width), Float(r.height / layout.slide.height)))
+        return f.magnification(slideAspect: p.slide(page).aspect, canvasAspect: p.canvasAspect)
+    }
+
+    private func readout(_ ctx: GraphicsContext, _ zoom: Float, in r: CGRect, k: CGFloat) {
+        let text = ctx.resolve(Text(String(format: "%.1f×", zoom)).font(.system(size: 10 * k, weight: .semibold).monospacedDigit())
+            .foregroundColor(.white))
+        let size = text.measure(in: CGSize(width: 80, height: 30))
+        let pill = CGRect(x: r.maxX - size.width - 10 * k, y: r.maxY - size.height - 7 * k, width: size.width + 6 * k, height: size.height + 2 * k)
+        guard r.width > pill.width + 8, r.height > pill.height + 8 else { return }
+        ctx.fill(Path(roundedRect: pill, cornerRadius: pill.height / 2), with: .color(Color.black.opacity(0.55)))
+        ctx.draw(text, at: CGPoint(x: pill.midX, y: pill.midY), anchor: .center)
     }
 
     // MARK: Hit testing
 
-    private func hitHandle(_ p: CGPoint, layout: MapLayout) -> UUID? {
-        guard let shot = session.selectedShot else { return nil }
-        for c in finder(shot, index: 0, layout: layout).outline where hypot(c.x - p.x, c.y - p.y) <= 8 * layout.mark { return shot.id }
-        return nil
+    private func handle(at p: CGPoint, layout: MapLayout) -> (id: UUID, handle: Handle, rect: CGRect)? {
+        guard frameMode, let id = selectedID, let b = boxes(layout).first(where: { $0.shot.id == id }) else { return nil }
+        let reach = 7 * layout.mark
+        let near = Handle.allCases.min { a, c in
+            let pa = a.point(on: b.rect), pc = c.point(on: b.rect)
+            return hypot(pa.x - p.x, pa.y - p.y) < hypot(pc.x - p.x, pc.y - p.y)
+        }
+        guard let h = near else { return nil }
+        let c = h.point(on: b.rect)
+        return hypot(c.x - p.x, c.y - p.y) <= reach ? (id, h, b.rect) : nil
     }
 
-    /// The framing under the pointer: the selected one first, then the smallest.
-    private func hitShot(_ p: CGPoint, layout: MapLayout) -> UUID? {
-        let all = finders(layout)
-        // Inside the outline, or within a few points of its edge.
-        func contains(_ f: Finder) -> Bool {
-            let outline = path(f.outline)
-            return outline.contains(p) || outline.strokedPath(StrokeStyle(lineWidth: 6)).contains(p)
+    private func tab(at p: CGPoint, layout: MapLayout) -> UUID? {
+        boxes(layout).last { $0.tab.insetBy(dx: -2, dy: -2).contains(p) }?.shot.id
+    }
+
+    private func insideSelected(_ p: CGPoint, layout: MapLayout) -> UUID? {
+        guard let id = selectedID, let b = boxes(layout).first(where: { $0.shot.id == id }),
+              b.rect.insetBy(dx: -3, dy: -3).contains(p) else { return nil }
+        return id
+    }
+
+    /// The framing under `p`: its tab, the picked one, then the smallest around it.
+    private func framing(at p: CGPoint, layout: MapLayout) -> UUID? {
+        if let id = tab(at: p, layout: layout) ?? insideSelected(p, layout: layout) { return id }
+        return boxes(layout).filter { $0.rect.contains(p) }.min { $0.area < $1.area }?.shot.id
+    }
+
+    private func pointer(at p: CGPoint, layout: MapLayout) -> NSCursor {
+        guard frameMode else { return framing(at: p, layout: layout) != nil ? .pointingHand : .arrow }
+        if let h = handle(at: p, layout: layout)?.handle {
+            if h.isCorner { return .crosshair }
+            return h == .left || h == .right ? .resizeLeftRight : .resizeUpDown
         }
-        if let s = session.selectedShot, let f = all.first(where: { $0.shot.id == s.id }), contains(f) { return s.id }
-        return all.filter(contains).min { $0.bounds.width * $0.bounds.height < $1.bounds.width * $1.bounds.height }?.shot.id
+        if tab(at: p, layout: layout) != nil || insideSelected(p, layout: layout) != nil { return .openHand }
+        return .crosshair
+    }
+
+    /// What a press here would do, for the line under the map.
+    private func hint(at p: CGPoint, layout: MapLayout) -> String {
+        let number = { (id: UUID) -> Int in boxes(layout).first { $0.shot.id == id }?.number ?? 0 }
+        switch session.mode {
+        case .draw:
+            return framing(at: p, layout: layout).map { "Click to draw on framing \(number($0))." } ?? "Click a framing to draw on it."
+        case .live:
+            if session.isTaking { return framing(at: p, layout: layout).map { "Click to go to \(number($0)) now." } ?? "Click a position to go there now." }
+            return framing(at: p, layout: layout).map { "Click to see position \(number($0))." } ?? "Click a position to see it."
+        case .frame:
+            break
+        }
+        if let h = handle(at: p, layout: layout)?.handle {
+            return h.isCorner ? "Drag to go closer or wider. ⌥ keeps the middle still." : "Drag to go closer or wider from this side."
+        }
+        if let id = tab(at: p, layout: layout), id != selectedID { return "Drag to move framing \(number(id))." }
+        if insideSelected(p, layout: layout) != nil { return "Drag to move it, ⌥-drag to turn the camera. Double-click to watch it." }
+        if let id = framing(at: p, layout: layout) { return "Click to pick framing \(number(id)), or drag to draw a new one." }
+        return "Drag to draw a new framing."
     }
 
     // MARK: Gestures
@@ -252,17 +359,22 @@ struct SlideMap: View {
     }
 
     private func begin(_ p: CGPoint, layout: MapLayout) {
-        if let id = hitHandle(p, layout: layout), let shot = session.selectedShot {
+        guard frameMode else {
+            gesture = .pick
+            return
+        }
+        let shots = session.project.shots
+        if let hit = handle(at: p, layout: layout), let shot = shots.first(where: { $0.id == hit.id }) {
             session.beginEdit("Frame Shot")
-            gesture = .resize(id, shot.frame, p)
-        } else if let id = hitShot(p, layout: layout), let shot = session.project.shots.first(where: { $0.id == id }) {
+            gesture = .resize(hit.id, shot.frame, hit.handle, hit.rect)
+        } else if let id = tab(at: p, layout: layout) ?? insideSelected(p, layout: layout), let shot = shots.first(where: { $0.id == id }) {
             if session.selection != .shot(id) { session.select(.shot(id), show: false) }
             if NSEvent.modifierFlags.contains(.option) {
                 session.beginEdit("Turn Camera")
-                gesture = .tilt(id, shot.yaw, shot.pitch, p)
+                gesture = .tilt(id, shot.yaw, shot.pitch)
             } else {
                 session.beginEdit("Move Framing")
-                gesture = .move(id, shot.frame, p)
+                gesture = .move(id, shot.frame)
                 NSCursor.closedHand.set()
             }
         } else {
@@ -275,30 +387,51 @@ struct SlideMap: View {
         let du = Float(g.translation.width / layout.slide.width)
         let dv = Float(g.translation.height / layout.slide.height)
         switch gesture {
-        case .move(let id, let start, _):
+        case .move(let id, let start):
             session.liveShot(id) { s in
                 s.frame.center = Vec2(min(max(start.center.x + du, -0.05), 1.05), min(max(start.center.y + dv, -0.05), 1.05))
             }
-        case .resize(let id, let start, let origin):
-            let c = layout.point(start.center.x, start.center.y)
-            let d0 = max(hypot(origin.x - c.x, origin.y - c.y), 4)
-            let d1 = hypot(g.location.x - c.x, g.location.y - c.y)
-            let k = Float(max(d1 / d0, 0.05))
-            session.liveShot(id) { s in
-                let size = start.size * k
-                let biggest = max(size.x, size.y)
-                let shrink: Float = biggest > 1.4 ? 1.4 / biggest : 1
-                s.frame.size = Vec2(max(size.x * shrink, 0.012), max(size.y * shrink, 0.012))
+        case .resize(let id, let start, let h, let r):
+            // Scaled about the point across from the handle (or the middle, with ⌥): the box keeps the video's shape.
+            let fromMiddle = NSEvent.modifierFlags.contains(.option)
+            let P = fromMiddle ? CGPoint(x: r.midX, y: r.midY) : h.anchor(on: r)
+            let G = h.point(on: r), U = g.location
+            var k: CGFloat
+            if h.isCorner {
+                let d = CGPoint(x: G.x - P.x, y: G.y - P.y)
+                k = ((U.x - P.x) * d.x + (U.y - P.y) * d.y) / max(d.x * d.x + d.y * d.y, 1)
+            } else if h == .left || h == .right {
+                k = (U.x - P.x) / (abs(G.x - P.x) > 1 ? G.x - P.x : 1)
+            } else {
+                k = (U.y - P.y) / (abs(G.y - P.y) > 1 ? G.y - P.y : 1)
             }
-        case .tilt(let id, let yaw, let pitch, _):
+            let big = CGFloat(max(start.size.x, start.size.y)), small = CGFloat(min(start.size.x, start.size.y))
+            k = min(max(k, 0.012 / max(small, 1e-4)), 1.4 / max(big, 1e-4))
+            let a = layout.uv(P)
+            let kk = Float(k)
+            session.liveShot(id) { s in
+                s.frame.center = a + (start.center - a) * kk
+                s.frame.size = start.size * kk
+            }
+        case .tilt(let id, let yaw, let pitch):
             session.liveShot(id) { s in
                 s.yaw = clamp(yaw + Float(g.translation.width) * 0.3, -25, 25)
                 s.pitch = clamp(pitch - Float(g.translation.height) * 0.3, -20, 20)
             }
         case .create(let start):
-            let r = CGRect(x: min(start.x, g.location.x), y: min(start.y, g.location.y),
-                           width: abs(g.location.x - start.x), height: abs(g.location.y - start.y))
-            drawing = r.width > 3 || r.height > 3 ? r : nil
+            // A box of the video's shape, from where the press began (or around it, with ⌥).
+            let C = CGFloat(session.project.canvasAspect)
+            let dx = g.location.x - start.x, dy = g.location.y - start.y
+            let w = max(abs(dx), abs(dy) * C), h = w / C
+            let r: CGRect
+            if NSEvent.modifierFlags.contains(.option) {
+                r = CGRect(x: start.x - w, y: start.y - h, width: 2 * w, height: 2 * h)
+            } else {
+                r = CGRect(x: dx < 0 ? start.x - w : start.x, y: dy < 0 ? start.y - h : start.y, width: w, height: h)
+            }
+            drawing = hypot(dx, dy) > 4 ? r : nil
+        case .pick:
+            break
         }
     }
 
@@ -309,23 +442,113 @@ struct SlideMap: View {
         }
         guard let gesture else { return }
         let moved = hypot(g.translation.width, g.translation.height) > 3
+        let twice = (NSApp.currentEvent?.clickCount ?? 1) >= 2
         switch gesture {
-        case .move(let id, _, _):
+        case .move(let id, _):
             session.commitEdit("Move Framing")
             NSCursor.openHand.set()
-            if !moved { session.select(.shot(id)) }
+            if !moved { click(id, twice: twice) }
         case .resize:
             session.commitEdit("Frame Shot")
-        case .tilt(let id, _, _, _):
+        case .tilt(let id, _, _):
             session.commitEdit("Turn Camera")
-            if !moved { session.select(.shot(id)) }
-        case .create:
-            if let r = drawing, r.width > 10, r.height > 10 {
+            if !moved { click(id, twice: twice) }
+        case .create(let p):
+            if let r = drawing, r.width > 10, r.height > 6 {
                 let a = layout.uv(CGPoint(x: r.minX, y: r.minY)), b = layout.uv(CGPoint(x: r.maxX, y: r.maxY))
                 session.addShot(frame: ShotFrame(center: (a + b) / 2, size: b - a), page: page)
             } else if !moved {
-                session.select(.overview, show: false)
+                if let id = framing(at: p, layout: layout) { click(id, twice: twice) } else { session.select(.overview, show: false) }
             }
+        case .pick:
+            guard !moved, let id = framing(at: g.startLocation, layout: layout) else { return }
+            switch session.mode {
+            case .draw:
+                session.select(.shot(id))
+            case .live:
+                if session.isTaking {
+                    session.liveGo(shot: id)
+                } else if let j = session.liveRoute?.script.firstIndex(where: { $0.id == id }) {
+                    session.previewPosition(j)
+                }
+            case .frame:
+                break
+            }
+        }
+    }
+
+    /// A click on a framing shows it resting on the stage; a double-click plays its move.
+    private func click(_ id: UUID, twice: Bool) {
+        if twice, let k = session.clipIndex(of: id) {
+            session.watchClip(k)
+        } else {
+            session.select(.shot(id))
+        }
+    }
+}
+
+/// A point on the slide the map remembers without redrawing for it.
+final class MapPoint {
+    var uv: Vec2?
+}
+
+/// The map's right-click menu: for the framing under the pointer, or the slide.
+struct MapMenu: View {
+    let session: OOOSession
+    let page: Int
+    let shot: UUID?
+    let at: MapPoint
+
+    var body: some View {
+        if session.mode == .frame {
+            if let id = shot, let s = session.project.shots.first(where: { $0.id == id }) {
+                Button("Show It") { session.select(.shot(id)) }
+                Button("Watch It") { if let k = session.clipIndex(of: id) { session.watchClip(k) } }
+                Divider()
+                Button("Closer") {
+                    session.select(.shot(id), show: false)
+                    session.nudgeZoom(closer: true)
+                }
+                Button("Wider") {
+                    session.select(.shot(id), show: false)
+                    session.nudgeZoom(closer: false)
+                }
+                Button("Straighten") {
+                    session.updateShot(id, "Straighten") { $0.yaw = 0; $0.pitch = 0; $0.roll = 0 }
+                }
+                .disabled(abs(s.yaw) < 0.01 && abs(s.pitch) < 0.01 && abs(s.roll) < 0.01)
+                Picker("Move", selection: session.choiceShot(id, \.move, fallback: .glide, "Move")) {
+                    ForEach(MoveKind.allCases) { Text($0.title).tag($0) }
+                }
+                Picker("While It Holds", selection: session.choiceShot(id, \.emphasis, fallback: .none, "Emphasis")) {
+                    ForEach(Emphasis.allCases) { Text($0.title).tag($0) }
+                }
+                if let k = session.clipIndex(of: id) {
+                    Menu("Hold For") {
+                        ForEach([1.0, 1.5, 2.0, 3.0, 5.0], id: \.self) { t in
+                            Button(secondsLabel(t)) { session.holdFor(clip: k, seconds: t) }
+                        }
+                    }
+                }
+                Divider()
+                Button("Duplicate") {
+                    session.select(.shot(id), show: false)
+                    session.duplicateSelectedShot()
+                }
+                Button("Delete", role: .destructive) {
+                    session.select(.shot(id), show: false)
+                    session.deleteSelectedShot()
+                }
+            } else {
+                Button("New Framing Here") { session.addShot(around: at.uv, page: page) }
+                    .disabled(!session.hasSlide)
+                Button("Direct for Me") { session.autoDirect() }
+                    .disabled(session.busy != nil || !session.hasSlide)
+                Divider()
+                Button("Replace Slide…") { OOOCommands.chooseSlide(session, replacing: true, page: page) }
+            }
+        } else if let id = shot, session.mode == .draw {
+            Button("Draw Here") { session.select(.shot(id)) }
         }
     }
 }
@@ -341,8 +564,11 @@ struct CameraFootprint: View {
     var body: some View {
         Canvas { ctx, _ in
             let p = session.project
-            // Only while this slide is the one face up.
+            // Only while this slide is the one face up, and only while the camera
+            // moves: at rest it is the framing's own box.
             guard session.choreography.page(at: clock.time) == page else { return }
+            let t = clock.time
+            guard clock.playing || session.choreography.beats.contains(where: { t > $0.depart + 0.02 && t < $0.land - 0.02 }) else { return }
             let pose = session.choreography.pose(at: clock.time)
             let A = p.slide(page).aspect, C = p.canvasAspect
             let ndc: [(Float, Float)] = [(-1, 1), (1, 1), (1, -1), (-1, -1)]
@@ -432,12 +658,20 @@ struct MapHint: View {
                     .disabled(session.busy != nil)
                 }
             } else {
-                Text("Drag a framing to move it, a corner to go closer, ⌥-drag to turn. Draw on the slide to add one.")
-                    .textStyle(.caption).foregroundStyle(.tertiary)
+                Text(session.mapHint ?? defaultHint)
+                    .textStyle(.caption).foregroundStyle(session.mapHint == nil ? .tertiary : .secondary)
             }
         }
         .multilineTextAlignment(.center)
         .frame(maxWidth: .infinity)
+    }
+
+    private var defaultHint: String {
+        switch session.mode {
+        case .frame: return "Drag on the slide to draw a framing. Click one to pick it; drag its corners to go closer."
+        case .draw: return "Click a framing to draw on it."
+        case .live: return session.isTaking ? "Click a position to go there now." : "Click a position to see it."
+        }
     }
 }
 

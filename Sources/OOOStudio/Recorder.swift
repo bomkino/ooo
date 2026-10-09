@@ -215,6 +215,7 @@ struct RecordingPill: View {
 struct LevelBars: View {
     let levels: [Float]
     let count: Int
+    var tint: Color = .white
 
     var body: some View {
         Canvas { ctx, size in
@@ -225,7 +226,7 @@ struct LevelBars: View {
                 let h = max(CGFloat(l) * size.height, 1.5)
                 let x = size.width - CGFloat(shown.count - i) * step
                 let r = CGRect(x: x, y: (size.height - h) / 2, width: w, height: h)
-                ctx.fill(Path(roundedRect: r, cornerRadius: w / 2), with: .color(.white.opacity(0.35 + 0.65 * Double(l))))
+                ctx.fill(Path(roundedRect: r, cornerRadius: w / 2), with: .color(tint.opacity(0.35 + 0.65 * Double(l))))
             }
         }
     }

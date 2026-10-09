@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 
 /// The room left for you below the stage.
 extension OOOSession {
-    // MARK: Room for you
+    // MARK: Space for you
 
     /// Lifts the stage for a stretch from `t` (the playhead), or for the
     /// whole video, leaving the bottom of the frame clear for you.
@@ -21,7 +21,7 @@ extension OOOSession {
             // A stretch of about six seconds, or to the end when that is near.
             span = LiftSpan(start: start, end: start + 6 >= d - 1.5 ? nil : start + 6)
         }
-        update(whole ? "Room for You" : "Add Room for You") { p in
+        update(whole ? "Space for You" : "Add Space for You") { p in
             var lift = p.lift ?? Lift()
             if whole { lift.spans = [span] } else { lift.spans.append(span) }
             p.lift = lift
@@ -39,11 +39,11 @@ extension OOOSession {
     }
 
     public func removeRoom(_ id: UUID) {
-        update("Remove Room for You") { p in p.lift?.spans.removeAll { $0.id == id } }
+        update("Remove Space for You") { p in p.lift?.spans.removeAll { $0.id == id } }
     }
 
     public func removeAllRoom() {
-        update("Remove Room for You") { p in p.lift?.spans.removeAll() }
+        update("Remove Space for You") { p in p.lift?.spans.removeAll() }
     }
 
     /// The share of the frame left clear for you.

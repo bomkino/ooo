@@ -22,10 +22,10 @@ public enum EaseKind: String, Codable, CaseIterable, Sendable, Identifiable {
 
     public var title: String {
         switch self {
-        case .glide: return "Glide"
-        case .breathe: return "Breathe"
-        case .swift: return "Swift"
-        case .linger: return "Linger"
+        case .glide: return "Smooth"
+        case .breathe: return "Even"
+        case .swift: return "Brisk"
+        case .linger: return "Lingering"
         }
     }
 

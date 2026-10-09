@@ -77,5 +77,12 @@ shot pen --slide "$WIDE" --marks demo --time 6 --size 1440x900 --draw
 shot room --slide "$WIDE" --lift whole --title 'How we grew 3.1× in nine months' --kicker 'pitch.dog' --time 9 --size 1440x1500
 shot room-light --scheme light --slide "$WIDE" --lift 5-12,16- --time 8 --size 1440x900
 
+echo "== Modes and timing"
+shot mode-draw --slide "$WIDE" --mode draw --time 6
+shot mode-live --slide "$WIDE" --mode live
+shot mode-live-light --scheme light --slide "$WIDE" --mode live --size 1440x1500
+shot timeline-zoomed --slide "$WIDE" --shot 3 --zoom 2.5
+shot map-picked-light --scheme light --slide "$WIDE" --shot 2 --no-inspector
+
 echo "screens: $failures failed"
 exit $((failures > 0 ? 1 : 0))

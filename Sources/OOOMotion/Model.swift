@@ -61,9 +61,9 @@ public enum MoveKind: String, Codable, CaseIterable, Sendable, Identifiable {
     public var id: String { rawValue }
     public var title: String {
         switch self {
-        case .glide: return "Glide"
-        case .push: return "Push"
-        case .arc: return "Arc"
+        case .glide: return "Fly"
+        case .push: return "Straight"
+        case .arc: return "Swing"
         case .cut: return "Cut"
         }
     }

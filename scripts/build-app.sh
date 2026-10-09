@@ -16,7 +16,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 CONFIG="${1:-release}"
-VERSION="${VERSION_OVERRIDE:-1.1.0}"
+VERSION="${VERSION_OVERRIDE:-1.2.0}"
 NAME="${BUNDLE_NAME_OVERRIDE:-OOO}"
 BUNDLE_ID="${BUNDLE_ID_OVERRIDE:-dog.pitch.ooo}"
 DIST="$ROOT/dist"

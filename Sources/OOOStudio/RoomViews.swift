@@ -5,7 +5,7 @@ import SwiftUI
 
 // MARK: - Inspector
 
-/// Room for you: the stage rises into the top of the frame and leaves the
+/// Space for you: the stage rises into the top of the frame and leaves the
 /// bottom clear, for you on camera.
 struct RoomSection: View {
     @Bindable var session: OOOSession
@@ -13,7 +13,7 @@ struct RoomSection: View {
     var body: some View {
         let lift = session.project.lift
         let on = !(lift?.isEmpty ?? true)
-        InspectorSection("Room for you") {
+        InspectorSection("Space for you") {
             Text("Lifts the slide and its moves into the top of the frame and leaves the bottom clear for you, to lay your green-screen video over later. Add it where you talk; the stage rises and settles smoothly.")
                 .textStyle(.caption).foregroundStyle(.secondary)
             HStack(spacing: 4) {
@@ -25,8 +25,8 @@ struct RoomSection: View {
             }
             .buttonStyle(QuietButtonStyle())
             if on {
-                Dial(session: session, label: "Room", value: session.roomBinding, range: Lift.roomRange, defaultValue: Lift.defaultRoom,
-                     format: { "\(percent($0))% of the frame" }, undo: "Room for You")
+                Dial(session: session, label: "Space", value: session.roomBinding, range: Lift.roomRange, defaultValue: Lift.defaultRoom,
+                     format: { "\(percent($0))% of the frame" }, undo: "Space for You")
                 Toggle("Show where you'll be", isOn: $session.showRoom)
                     .toggleStyle(.checkbox)
                     .textStyle(.bodyCompact)
@@ -69,7 +69,7 @@ struct RoomLane: View {
             if spans.isEmpty {
                 HStack(spacing: 6) {
                     Image(systemName: "person.crop.rectangle").font(.system(size: 10))
-                    Text("Room for you: double-click to lift the stage here").textStyle(.caption).lineLimit(1)
+                    Text("Space for you: double-click to lift the stage here").textStyle(.caption).lineLimit(1)
                 }
                 .foregroundStyle(.tertiary)
                 .padding(.horizontal, TimeScale.pad + 6)
@@ -108,7 +108,7 @@ struct RoomBar: View {
             RoundedRectangle(cornerRadius: 5, style: .continuous)
                 .strokeBorder(Theme.voice.opacity(hover || drag != nil ? 0.9 : 0.5), lineWidth: 1)
             if w > 110 {
-                Text("Room for you").textStyle(.caption).foregroundStyle(Theme.voice).lineLimit(1)
+                Text("Space for you").textStyle(.caption).foregroundStyle(Theme.voice).lineLimit(1)
                     .padding(.leading, max(ramp, 6))
                     .allowsHitTesting(false)
             }
@@ -125,12 +125,12 @@ struct RoomBar: View {
         .onHover { hover = $0 }
         .gesture(move)
         .contextMenu {
-            Button("Rise from the First Frame") { session.update("Room for You") { p in p.liftSpan(span.id) { s in s.start = 0 } } }
-            Button("Stay Up to the End") { session.update("Room for You") { p in p.liftSpan(span.id) { s in s.end = nil } } }
+            Button("Rise from the First Frame") { session.update("Space for You") { p in p.liftSpan(span.id) { s in s.start = 0 } } }
+            Button("Stay Up to the End") { session.update("Space for You") { p in p.liftSpan(span.id) { s in s.end = nil } } }
             Divider()
             Button("Remove") { session.removeRoom(span.id) }
         }
-        .help("Room for you. Drag to move it, its ends to change when the stage rises and settles.")
+        .help("Space for you. Drag to move it, its ends to change when the stage rises and settles.")
     }
 
     private func handle(edge: HorizontalEdge) -> some View {
@@ -140,7 +140,7 @@ struct RoomBar: View {
             .onHover { inside in
                 if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
             }
-            .gesture(DragGesture(minimumDistance: 1)
+            .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
                 .onChanged { g in
                     let drag = begin()
                     let dt = Double(g.translation.width / scale.pointsPerSecond)
@@ -160,7 +160,7 @@ struct RoomBar: View {
     }
 
     private var move: some Gesture {
-        DragGesture(minimumDistance: 2)
+        DragGesture(minimumDistance: 2, coordinateSpace: .global)
             .onChanged { g in
                 let drag = begin()
                 let d = session.choreography.duration
@@ -180,14 +180,14 @@ struct RoomBar: View {
         let origin = (start: span.start, end: span.end)
         drag = origin
         session.holdTimeline(true)
-        session.beginEdit("Move Room for You")
+        session.beginEdit("Move Space for You")
         return origin
     }
 
     private func end() {
         guard drag != nil else { return }
         drag = nil
-        session.commitEdit("Move Room for You")
+        session.commitEdit("Move Space for You")
         session.holdTimeline(false)
     }
 }
