@@ -394,7 +394,7 @@ struct MarkPin: View {
             .opacity(mark.fades ? 0.75 : 1)
             .contentShape(Rectangle().inset(by: -3))
             .onHover { hover = $0 }
-            .gesture(DragGesture(minimumDistance: 2)
+            .gesture(DragGesture(minimumDistance: 2, coordinateSpace: .global)
                 .onChanged { g in
                     if dragStart == nil {
                         dragStart = mark.time

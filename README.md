@@ -21,23 +21,24 @@ It is for the slide you spent a week on: the chart whose curve you redrew eleven
 
 **More than one slide?** Add Slide (⌃⌘I), or drop several at once, and the same card in your hand goes through them: it turns over to the next slide, or the next melts in where you're looking while whatever the two share holds still. Open on your deck's cover, follow a number from one slide to the next, and turn back to the first at the end.
 
-**Point at something.** Click Draw under the video (⇧⌘P) and circle a number or underline a word with one fine pen. Its ink lies like watercolour: the slide shows through it, and it gathers at the edges and feathers a hair as it dries. In the video the mark draws on just as your hand drew it, then stays until the slide changes or fades a moment later.
+**Point at something.** Switch to Draw in the toolbar (⌘2) and circle a number or underline a word with one fine pen. Its ink lies like watercolour: the slide shows through it, and it gathers at the edges and feathers a hair as it dries. In the video the mark draws on just as your hand drew it, then stays until the slide changes or fades a moment later.
 
-**Leave room for you.** Room for You lifts the stage into the top of the frame for as long as you choose, leaving the bottom clear for your talking head in Edits or Premiere.
+**Leave room for you.** Space for You lifts the stage into the top of the frame for as long as you choose, leaving the bottom clear for your talking head in Edits or Premiere.
 
-**Go live.** Click Go Live under the video (⌥⌘L) and talk it through while you lead the camera yourself: → or Space to the next stop, ← back, ↑ out to the whole slide, or click what you want to look at, and the last stop on a slide turns the card to the next. Your Mac's own camera and microphone record you as you go, and you stand in the room under the slide, mirrored the way you saw yourself. Return, and the take is the video: every move sets off when you pressed, your voice is the voiceover, and you're in it, all of it editable and one undo away. Export can leave the room empty and save you as your own file instead. Switch the camera off in the File menu for a take that's just your voice.
+**Go live.** Switch to Live in the toolbar (⌘3). You step into a room: the slide as the take will open, you in the space under it, and every position the camera can go to in a strip under the video. Press Start, then talk it through while you lead the camera yourself: → or Space to the next stop, ← back, ↑ out to the whole slide, ↓ to the next slide, a number or a click to go straight to a position. Close, and the ending plays as you finish. Your Mac's own camera and microphone record you as you go, and you stand in the room under the slide, mirrored the way you saw yourself. Keep it, and the take is the video: every move sets off when you pressed, your voice is the voiceover, and you're in it, all of it editable and one undo away. Export can leave the room empty and save you as your own file instead. Switch the camera off in the File menu for a take that's just your voice.
 
 **Fixed a typo after the tour was made?** Replace Slide (⇧⌘I) swaps in the corrected slide and keeps the camera work: each framing follows its words to where they are now, and a shot named after its words takes the new ones. Change the canvas and the framings Direct for Me planned are framed again for it; the ones you set stay where you put them.
 
 ## Every move is yours
 
-The slide map shows every framing as a viewfinder the shape of your video: drag one to move it, drag a corner to go closer, Option-drag to turn the camera, draw a box on the slide to add one. Whenever the window has room beside the video (always for a tall video, and for a square one in a wide window), the map sits there, as big as the room allows; otherwise it sits at the top of the inspector. Drag the edge between the map and the video to give either more room, or press ⇧⌘M to keep the map in the inspector. On the timeline, drag a framing to change when the camera lands; it snaps to your words. Esc cancels a drag halfway. In the inspector, double-click any value to type it, and a run of arrow presses is one undo.
+The slide map shows every framing as a box the shape of your video. Drag anywhere on the slide to draw a new one, even over others; click one to pick it, then drag inside it to move it, a corner to go closer or wider, or Option-drag to turn the camera. Whenever the window has room beside the video (always for a tall video, and for a square one in a wide window), the map sits there, as big as the room allows; otherwise it sits at the top of the inspector. Drag the edge between the map and the video to give either more room, or press ⇧⌘M to keep the map in the inspector. On the timeline every clip says how long it lasts: drag its right edge to hold longer or shorter, the line where it lands to change its move, or its middle to change when it lands, and everything after slides along. Right-click anything for what you'd do there. Esc cancels a drag halfway. In the inspector, double-click any value to type it, and a run of arrow presses is one undo.
 
 | Keys | |
 |---|---|
 | ⌘I, ⇧⌘I, ⇧⌘V | Choose a slide, replace it keeping the tour, paste one |
 | ⌥⌘I, ⌥⌘R | Choose a voiceover, record a scratch take |
-| ⌥⌘L | Go live; then → or Space, ←, ↑ or a click to lead the camera, and Return to finish |
+| ⌘1, ⌘2, ⌘3 | Frame, Draw, Live; Esc goes back to Frame |
+| ⌥⌘L | Go Live, then Start, then Close; while you lead, → or Space, ←, ↑, ↓, a number or a click |
 | ⌃⌘I | Add slides after the last |
 | ⇧⌘P, Return | Draw on the slide, and put the pen away |
 | ⇧⌘D | Direct for Me |
@@ -46,6 +47,7 @@ The slide map shows every framing as a viewfinder the shape of your video: drag 
 | ⌥⌘ arrows | Move the selected framing |
 | ⌥⌘= and ⌥⌘− | Closer and wider |
 | ⌥⌘[ and ⌥⌘] | Land a tenth of a second earlier or later |
+| ⌘=, ⌘−, ⌘0 | Zoom into the timeline, out, fit it |
 | Space or ⌘P | Play and pause |
 | ⌘[ and ⌘] | Previous and next landing; ⌘← goes to the start |
 | hold `\` | The slide exactly as supplied (the Original surface) |

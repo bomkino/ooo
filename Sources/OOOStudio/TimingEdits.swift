@@ -58,6 +58,58 @@ extension OOOSession {
         update("Move Length") { p in p = Timing.setLand(p, clip: k, to: land) }
     }
 
+    /// Clip `k` holds for `seconds`, as a slider moves: no undo step of its own.
+    func liveHold(clip k: Int, seconds: Double) {
+        let clips = choreography.clips
+        guard clips.indices.contains(k) else { return }
+        let edge = clips[k].land + max(seconds, 0.1)
+        live { p in p = Timing.setEnd(p, clip: k, to: edge) }
+    }
+
+    /// The move into clip `k` takes `seconds`, as a slider moves.
+    func liveMove(clip k: Int, seconds: Double) {
+        let clips = choreography.clips
+        guard clips.indices.contains(k) else { return }
+        let land = clips[k].start + max(seconds, Timing.shortestTravel)
+        live { p in p = Timing.setLand(p, clip: k, to: land) }
+    }
+
+    /// The opening arrives over `seconds`; everything after slides along.
+    public func arriveOver(_ seconds: Double) {
+        guard choreography.clips.first?.kind == .opening else { return }
+        update("Opening Length") { p in p = Timing.setLand(p, clip: 0, to: seconds) }
+    }
+
+    /// Clip `k` selected, and the playhead resting on it.
+    public func selectClip(_ k: Int) {
+        let clips = choreography.clips
+        guard clips.indices.contains(k) else { return }
+        let c = clips[k]
+        if let id = c.shotID {
+            select(.shot(id))
+            return
+        }
+        select(.overview, show: false)
+        previewUntil = nil
+        clock.playing = false
+        clock.time = min(c.land + min(0.4, c.hold * 0.3), clock.duration)
+        touch()
+    }
+
+    /// Plays clip `k` from just before its move sets off, and stops where the next one does.
+    public func watchClip(_ k: Int) {
+        let clips = choreography.clips
+        guard clips.indices.contains(k) else { return }
+        let c = clips[k]
+        let from = max(c.start - 0.3, 0)
+        let stop = min(c.end, clock.duration - 0.12)
+        clock.playing = false
+        clock.time = from
+        previewUntil = stop > from + 0.2 ? stop : nil
+        clock.playing = true
+        touch()
+    }
+
     /// Lets OOO time the move into shot `id` from how far it goes.
     public func autoTravel(_ id: UUID) {
         updateShot(id, "Let OOO Time the Move") { $0.travel = nil }

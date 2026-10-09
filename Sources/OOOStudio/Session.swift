@@ -182,6 +182,8 @@ public final class OOOSession {
     public internal(set) var liveClosingAt: Double?
     /// True from the moment a take stops recording until it is kept.
     public internal(set) var liveKeeping = false
+    /// How much of a take the timeline lays out while you lead it: grows in steps ahead of you.
+    public internal(set) var takeSpan: Double = 30
     /// Why the camera or microphone isn't ready in the Live room, if it isn't.
     public internal(set) var liveNote: String?
     /// The project as a timing drag on the timeline began: every step of the
@@ -896,7 +898,7 @@ public final class OOOSession {
     public var timelineLength: Double {
         // During a live take the path runs far ahead; the timeline shows what you have done so
         // far, and once you close, the whole take.
-        if let run = take { return run.closing != nil ? clock.duration : max(clock.time + 15, 30) }
+        if let run = take { return run.closing != nil ? clock.duration : takeSpan }
         let d = clock.duration
         // While a hand is down the scale holds still; a clip may run past the edge until it lets go.
         guard let held = heldTimelineLength, held > 0 else { return d }
@@ -1160,6 +1162,8 @@ public final class OOOSession {
     /// Keeps the voice in step with playback. While it plays, its position is
     /// the clock, so the picture follows the voice and the two never drift.
     public func soundClock(playing: Bool, time: Double) -> Double? {
+        // Paused, a preview has been let go of.
+        if previewUntil != nil, !playing { previewUntil = nil }
         if let until = previewUntil, playing, time >= until {
             // A preview in the Live room stops where it was asked to.
             previewUntil = nil

@@ -156,30 +156,40 @@ struct ShotInspector: View {
                     .textStyle(.caption).foregroundStyle(.tertiary)
             }
             Hairline()
+            if let k = session.clipIndex(of: id), let clip = session.clip(of: id) {
+                InspectorSection("Timing", accessory: {
+                    Text("\(secondsLabel(clip.start)) to \(secondsLabel(clip.end))").textStyle(.data).foregroundStyle(.secondary)
+                }) {
+                    Dial(session: session, label: "Move in",
+                         value: Binding(get: { Float(session.clip(of: id)?.move ?? clip.move) },
+                                        set: { v in session.liveMove(clip: k, seconds: Double(v)) }),
+                         range: 0.3...6, format: secondsValue, undo: "Move Length")
+                    Dial(session: session, label: "Hold",
+                         value: Binding(get: { Float(session.clip(of: id)?.hold ?? clip.hold) },
+                                        set: { v in session.liveHold(clip: k, seconds: Double(v)) }),
+                         range: 0.2...12, format: secondsValue, undo: "Hold")
+                    Toggle("Let OOO choose how long it moves", isOn: Binding(
+                        get: { session.project.shots.first { $0.id == id }?.travel == nil },
+                        set: { auto in
+                            if auto { session.autoTravel(id) } else { session.moveFor(clip: k, seconds: clip.move) }
+                        }))
+                        .toggleStyle(.checkbox)
+                        .textStyle(.bodyCompact)
+                    Text("Everything after it slides along and keeps its own length. You can drag its edges on the timeline too.")
+                        .textStyle(.caption).foregroundStyle(.tertiary)
+                }
+                Hairline()
+            }
             InspectorSection("Move") {
                 ChoiceRow(MoveKind.allCases.map { ($0, $0.title) },
                           selection: session.choiceShot(id, \.move, fallback: .glide, "Move"))
                 ChoiceRow(EaseKind.allCases.map { ($0, $0.title) },
-                          selection: session.choiceShot(id, \.ease, fallback: .glide, "Ease"))
+                          selection: session.choiceShot(id, \.ease, fallback: .glide, "Feel"))
                 Text("\(shot.move.summary) \(shot.ease.summary)").textStyle(.caption).foregroundStyle(.secondary)
-                Toggle("Choose the travel time for me", isOn: Binding(
-                    get: { session.project.shots.first { $0.id == id }?.travel == nil },
-                    set: { auto in
-                        let natural = session.choreography.beats.first { !$0.isOverview && $0.shot.id == id }?.travel ?? 1.4
-                        session.updateShot(id, "Travel") { $0.travel = auto ? nil : max(natural, 0.3) }
-                    }))
-                    .toggleStyle(.checkbox)
-                    .textStyle(.bodyCompact)
-                if shot.travel != nil {
-                    Dial(session: session, label: "Travel",
-                         value: Binding(get: { Float(session.project.shots.first { $0.id == id }?.travel ?? 1.4) },
-                                        set: { v in session.liveShot(id) { $0.travel = Double(v) } }),
-                         range: 0.3...6, defaultValue: 1.6, format: secondsValue)
-                }
             }
             Hairline()
             InspectorSection("Framing") {
-                Dial(session: session, label: "Closer", value: zoom(id), range: 0...4.5, defaultValue: 1,
+                Dial(session: session, label: "Zoom", value: zoom(id), range: 0...4.5, defaultValue: 1,
                      format: { String(format: "%.1f×", powf(2, $0)) }, undo: "Frame Shot")
                 Dial(session: session, label: "Turn", value: session.bindShot(id, \.yaw, fallback: 0), range: -25...25,
                      defaultValue: 0, format: degreesLabel)
@@ -189,8 +199,8 @@ struct ShotInspector: View {
                      defaultValue: 0, format: degreesLabel)
                 Dial(session: session, label: "Lens", value: lens(id), range: 28...135, defaultValue: 48,
                      format: { String(format: "%.0f mm", $0) })
-                Dial(session: session, label: "Focus falloff", value: session.bindShot(id, \.aperture, fallback: 0.4), defaultValue: 0.45)
-                Dial(session: session, label: "Breathe", value: session.bindShot(id, \.breathe, fallback: 0.5), defaultValue: 0.5)
+                Dial(session: session, label: "Background blur", value: session.bindShot(id, \.aperture, fallback: 0.4), defaultValue: 0.45)
+                Dial(session: session, label: "Drift in", value: session.bindShot(id, \.breathe, fallback: 0.5), defaultValue: 0.5)
             }
             Hairline()
             InspectorSection("While it holds") {
@@ -295,7 +305,7 @@ struct OverviewInspector: View {
     var body: some View {
         let p = session.project
         VStack(alignment: .leading, spacing: 0) {
-            InspectorSection("Arrival", accessory: {
+            InspectorSection("Opening", accessory: {
                 Button("Watch") {
                     session.clock.time = 0
                     session.clock.playing = true
@@ -305,7 +315,7 @@ struct OverviewInspector: View {
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)], spacing: 6) {
                     ForEach(ArriveKind.allCases) { kind in
                         ArriveTile(kind: kind, selected: p.arrive.kind == kind) {
-                            session.update("Arrival") { $0.arrive = Arrive(kind: kind, intensity: $0.arrive.intensity) }
+                            session.update("Opening") { $0.arrive = Arrive(kind: kind, intensity: $0.arrive.intensity) }
                             session.clock.time = 0
                             session.clock.playing = true
                         }
@@ -316,7 +326,7 @@ struct OverviewInspector: View {
                     Dial(session: session, label: "Length", value: Binding(
                         get: { Float(session.project.arrive.duration) },
                         set: { v in session.live { $0.arrive.duration = Double(v) } }),
-                         range: 0.6...4, defaultValue: Float(p.arrive.kind.defaultDuration), format: secondsValue, undo: "Arrival Length")
+                         range: 0.6...4, defaultValue: Float(p.arrive.kind.defaultDuration), format: secondsValue, undo: "Opening Length")
                     Dial(session: session, label: "Intensity", value: session.bind(\.arrive.intensity), defaultValue: 0.6)
                 }
             }
@@ -348,8 +358,8 @@ struct OverviewInspector: View {
                 let d = Shot.overview(slideAspect: p.slideAspect, canvasAspect: p.canvasAspect)
                 Dial(session: session, label: "Turn", value: session.bind(\.overview.yaw), range: -45...45, defaultValue: d.yaw, format: degreesLabel)
                 Dial(session: session, label: "Tilt", value: session.bind(\.overview.pitch), range: -20...20, defaultValue: d.pitch, format: degreesLabel)
-                Dial(session: session, label: "Room", value: overviewRoom, range: 0...0.6, defaultValue: d.frame.size.y - 1, format: percent)
-                Dial(session: session, label: "Breathe", value: session.bind(\.overview.breathe), defaultValue: 0.45)
+                Dial(session: session, label: "Margin", value: overviewRoom, range: 0...0.6, defaultValue: d.frame.size.y - 1, format: percent)
+                Dial(session: session, label: "Drift in", value: session.bind(\.overview.breathe), defaultValue: 0.45)
             }
             Hairline()
             InspectorSection("Ending") {
@@ -357,11 +367,11 @@ struct OverviewInspector: View {
             }
             Hairline()
             InspectorSection("The camera's temperament") {
-                Dial(session: session, label: "Flight", value: session.bind(\.style.flight), defaultValue: 0.5)
-                Dial(session: session, label: "Swing", value: session.bind(\.style.swing), defaultValue: 0.5)
+                Dial(session: session, label: "Rise", value: session.bind(\.style.flight), defaultValue: 0.5)
+                Dial(session: session, label: "Lean", value: session.bind(\.style.swing), defaultValue: 0.5)
                 Dial(session: session, label: "Handheld", value: session.bind(\.style.drift), defaultValue: 0.35)
                 Dial(session: session, label: "Pace", value: session.bind(\.style.pace), defaultValue: 0.5)
-                Text("Flight is how high a glide rises between distant details. Handheld is a slow breath in the camera.")
+                Text("Rise is how far the camera lifts to fly between distant details; Lean, how much it leans into its own momentum; Handheld, a slow breath in the camera.")
                     .textStyle(.caption).foregroundStyle(.tertiary)
             }
             Hairline()

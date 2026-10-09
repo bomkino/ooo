@@ -125,6 +125,18 @@ extension OOOSession {
 
     // MARK: Frame
 
+    /// A new framing a third of the slide high, of the video's shape, around `uv`
+    /// (or the camera's view at the playhead).
+    public func addShot(around uv: Vec2?, page k: Int) {
+        guard let uv else {
+            addShot(page: k)
+            return
+        }
+        let A = project.slide(k).aspect, C = project.canvasAspect
+        let h: Float = 0.34
+        addShot(frame: ShotFrame(center: uv, size: Vec2(h * C / A, h)), page: k)
+    }
+
     /// A new framing of exactly what the camera sees at the playhead.
     public func addShotFromView() {
         let k = choreography.page(at: clock.time)

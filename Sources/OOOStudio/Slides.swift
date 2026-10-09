@@ -293,7 +293,7 @@ struct ChangeMarker: View {
         .background(Capsule().fill(Theme.camera.opacity(hover || dragStart != nil ? 1 : 0.85)))
         .contentShape(Capsule())
         .onHover { hover = $0 }
-        .gesture(DragGesture(minimumDistance: 2)
+        .gesture(DragGesture(minimumDistance: 2, coordinateSpace: .global)
             .onChanged { g in
                 if dragStart == nil {
                     dragStart = change.start

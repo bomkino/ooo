@@ -89,7 +89,7 @@ public enum OOOSnapshot {
             session.addSlides(list.split(separator: ",").map { URL(fileURLWithPath: String($0)) })
         }
         if let spec = arg("--lift"), let lift = Lift(spec: spec) {
-            session.update("Room for You") { $0.lift = lift }
+            session.update("Space for You") { $0.lift = lift }
         }
         let began = Date()
         func ready() -> Bool {

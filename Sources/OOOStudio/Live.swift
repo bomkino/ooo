@@ -664,6 +664,7 @@ extension OOOSession {
         keptBefore = nil
         liveClosingAt = nil
         liveKeeping = false
+        takeSpan = 30
         take = LiveRun(take: LiveTake(stage.choreographyInput), before: before, filming: filming)
         set(stage)
         selection = .overview
@@ -689,7 +690,10 @@ extension OOOSession {
             stopTake()
             return run.held ?? stop
         }
-        if run.closing == nil, run.take.keepUp(at: t) { show(run.take.choreography) }
+        if run.closing == nil {
+            if run.take.keepUp(at: t) { show(run.take.choreography) }
+            if t + 6 > takeSpan { takeSpan = (t / 15).rounded(.up) * 15 + 15 }
+        }
         return t
     }
 
@@ -1313,7 +1317,7 @@ struct LiveInspector: View {
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)], spacing: 6) {
                     ForEach(ArriveKind.allCases) { kind in
                         ArriveTile(kind: kind, selected: p.arrive.kind == kind) {
-                            session.update("Arrival") { $0.arrive = Arrive(kind: kind, intensity: $0.arrive.intensity) }
+                            session.update("Opening") { $0.arrive = Arrive(kind: kind, intensity: $0.arrive.intensity) }
                             session.previewOpening()
                         }
                     }
@@ -1442,5 +1446,28 @@ struct PositionList: View {
                 }
             }
         }
+    }
+}
+
+/// You, as the camera sees you, mirrored the way you know yourself.
+struct LivePreview: NSViewRepresentable {
+    let session: AVCaptureSession
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        view.wantsLayer = true
+        let layer = AVCaptureVideoPreviewLayer(session: session)
+        layer.videoGravity = .resizeAspectFill
+        if let c = layer.connection, c.isVideoMirroringSupported {
+            c.automaticallyAdjustsVideoMirroring = false
+            c.isVideoMirrored = true
+        }
+        view.layer = layer
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        guard let layer = view.layer as? AVCaptureVideoPreviewLayer, layer.session !== session else { return }
+        layer.session = session
     }
 }
