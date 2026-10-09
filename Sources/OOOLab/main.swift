@@ -46,6 +46,9 @@ import StageKit
 //   ooo-lab bench                           export and preview timings (p50, p95, p99), and the machine
 //   ooo-lab colorcheck                      each landing as drawn against the same frame decoded
 //                                           from the video: ΔE as written and as macOS shows it
+//   ooo-lab live --live "4,8,12.5b" [--live-end 20] [--out dir]
+//                                           a live take: what each press did, the video's end,
+//                                           and you in the room against the room left empty
 //
 // Every command takes --project <file.ooo> (default: the sample), or
 // --slide <file> (a PDF or picture, read and directed as the app would on a
@@ -55,7 +58,9 @@ import StageKit
 // [--kicker-as-typed]] [--face modern|grotesk|editorial|poster], --more <file>[,<file>…] [--melt 2,3|all]
 // [--home [--home-at 20]] (slides after the first: the card turns over or melts to each, and turns back to
 // the first at the end), --marks demo (a mark drawn round the first detail on each slide), and --lift
-// whole|4-10,14- [--room 0.42] (room for you: when the stage is up, and how much of the frame it leaves clear).
+// whole|4-10,14- [--room 0.42] (room for you: when the stage is up, and how much of the frame it leaves clear), and
+// --live "4,8,12.5b,15w,17@0.7:0.55" [--live-end 20] [--voice-only] (a live take: each press a step to the next stop,
+// b back, w the whole slide, @u:v a click there; filmed by a stand-in recording of someone talking).
 
 let args = CommandLine.arguments
 func value(_ name: String) -> String? {
@@ -197,6 +202,36 @@ if let spec = value("--lift") {
         fail("--lift takes whole, or start-end[,start-end…] (an empty end: to the end)")
     }
     project.lift = lift
+}
+
+// A live take (--live "4,8,12.5b,15@0.7:0.55", ending at --live-end), played on
+// the project as the app plays it while you talk, filmed by a stand-in
+// recording (--voice-only: not filmed). What each press did is kept for `live`.
+var liveLines: [String] = []
+var liveWaits: [Double] = []
+var liveEnd: Double?
+if let spec = value("--live") {
+    guard let lab = LabTake(spec) else { fail("--live takes times, each optionally ending b, w or @u:v") }
+    let end = Double(value("--live-end") ?? "") ?? ((lab.presses.last?.at ?? 10) + 4)
+    let filming = !args.contains("--voice-only")
+    let stage = project.liveStage(filming: filming)
+    let (take, lines, waits) = lab.play(on: stage, end: end)
+    var face: FaceClip?
+    if filming {
+        let dir = media ?? FileManager.default.temporaryDirectory.appendingPathComponent("ooo-lab-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try writeStandIn(to: dir.appendingPathComponent("you.mov"), seconds: end + 0.15)
+        } catch {
+            fail("could not write the stand-in recording: \(error)")
+        }
+        media = dir
+        face = FaceClip(file: "you.mov", offset: 0, duration: end + 0.15, aspect: 16.0 / 9.0, mirrored: true)
+    }
+    project = stage.taken(take, end: end, voice: nil, face: face)
+    liveLines = lines
+    liveWaits = waits
+    liveEnd = end
 }
 
 func loadScene() -> SlideScene {
@@ -769,6 +804,64 @@ case "lifts":
             .joined(separator: ", "))
     } catch {
         fail("lifts failed: \(error)")
+    }
+
+case "live":
+    // A live take: what each press did, when the video ends, and you in the
+    // room: frames as you come in, mid-take and as you leave, against the
+    // same frames with the room left empty.
+    guard let end = liveEnd else { fail("live needs --live") }
+    let scene = loadScene()
+    print("live take, \(liveLines.count) presses, finished at \(String(format: "%.2f", end)) s")
+    liveLines.forEach { print($0) }
+    print(String(format: "the video runs %.2f s: on %.2f s past the end for its ending (%@)", scene.duration, scene.duration - end,
+                 project.ending.rawValue))
+    var problems: [String] = []
+    if let worst = liveWaits.max(), worst > 2.5 { problems.append(String(format: "a press waited %.2f s", worst)) }
+    if let pull = scene.choreography.beats.first(where: { $0.role == .pullBack }), pull.depart < end {
+        problems.append(String(format: "the ending set off at %.2f s, before the take ended", pull.depart))
+    }
+    if project.face != nil, let out = value("--out") {
+        let dir = URL(fileURLWithPath: out)
+        var empty = scene
+        empty.faceURL = nil
+        let moments = [0.15, 0.6, end * 0.4, end * 0.75, end - 0.1, end + 0.6]
+        let cw = project.format.width / 3, ch = project.format.height / 3
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let stage = try SlideStage()
+            guard let ctx = CGContext(data: nil, width: cw * moments.count, height: ch * 2, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { fail("no context") }
+            var shown: [String] = []
+            for (c, t) in moments.enumerated() {
+                let with = try stage.still(scene, at: t, width: cw, height: ch, samples: 6)
+                let without = try stage.still(empty, at: t, width: cw, height: ch, samples: 6)
+                ctx.draw(with, in: CGRect(x: c * cw, y: ch, width: cw, height: ch))
+                ctx.draw(without, in: CGRect(x: c * cw, y: 0, width: cw, height: ch))
+                let you = scene.faceShown(at: t)?.alpha ?? 0
+                let seen = roomDifference(with, without, room: scene.faceRoom)
+                shown.append(String(format: "%.2f s: you %.0f%%, room changed %.3f", t, you * 100, seen))
+                if you > 0.9 && seen < 0.02 { problems.append(String(format: "at %.2f s you should be in the room but it is empty", t)) }
+                if you == 0 && seen > 0.002 { problems.append(String(format: "at %.2f s the room should be empty", t)) }
+            }
+            try ImageOutput.writePNG(ctx.makeImage()!, to: dir.appendingPathComponent("room.png"))
+            for t in [end * 0.4, end * 0.75] {
+                let img = try stage.still(scene, at: t, width: project.format.width, height: project.format.height, samples: 12)
+                try ImageOutput.writePNG(img, to: dir.appendingPathComponent(String(format: "you-%05.2f.png", t)))
+            }
+            print("room \(dir.appendingPathComponent("room.png").path) (top: you in the room, bottom: left empty)")
+            shown.forEach { print("  " + $0) }
+        } catch {
+            fail("live failed: \(error)")
+        }
+    }
+    if problems.isEmpty {
+        print("live ok")
+    } else {
+        print("\(problems.count) problem(s)")
+        problems.forEach { print("  " + $0) }
+        exit(2)
     }
 
 case "motioncheck":

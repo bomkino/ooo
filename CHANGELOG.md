@@ -1,8 +1,18 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 — 9 October 2026
 
-An editor that opens up: the slide map has room of its own, and the pen is easy to find.
+Go live: talk your video through and lead the camera yourself, filmed by your Mac into the room under the slide. And an editor that opens up, with the slide map beside the video and a pen that's easy to find.
+
+**Go Live**
+- **Go Live (⌥⌘L)**, or Go Live beside Draw under the video: OOO starts your Mac's own microphone and camera and shows you in the room under the slide, mirrored, so you can settle before the count of three. Then talk it through and lead the camera: → or Space to the next stop, ← back, ↑ out to the whole slide, or click a number, a line or the chart to look at it. At the last stop on a slide, the next press turns the card over or melts it to the next.
+- Each move sets off the moment you press. Press while the camera is still on its way and it goes on as soon as it has landed; press again before then and it goes to the one after instead. A lit emphasis fades, and a line being read along is read to its end, before the camera leaves. While you talk, the camera holds still where you stopped it.
+- Return (or Finish) keeps the take, one undo away: every move at the moment you made it, each hold given back its slow push-in and its read-along, your voice as the voiceover, its words heard for later, and you in the room until you finish, when you go as the stage settles and the ending plays. Draw with the pen during a take and the marks draw on in time.
+- Your voice and your face are one recording from the Mac's camera and microphone, so they never drift apart. Turn off **Film Me in Live Takes** in the File menu for your voice only.
+- OOO films with the camera macOS has chosen (the one picked under Video Effects in the menu bar, or your iPhone through Continuity Camera), never Desk View. The recording starts on a frame, and that frame's own moment is the take's 0, so your words, your lips and the moves line up. A camera that sends no picture (covered, or busy in another app) leaves a take of your voice rather than none, and a camera or microphone that goes away mid-take ends it there, keeping what was recorded.
+
+**You in the room**
+- You fill the room the stage leaves, edge to edge, your picture's top edge melting into the backdrop, with the same fine grain as the slide, so you and the slide are one picture. In export, **You: In the Room** draws you in; **Own File** leaves the room empty and saves the recording beside the video as "… – you.mov", for Premiere or Edits.
 
 **The slide map, beside the video**
 - For a tall video, the slide map leaves the inspector for its own pane on the left of the video, in the room the video never used. It grows with the window, and its numbers, corners and handles grow with it, so every framing is easy to see and to grab. A square video gets it too in a wide window; when there isn't room beside the video, the map stays at the top of the inspector.
@@ -17,6 +27,12 @@ An editor that opens up: the slide map has room of its own, and the pen is easy 
 **Everywhere**
 - Direct for Me says its name in the toolbar.
 - Over a narrow video the line above it wraps instead of spilling, and the time under it keeps where you are.
+
+**Fixed**
+- Saving a video over several slides kept only the first slide's file: the others went missing when the document was opened again. Every slide is kept now, with the voiceover and the camera recording.
+
+**Made and checked**
+- `ooo-lab --live "4,8,12.5b,15@0.7:0.55"` plays a take from written presses, filmed by a stand-in recording of someone talking, since CI's Mac has no camera; `ooo-lab live` prints what each press did and when the video ends, and checks you're in the room exactly while you should be. CI renders a take over two slides.
 
 ## 1.0.2 — 6 October 2026
 

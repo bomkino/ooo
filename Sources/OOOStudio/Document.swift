@@ -4,7 +4,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 extension UTType {
-    /// An OOO document: a package holding project.json and the slide and voiceover.
+    /// An OOO document: a package holding project.json and the slides, voiceover and camera recording.
     public static let oooProject = UTType(exportedAs: ProjectPackage.typeIdentifier, conformingTo: .package)
 }
 
@@ -90,7 +90,8 @@ public final class OOODocument: ReferenceFileDocument, @unchecked Sendable {
     public func fileWrapper(snapshot: OOOProject, configuration: WriteConfiguration) throws -> FileWrapper {
         let data = try ProjectPackage.encode(snapshot)
         var mediaWrappers: [String: FileWrapper] = [:]
-        let needed = Set([snapshot.slide.file, snapshot.voice?.file].compactMap { $0 })
+        // Every slide's file, not just the first's, and the voiceover's and the camera's.
+        let needed = Set(snapshot.mediaFiles)
         let saved = configuration.existingFile?.fileWrappers?[ProjectPackage.mediaFolder]?.fileWrappers
         for file in needed {
             if let existing = saved?[file] {
@@ -101,8 +102,8 @@ public final class OOODocument: ReferenceFileDocument, @unchecked Sendable {
             } else {
                 // Refuse to save rather than write a package that has lost its slide or voice.
                 throw CocoaError(.fileWriteUnknown, userInfo: [
-                    NSLocalizedDescriptionKey: "The slide or voiceover file is missing, so the document was not saved.",
-                    NSLocalizedRecoverySuggestionErrorKey: "Add the slide or voiceover again, then save.",
+                    NSLocalizedDescriptionKey: "A slide, the voiceover or the camera recording is missing, so the document was not saved.",
+                    NSLocalizedRecoverySuggestionErrorKey: "Add it again, then save.",
                 ])
             }
         }

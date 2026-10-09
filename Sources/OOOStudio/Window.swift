@@ -122,6 +122,7 @@ public struct OOOMenuCommands: Commands {
     @FocusedValue(\.oooSession) private var session
     @AppStorage("appearance") private var appearance = AppearanceChoice.dark.rawValue
     @AppStorage("showSafeAreas") private var showSafeAreas = false
+    @AppStorage("live.camera") private var liveCamera = true
     @AppStorage("showSlideMap") private var showSlideMap = true
 
     public init() {}
@@ -136,7 +137,12 @@ public struct OOOMenuCommands: Commands {
                 .disabled(session == nil)
             Button((session?.recorder.isActive ?? false) ? "Stop Recording" : "Record Voiceover") { session?.toggleRecording() }
                 .keyboardShortcut("r", modifiers: [.command, .option])
-                .disabled(session == nil || session?.hasSlide == false)
+                .disabled(session == nil || session?.hasSlide == false || session?.isLive == true)
+            Button((session?.isLive ?? false) ? "Finish Live Take" : "Go Live") { session?.toggleLive() }
+                .keyboardShortcut("l", modifiers: [.command, .option])
+                .disabled(session == nil || session?.hasSlide == false || session?.recorder.isActive == true)
+            Toggle("Film Me in Live Takes", isOn: $liveCamera)
+                .disabled(session?.isLive == true)
             Button("Add Slide…") { if let session { OOOCommands.addSlides(session) } }
                 .keyboardShortcut("i", modifiers: [.command, .control])
                 .disabled(session == nil || session?.hasSlide == false)

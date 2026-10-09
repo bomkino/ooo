@@ -25,6 +25,8 @@ It is for the slide you spent a week on: the chart whose curve you redrew eleven
 
 **Leave room for you.** Room for You lifts the stage into the top of the frame for as long as you choose, leaving the bottom clear for your talking head in Edits or Premiere.
 
+**Go live.** Click Go Live under the video (⌥⌘L) and talk it through while you lead the camera yourself: → or Space to the next stop, ← back, ↑ out to the whole slide, or click what you want to look at, and the last stop on a slide turns the card to the next. Your Mac's own camera and microphone record you as you go, and you stand in the room under the slide, mirrored the way you saw yourself. Return, and the take is the video: every move sets off when you pressed, your voice is the voiceover, and you're in it, all of it editable and one undo away. Export can leave the room empty and save you as your own file instead. Switch the camera off in the File menu for a take that's just your voice.
+
 **Fixed a typo after the tour was made?** Replace Slide (⇧⌘I) swaps in the corrected slide and keeps the camera work: each framing follows its words to where they are now, and a shot named after its words takes the new ones. Change the canvas and the framings Direct for Me planned are framed again for it; the ones you set stay where you put them.
 
 ## Every move is yours
@@ -35,6 +37,7 @@ The slide map shows every framing as a viewfinder the shape of your video: drag 
 |---|---|
 | ⌘I, ⇧⌘I, ⇧⌘V | Choose a slide, replace it keeping the tour, paste one |
 | ⌥⌘I, ⌥⌘R | Choose a voiceover, record a scratch take |
+| ⌥⌘L | Go live; then → or Space, ←, ↑ or a click to lead the camera, and Return to finish |
 | ⌃⌘I | Add slides after the last |
 | ⇧⌘P, Return | Draw on the slide, and put the pen away |
 | ⇧⌘D | Direct for Me |

@@ -316,10 +316,11 @@ struct StageArea: View {
             StageStatus(session: session).frame(height: Self.top)
             stage(px)
                 .frame(width: fitted.width, height: fitted.height)
-                .overlay { if session.showRoom && !(session.project.lift?.isEmpty ?? true) { RoomGuide(session: session, clock: session.clock) } }
+                .overlay { if session.showRoom && !session.isLive && !(session.project.lift?.isEmpty ?? true) { RoomGuide(session: session, clock: session.clock) } }
                 .overlay { if showSafeAreas { SafeAreaGuides(format: session.project.format) } }
                 .overlay { if drawing { PenOverlay(session: session, clock: session.clock) } }
                 .overlay { if session.recorder.counting != nil || session.recorder.isRecording { RecordingOverlay(recorder: session.recorder) } }
+                .overlay { if session.isLive { LiveOverlay(session: session, capture: session.liveCapture) } }
                 .overlay {
                     if !session.hasSlide {
                         ProgressView().controlSize(.small)
@@ -331,7 +332,7 @@ struct StageArea: View {
                     .strokeBorder(dropTargeted ? Theme.camera : (drawing ? session.pen.color.ring(scheme) : Theme.hairline),
                                   lineWidth: dropTargeted || drawing ? 2 : 1))
                 .shadow(color: .black.opacity(scheme == .dark ? 0.55 : 0.18), radius: scheme == .dark ? 28 : 14, y: 4)
-                .onTapGesture(count: 2) { if !session.pen.on { session.clock.playing.toggle() } }
+                .onTapGesture(count: 2) { if !session.pen.on && !session.isLive { session.clock.playing.toggle() } }
                 .animation(Theme.settle, value: drawing)
             Spacer(minLength: Self.bottom)
             TransportBar(session: session, clock: session.clock, width: size.width)
@@ -346,7 +347,11 @@ struct StageStatus: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            if session.recorder.isRecording || session.recorder.counting != nil {
+            if session.isLive {
+                Circle().fill(Theme.camera).frame(width: 7, height: 7)
+                Text("Live").textStyle(.label).foregroundStyle(.primary)
+                Text("Talk it through and lead the camera. Return when you're done.").textStyle(.caption).foregroundStyle(.secondary).layoutPriority(-1)
+            } else if session.recorder.isRecording || session.recorder.counting != nil {
                 Circle().fill(Theme.camera).frame(width: 7, height: 7)
                 Text("Recording").textStyle(.label).foregroundStyle(.primary)
                 Text("Talk it through. Click Stop when you're done.").textStyle(.caption).foregroundStyle(.secondary).layoutPriority(-1)
@@ -425,23 +430,27 @@ struct TransportBar: View {
     static let height: CGFloat = 44
 
     var body: some View {
-        // Under a narrower video the time keeps only where you are, then gives
-        // way, and the pen's tray draws itself a little smaller.
-        let time = width >= 360 ? 2 : (width >= 290 ? 1 : 0)
+        // Under a narrower video Go Live keeps only its dot, the time keeps
+        // only where you are, then gives way, and the pen's tray draws itself
+        // a little smaller.
+        let time = width >= 370 ? 2 : (width >= 320 ? 1 : 0)
         ZStack {
             if session.pen.on {
                 PenTray(session: session, compact: width < 380)
                     .transition(.scale(scale: 0.92).combined(with: .opacity))
             } else {
-                HStack(spacing: 10) {
+                HStack(spacing: width >= 320 ? 10 : 8) {
                     IconButton("backward.end.fill", label: "Previous Landing") { session.jump(-1) }
+                        .disabled(session.isLive)
                     IconButton(clock.playing ? "pause.fill" : "play.fill", label: clock.playing ? "Pause" : "Play", size: 15) {
                         if !clock.playing && clock.time >= clock.duration - 0.01 { clock.time = 0 }
                         clock.playing.toggle()
                         session.touch()
                     }
                     .keyboardShortcut(clock.typing ? nil : KeyboardShortcut(.space, modifiers: []))
+                    .disabled(session.isLive)
                     IconButton("forward.end.fill", label: "Next Landing") { session.jump(1) }
+                        .disabled(session.isLive)
                     if time > 0 {
                         HStack(spacing: 4) {
                             Text(timecode(clock.time)).textStyle(.data).foregroundStyle(.primary)
@@ -455,6 +464,7 @@ struct TransportBar: View {
                     }
                     Rectangle().fill(Theme.hairline).frame(width: 1, height: 20)
                     PenButton(session: session)
+                    LiveButton(session: session, compact: width < 430)
                 }
                 .transition(.opacity)
             }

@@ -126,7 +126,7 @@ public final class VoiceRecorder {
 extension OOOSession {
     /// Counts you in, then records while the video plays from the start.
     public func startRecording() {
-        guard !recorder.isActive else { return }
+        guard !recorder.isActive, !isLive else { return }
         if pen.on { finishDrawing(replay: false) }
         clock.playing = false
         tab = .voice

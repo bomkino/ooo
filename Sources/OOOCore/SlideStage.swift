@@ -26,6 +26,9 @@ public struct SlideScene: @unchecked Sendable {
     /// Marks shown whole whenever their slide lies face up, whatever the
     /// time: the ones the pen is drawing now, so you see what you drew.
     public var pinned: Set<UUID> = []
+    /// Where the camera recording is (see `OOOProject.face`); without it
+    /// the room stays empty.
+    public var faceURL: URL?
 
     /// The words over the opening, when there are some.
     public private(set) var title: TitleOverlay?
@@ -632,10 +635,12 @@ public struct SlideScene: @unchecked Sendable {
 public final class SlideStage: @unchecked Sendable {
     public let renderer: StageRenderer
     private let titles: TitleCompositor
+    private let faces: FaceCompositor
 
     public init(renderer: StageRenderer? = nil) throws {
         self.renderer = try renderer ?? StageRenderer()
         titles = try TitleCompositor()
+        faces = try FaceCompositor()
     }
 
     /// Most pixels between neighbouring shutter samples: closer than this,
@@ -700,6 +705,10 @@ public final class SlideStage: @unchecked Sendable {
             try titles.encode(cb, title, alpha: p.alpha * scene.presence(at: t), drop: p.drop + scene.titleShift(at: t, canvasAspect: C),
                               output: output)
         }
+        if !transparent, let face = scene.project.face, let url = scene.faceURL, let shown = scene.faceShown(at: t) {
+            try faces.encode(cb, url: url, at: t - face.offset, mirrored: face.isMirrored, room: scene.faceRoom, rise: shown.rise,
+                             alpha: shown.alpha, grain: 0.035 * look.finish.grain / 0.14, frameIndex: frameIndex, output: output)
+        }
         return request.samples
     }
 
@@ -748,8 +757,10 @@ public enum SlideLoader {
             bases.append(try MediaLoader.texture(from: whole).texture)
             details.append(DetailCache(source: source, baseDensity: Float(whole.height)))
         }
-        return SlideScene(project: project, bases: bases, details: details, inks: InkCache.shared.textures(for: project),
-                          choreography: choreography)
+        var scene = SlideScene(project: project, bases: bases, details: details, inks: InkCache.shared.textures(for: project),
+                               choreography: choreography)
+        scene.faceURL = project.face.flatMap { face in media.map { $0.appendingPathComponent(face.file) } }
+        return scene
     }
 }
 

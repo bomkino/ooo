@@ -10,7 +10,8 @@
 # as draft videos), three slides (a cover turning over to the wide slide,
 # melting into its corrected version, turning back home), marks drawn on
 # the card (on a dark slide and two light ones, up close, and in 1.0.1's ink
-# beside them), the stage rising to leave room for a talking head (both also as full sets and a
+# beside them), a live take (each press, and a stand-in for you in the room), the stage
+# rising to leave room for a talking head (both also as full sets and a
 # Good video), the wide tour moved onto a corrected slide (Replace
 # Slide), the stills Save Stills writes, export timings, a bench (with the
 # machine it ran on), how colour survives the encoder, and summary.txt with
@@ -79,6 +80,15 @@ render_set standard-png --slide "$OUT/fixtures/standard-1920x1080.png"
 render_set wide-pdf --slide "$OUT/fixtures/wide.pdf"
 render_set wide-png-2x --slide "$OUT/fixtures/wide-5152x2160.png"
 
+echo "== A live take: presses at the moments a presenter makes them, and you in the room"
+mkdir -p "$OUT/live"
+LIVE=(--slide "$COVER" --more "$WIDE" --live "3.2,7,10.5,14,18@0.72:0.5,21.5,25b,28.5,32,35.5" --live-end 39)
+"$LAB" live "${LIVE[@]}" --out "$OUT/live" | tee "$OUT/live/live.txt"
+"$LAB" sheet "${LIVE[@]}" --out "$OUT/live/sheet.png"
+"$LAB" motioncheck "${LIVE[@]}" | tee "$OUT/live/motion.txt"
+"$LAB" render "${LIVE[@]}" --quality draft --scale 0.5 --out "$OUT/live/draft.mp4"
+"$LAB" live --slide "$WIDE" --live "4,9,13w,17" --live-end 21 --voice-only | tee "$OUT/live/voice-only.txt"
+
 echo "== Replace Slide: the wide tour, moved onto the corrected slide"
 mkdir -p "$OUT/replace"
 "$LAB" plan --slide "$OUT/fixtures/wide-2576x1080.png" | tee "$OUT/replace/before.txt"
@@ -132,6 +142,7 @@ echo "== Summary"
   echo "export timings (Good):"; sed 's/^/  /' "$OUT/timings.txt"
   echo "adaptive blur:"; sed 's/^/  /' "$OUT/blur.txt"
   echo "loop:"; tail -1 "$OUT/loop.txt" | sed 's/^/  /'
+  echo "live:"; grep -h '^the video runs\|^live ok\|problem' "$OUT/live/live.txt" "$OUT/live/voice-only.txt" | sed 's/^/  /'
   echo "bench:"; grep -v '^bench:' "$OUT/bench.txt" | sed 's/^/  /'
   echo "colour:"; grep -v '^colorcheck:' "$OUT/color.txt" | sed 's/^/  /'
 } | tee "$OUT/summary.txt"

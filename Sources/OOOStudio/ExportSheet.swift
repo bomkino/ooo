@@ -44,6 +44,8 @@ struct ExportSheet: View {
     @AppStorage("export.scale") private var scale: Double = 1
     @AppStorage("export.quality") private var quality: ExportQuality = .good
     @AppStorage("export.voice") private var includeVoice = true
+    /// You on camera from a live take: in the room, or as your own file beside the video.
+    @AppStorage("export.face") private var faceInRoom = true
     @State private var model = ExportModel()
 
     private var summary: String {
@@ -51,6 +53,7 @@ struct ExportSheet: View {
         let (w, h) = OOOExporter.size(p.format, scale: scale)
         var s = "\(w) × \(h) · \(p.fps) fps · \(secondsLabel(session.choreography.duration))"
         if p.voice != nil { s += includeVoice ? " · with voiceover" : " · silent" }
+        if p.face != nil { s += faceInRoom ? " · you in the room" : " · you as your own file" }
         return s
     }
 
@@ -96,6 +99,13 @@ struct ExportSheet: View {
                     GridRow {
                         Text("Sound").textStyle(.bodyCompact).foregroundStyle(.secondary)
                         ChoiceRow([(true, "Voiceover"), (false, "Silent")], selection: $includeVoice)
+                    }
+                }
+                if session.project.face != nil {
+                    GridRow {
+                        Text("You").textStyle(.bodyCompact).foregroundStyle(.secondary)
+                        ChoiceRow([(true, "In the Room"), (false, "Own File")], selection: $faceInRoom)
+                            .help("Own File leaves the room empty and saves the camera recording beside the video, for an editor such as Premiere or Edits")
                     }
                 }
             }
@@ -183,7 +193,11 @@ struct ExportSheet: View {
     }
 
     private func run(to url: URL) {
-        guard let scene = session.exportScene() else { return }
+        guard var shown = session.exportScene() else { return }
+        // As your own file: the room stays empty, and the recording goes beside the video.
+        let face = !faceInRoom ? session.project.face.map { session.document.media.url(for: $0.file) } : nil
+        if face != nil { shown.faceURL = nil }
+        let scene = shown
         let voice = includeVoice ? session.voiceRecording : nil
         let options = ExportOptions(codec: codec, quality: quality, scale: scale, includeVoice: includeVoice)
         model.cancelFlag = ExportModel.CancelFlag()
@@ -209,6 +223,12 @@ struct ExportSheet: View {
                                           preview: { img in
                                               Task { @MainActor in model.preview = img }
                                           })
+                if let face {
+                    let name = url.deletingPathExtension().lastPathComponent + " – you"
+                    let you = url.deletingLastPathComponent().appendingPathComponent(name).appendingPathExtension(face.pathExtension)
+                    try? FileManager.default.removeItem(at: you)
+                    try FileManager.default.copyItem(at: face, to: you)
+                }
                 await MainActor.run { model.phase = .done(url) }
             } catch RenderError.cancelled {
                 // The file that was there is untouched: nothing replaces it until a video is whole.

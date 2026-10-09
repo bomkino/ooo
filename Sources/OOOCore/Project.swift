@@ -215,13 +215,15 @@ public struct OOOProject: Codable, Hashable, Sendable {
     /// The newest files this build reads in full. Raise it, and say in
     /// `neededReader` what needs it, when a setting older builds would drop arrives.
     /// 1: OOO 0.2. 2: OOO 1.0 (Weave, a kicker as typed). 3: OOO 1.0.1
-    /// (several slides, room for you, marks drawn on the card).
-    public static let readerVersion = 3
+    /// (several slides, room for you, marks drawn on the card). 4: OOO 1.1
+    /// (you on camera in the room).
+    public static let readerVersion = 4
 
     /// The oldest reader that draws everything this project uses, written as
     /// `minimumReaderVersion`: a file 0.2 can draw still opens there.
     public var neededReader: Int {
         let typedKicker = title.map { !$0.kickerCaps && !$0.kicker.trimmingCharacters(in: .whitespaces).isEmpty } ?? false
+        if face != nil { return 4 }
         if !(pages?.isEmpty ?? true) || !(lift?.isEmpty ?? true) || !(marks?.isEmpty ?? true) { return 3 }
         return arrive.kind == .weave || typedKicker ? 2 : 1
     }
@@ -259,6 +261,9 @@ public struct OOOProject: Codable, Hashable, Sendable {
     /// Room for you: where the stage rises to leave the bottom of the frame
     /// clear for a talking head; nil or no spans for never.
     public var lift: Lift?
+    /// You on camera, recorded in a live take, shown in the room while the
+    /// stage is up; nil for none.
+    public var face: FaceClip?
 
     public init(slide: SlideRef, overview: Shot? = nil, shots: [Shot] = [], arrive: Arrive = Arrive(kind: .rise),
                 ending: Ending = .pullBack, style: MotionStyle = MotionStyle(), look: StageLook = OOOProject.defaultLook,
@@ -342,6 +347,8 @@ public struct OOOProject: Codable, Hashable, Sendable {
     public var slideCount: Int { 1 + morePages.count }
     /// Every slide, the first first.
     public var allSlides: [SlideRef] { [slide] + morePages.map(\.slide) }
+    /// Every file in the Media folder the project draws on: each slide's, the voiceover's, the camera's.
+    public var mediaFiles: [String] { (allSlides.map(\.file) + [voice?.file, face?.file]).compactMap { $0 } }
 
     /// Which slide a page id names (0 is the first); a slide no longer in the
     /// video counts as the first.
@@ -659,7 +666,7 @@ public enum ProjectPackage {
         try fm.createDirectory(at: url.appendingPathComponent(mediaFolder), withIntermediateDirectories: true)
         try encode(project).write(to: url.appendingPathComponent(projectFile), options: .atomic)
         guard let media else { return }
-        for file in (project.allSlides.map(\.file) + [project.voice?.file]).compactMap({ $0 }) {
+        for file in project.mediaFiles {
             let src = media.appendingPathComponent(file), dst = url.appendingPathComponent(mediaFolder).appendingPathComponent(file)
             if fm.fileExists(atPath: src.path) && !fm.fileExists(atPath: dst.path) { try fm.copyItem(at: src, to: dst) }
         }
