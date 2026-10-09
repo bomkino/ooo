@@ -638,6 +638,41 @@ extension OOOSession {
 
 // MARK: - Views
 
+/// Go Live, beside Draw under the video: a red dot and its name, which
+/// breathes and reads Finish during a take. Under a narrow video, the dot alone.
+struct LiveButton: View {
+    let session: OOOSession
+    var compact = false
+    @State private var hover = false
+    @State private var breathe = false
+
+    var body: some View {
+        let live = session.isLive
+        Button { session.toggleLive() } label: {
+            HStack(spacing: 6) {
+                Circle().fill(Theme.camera)
+                    .frame(width: 8, height: 8)
+                    .opacity(live ? (breathe ? 1 : 0.45) : 1)
+                    .animation(live ? .easeInOut(duration: 0.9).repeatForever(autoreverses: true) : .default, value: breathe)
+                    .onAppear { breathe = true }
+                if !compact {
+                    Text(live ? "Finish" : "Go Live").font(.system(size: 13, weight: .semibold))
+                }
+            }
+            .foregroundStyle(live ? Theme.camera : Color.primary)
+            .padding(.horizontal, compact ? 10 : 11)
+            .frame(height: 28)
+            .background(Capsule().fill(live ? Theme.cameraSoft : Theme.well.opacity(hover ? 1 : 0.7)))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .disabled(!session.hasSlide || session.recorder.isActive)
+        .help(live ? "Keep the take (Return)" : "Talk it through and lead the camera yourself, filmed by your Mac (⌥⌘L)")
+        .accessibilityLabel(live ? "Finish the Live Take" : "Go Live")
+    }
+}
+
 /// Over the stage during a take: you, in the room the stage leaves; the
 /// count; a small pill with the time, your voice and the keys; and the
 /// slide, which a click looks closer at.

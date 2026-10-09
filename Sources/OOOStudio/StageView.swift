@@ -406,11 +406,7 @@ struct TransportBar: View {
             IconButton("pencil.tip.crop.circle", label: session.pen.on ? "Put the Pen Away" : "Draw on the Slide",
                        size: 15) { session.togglePen() }
                 .foregroundStyle(session.pen.on ? Theme.camera : Color.primary)
-            IconButton("dot.radiowaves.left.and.right", label: session.isLive ? "Finish the Live Take" : "Go Live", size: 15) {
-                session.toggleLive()
-            }
-            .foregroundStyle(session.isLive ? Theme.camera : Color.primary)
-            .disabled(!session.hasSlide || session.recorder.isActive)
+            LiveButton(session: session)
             HStack(spacing: 4) {
                 Text(timecode(clock.time)).textStyle(.data).foregroundStyle(.primary)
                 Text("/").textStyle(.data).foregroundStyle(.tertiary)
