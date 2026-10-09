@@ -108,6 +108,7 @@ enum OOOSoak {
             // Two fingers on the trackpad over the stage: small steps back,
             // then forward, sixty a second, as scrolling scrubs.
             monitor.enter("frame, scrolling")
+            session.clock.playing = false
             session.clock.time = session.clock.duration * 0.6
             for i in 0..<240 {
                 let step = i < 150 ? -0.04 : 0.03
