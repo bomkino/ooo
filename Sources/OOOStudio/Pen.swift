@@ -83,9 +83,38 @@ extension OOOSession {
     /// Strokes this close together (seconds) make one mark.
     static let penJoin = 1.2
 
-    /// Takes the pen out, pausing where you are, or puts it away.
+    /// Draw, or back to Frame; during a take, the pen out or away.
     public func togglePen() {
-        if pen.on { finishDrawing() } else { pen.on = true }
+        if take != nil {
+            if liveStep == .recording { pen.on.toggle() }
+            return
+        }
+        if mode == .draw { finishDrawing() } else { enter(.draw) }
+    }
+
+    /// The marks drawn since the pen came out show as they will in the video again.
+    func unpinMarks() {
+        penMarks = []
+        penLast = nil
+    }
+
+    /// The mark drawn last, gone.
+    public func deleteLastMark() {
+        guard let id = penMarks.last ?? project.marks?.last?.id else { return }
+        penMarks.removeAll { $0 == id }
+        if penLast?.id == id { penLast = nil }
+        deleteMark(id)
+    }
+
+    /// The marks showing on the slide face up at the playhead, gone.
+    public func clearMarksHere() {
+        let t = clock.time
+        let id = project.pageID(choreography.page(at: t))
+        update("Clear Marks") { p in
+            p.marks?.removeAll { $0.page == id && $0.time <= t + 0.05 && (!$0.fades || $0.gone > t) }
+            if p.marks?.isEmpty == true { p.marks = nil }
+        }
+        unpinMarks()
     }
 
     /// Whether the card lies still at the playhead, so the pen can draw on it.
@@ -137,11 +166,13 @@ extension OOOSession {
         if inTake { live { $0.marks = marks } } else { update("Draw") { $0.marks = marks } }
     }
 
-    /// Puts the pen away and plays what it drew, from a moment before.
+    /// Puts the pen away, back to Frame, and plays what it drew from a moment before.
     public func finishDrawing(replay: Bool = true) {
         let first = (project.marks ?? []).filter { penMarks.contains($0.id) }.map(\.time).min()
         pen.on = false
+        if take == nil, mode == .draw { mode = .frame }
         guard replay, take == nil, let first else { return }
+        previewUntil = nil
         clock.time = max(first - 0.8, 0)
         clock.playing = true
     }
@@ -199,6 +230,8 @@ struct PenOverlay: View {
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0)
                 .onChanged { v in
+                    // While it plays (gliding to a still point), the pen waits.
+                    guard !clock.playing || session.isTaking else { return }
                     if stroke.isEmpty { width = penWidth(at: v.location, in: size) }
                     stroke.append(v.location)
                     points.append(PenPoint(x: Float(v.location.x / max(size.width, 1)) * 2 - 1,
@@ -206,7 +239,7 @@ struct PenOverlay: View {
                                            at: v.time.timeIntervalSinceReferenceDate))
                 }
                 .onEnded { _ in
-                    session.penStroke(points)
+                    if !points.isEmpty { session.penStroke(points) }
                     stroke = []
                     points = []
                 })
@@ -219,13 +252,15 @@ struct PenOverlay: View {
         }
         .onDisappear { NSCursor.arrow.set() }
         .onChange(of: clock.playing) { _, playing in
-            if playing { session.finishDrawing(replay: false) }
+            // Played on, what was drawn shows as it will in the video.
+            if playing && !session.isTaking { session.unpinMarks() }
         }
     }
 
     /// The pointer: the pen's ink where it would draw, a crosshair off the
     /// card, and a no-entry sign while the card is moving.
     private func pointer(at p: CGPoint, in size: CGSize) -> NSCursor {
+        if clock.playing && !session.isTaking { return NSCursor.arrow }
         let x = Float(p.x / max(size.width, 1)) * 2 - 1, y = 1 - Float(p.y / max(size.height, 1)) * 2
         guard let scene = session.scene, let hit = scene.touch(x, y, at: clock.time, canvasAspect: session.project.canvasAspect)
         else { return NSCursor.operationNotAllowed }
@@ -245,37 +280,9 @@ struct PenOverlay: View {
     }
 }
 
-/// Draw, under the video: the pen in the ink it will draw with.
-struct PenButton: View {
-    @Bindable var session: OOOSession
-    @State private var hover = false
-
-    var body: some View {
-        Button { session.togglePen() } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "pencil.tip").font(.system(size: 12, weight: .semibold))
-                Text("Draw").font(.system(size: 13, weight: .semibold))
-                Circle().fill(session.pen.color.swatch)
-                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.35), lineWidth: 0.5))
-                    .frame(width: 9, height: 9)
-            }
-            .fixedSize()
-            .foregroundStyle(Color.primary)
-            .padding(.horizontal, 11)
-            .frame(height: 28)
-            .background(Capsule().fill(Theme.well.opacity(hover ? 1 : 0.7)))
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .onHover { hover = $0 }
-        .disabled(!session.hasSlide)
-        .help("Draw on the slide: circle a number, underline a word. In the video it draws on as your hand did (⇧⌘P)")
-        .accessibilityLabel("Draw on the Slide")
-    }
-}
-
 /// The pen's tray, in place of the transport while you draw: its colours,
-/// whether its marks stay, and Done. Ringed in the ink, like the stage.
+/// whether its marks stay, the still points either side, and Done. Ringed
+/// in the ink, like the stage.
 struct PenTray: View {
     @Bindable var session: OOOSession
     /// Under a narrow video: no pen at the start, and a smaller Stays and Fades.
@@ -296,15 +303,32 @@ struct PenTray: View {
                 }
             }
             Rectangle().fill(Theme.hairline).frame(width: 1, height: 18)
-            Picker("Marks", selection: $session.pen.fades) {
-                Text("Stays").tag(false)
-                Text("Fades").tag(true)
+            if compact {
+                Button { session.pen.fades.toggle() } label: {
+                    Image(systemName: session.pen.fades ? "hourglass.bottomhalf.filled" : "pin.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(session.pen.fades ? "Marks fade a moment after they are drawn. Click to keep them until the slide changes."
+                    : "Marks stay until the slide changes. Click to let them fade.")
+            } else {
+                Picker("Marks", selection: $session.pen.fades) {
+                    Text("Stays").tag(false)
+                    Text("Fades").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                .help("Stays until the slide changes, or fades a moment after it is drawn")
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .controlSize(compact ? .small : .regular)
-            .fixedSize()
-            .help("Stays until the slide changes, or fades a moment after it is drawn")
+            HStack(spacing: 0) {
+                IconButton("chevron.left", label: "Previous Still Point (←)", size: 11) { session.stepStill(-1) }
+                    .keyboardShortcut(session.clock.typing ? nil : KeyboardShortcut(.leftArrow, modifiers: []))
+                IconButton("chevron.right", label: "Next Still Point (→)", size: 11) { session.stepStill(1) }
+                    .keyboardShortcut(session.clock.typing ? nil : KeyboardShortcut(.rightArrow, modifiers: []))
+            }
             Button("Done") { session.finishDrawing() }
                 .buttonStyle(PrimaryButtonStyle())
                 .keyboardShortcut(.defaultAction)

@@ -278,12 +278,13 @@ struct StageArea: View {
 
     var body: some View {
         GeometryReader { geo in
-            let videoHeight = max(40, geo.size.height - Self.top - Self.bottom - TransportBar.height)
+            let transport = TransportBar.height(session.mode)
+            let videoHeight = max(40, geo.size.height - Self.top - Self.bottom - transport)
             let columns = StageColumns(size: geo.size, videoAspect: CGFloat(session.project.format.aspect), videoHeight: videoHeight,
                                        margin: Self.side, map: showMap, share: mapShare)
             HStack(spacing: 0) {
                 if columns.shown {
-                    MapPane(session: session, clock: session.clock, top: Self.top, foot: Self.bottom + TransportBar.height)
+                    MapPane(session: session, clock: session.clock, top: Self.top, foot: Self.bottom + transport)
                         .frame(width: columns.map)
                     MapEdge(share: $mapShare, width: geo.size.width, map: columns.map)
                         .zIndex(1)
@@ -312,27 +313,29 @@ struct StageArea: View {
         let k = longSide > cap ? cap / longSide : 1
         let px = CGSize(width: (fitted.width * scale * k).rounded(), height: (fitted.height * scale * k).rounded())
         let drawing = session.pen.on
+        let recording = session.isLive && session.liveStep != .room && session.liveStep != .kept
+        let ring: Color = dropTargeted ? Theme.camera : (drawing ? session.pen.color.ring(scheme) : (recording ? Theme.camera : Theme.hairline))
         return VStack(spacing: 0) {
             StageStatus(session: session).frame(height: Self.top)
             stage(px)
                 .frame(width: fitted.width, height: fitted.height)
                 .overlay { if session.showRoom && !session.isLive && !(session.project.lift?.isEmpty ?? true) { RoomGuide(session: session, clock: session.clock) } }
                 .overlay { if showSafeAreas { SafeAreaGuides(format: session.project.format) } }
+                .overlay { if session.isLive { LiveOverlay(session: session, capture: session.liveCapture) } }
                 .overlay { if drawing { PenOverlay(session: session, clock: session.clock) } }
                 .overlay { if session.recorder.counting != nil || session.recorder.isRecording { RecordingOverlay(recorder: session.recorder) } }
-                .overlay { if session.isLive { LiveOverlay(session: session, capture: session.liveCapture) } }
                 .overlay {
                     if !session.hasSlide {
                         ProgressView().controlSize(.small)
                     }
                 }
                 .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.stage, style: .continuous))
-                // While the pen is out, the stage is ringed in its ink.
+                // While the pen is out the stage is ringed in its ink, and in red while a take records.
                 .overlay(RoundedRectangle(cornerRadius: Theme.Radius.stage, style: .continuous)
-                    .strokeBorder(dropTargeted ? Theme.camera : (drawing ? session.pen.color.ring(scheme) : Theme.hairline),
-                                  lineWidth: dropTargeted || drawing ? 2 : 1))
+                    .strokeBorder(ring, lineWidth: dropTargeted || drawing || recording ? 2 : 1))
                 .shadow(color: .black.opacity(scheme == .dark ? 0.55 : 0.18), radius: scheme == .dark ? 28 : 14, y: 4)
-                .onTapGesture(count: 2) { if !session.pen.on && !session.isLive { session.clock.playing.toggle() } }
+                .onTapGesture(count: 2) { if session.mode == .frame { session.clock.playing.toggle() } }
+                .contextMenu { if !session.isTaking { StageMenu(session: session) } }
                 .animation(Theme.settle, value: drawing)
             Spacer(minLength: Self.bottom)
             TransportBar(session: session, clock: session.clock, width: size.width)
@@ -341,70 +344,17 @@ struct StageArea: View {
     }
 }
 
-/// One quiet line above the stage: what OOO is doing, or what to try next.
+/// The line above the stage, a coach: what OOO is doing, or the next step,
+/// with that step as a button.
 struct StageStatus: View {
     @Bindable var session: OOOSession
 
     var body: some View {
         HStack(spacing: 8) {
-            if session.isLive {
-                Circle().fill(Theme.camera).frame(width: 7, height: 7)
-                Text("Live").textStyle(.label).foregroundStyle(.primary)
-                Text("Talk it through and lead the camera. Return when you're done.").textStyle(.caption).foregroundStyle(.secondary).layoutPriority(-1)
-            } else if session.recorder.isRecording || session.recorder.counting != nil {
-                Circle().fill(Theme.camera).frame(width: 7, height: 7)
-                Text("Recording").textStyle(.label).foregroundStyle(.primary)
-                Text("Talk it through. Click Stop when you're done.").textStyle(.caption).foregroundStyle(.secondary).layoutPriority(-1)
-                Button("Stop") { session.stopRecording() }
-                    .buttonStyle(QuietButtonStyle())
-                    .layoutPriority(1)
-            } else if session.pen.on {
-                Image(systemName: "pencil.tip").font(.system(size: 11, weight: .semibold)).foregroundStyle(session.pen.color.swatch)
-                Text("Pen").textStyle(.label).foregroundStyle(.primary)
-                if session.penCanDraw {
-                    Text("Draw on the slide. In the video it draws on as your hand did.").textStyle(.caption).foregroundStyle(.secondary).layoutPriority(-1)
-                } else {
-                    Text("Move to where the slide is still to draw on it.").textStyle(.caption).foregroundStyle(.secondary).layoutPriority(-1)
-                    Button("Next Landing") { session.jump(1) }
-                        .buttonStyle(QuietButtonStyle())
-                        .layoutPriority(1)
-                        .help("Go to where the camera next lands, with the slide at rest (⌘])")
-                }
-            } else if session.comparing {
-                Text("Original").textStyle(.label).foregroundStyle(.primary)
-                Text("The slide exactly as supplied. Let go of \\ to see your look.").textStyle(.caption).foregroundStyle(.secondary).layoutPriority(-1)
-            } else if let busy = session.busy {
-                ProgressView().controlSize(.mini)
-                Text(busy).textStyle(.label).foregroundStyle(.primary)
-            } else if session.project.slide.kind == .sample {
-                Text("Sample slide").textStyle(.label).foregroundStyle(.primary)
-                // Over a narrow video the invitation is the button alone.
-                ViewThatFits(in: .horizontal) {
-                    Text("Drop your own slide and voiceover anywhere").textStyle(.caption).foregroundStyle(.secondary)
-                        .lineLimit(1).fixedSize()
-                    Color.clear.frame(width: 0, height: 0)
-                }
-                Button("Choose Slide…") { OOOCommands.chooseSlide(session) }
-                    .buttonStyle(QuietButtonStyle())
-                    .layoutPriority(1)
-            } else {
-                Text(session.project.slide.name).textStyle(.label).foregroundStyle(.primary).lineLimit(1)
-                if let zoom = session.project.sharpZoom, let h = session.project.slide.pixelHeight {
-                    Text(String(format: "Sharp to %.1f× closer", zoom))
-                        .textStyle(.caption).foregroundStyle(.secondary).layoutPriority(-1)
-                        .help("This picture is \(h) pixels tall. OOO draws it at up to twice that, sharpened, and Direct for Me "
-                            + "stays within it. For closer looks, export the slide as a PDF, or as a picture at 2× or 3×.")
-                }
-                if session.pageCount > 1 {
-                    HStack(spacing: 2) {
-                        IconButton("chevron.left", label: "Previous Page", size: 10) { session.showPage(session.project.slide.page - 1) }
-                            .disabled(session.project.slide.page == 0)
-                        Text("Page \(session.project.slide.page + 1) of \(session.pageCount)")
-                            .textStyle(.data).foregroundStyle(.secondary)
-                        IconButton("chevron.right", label: "Next Page", size: 10) { session.showPage(session.project.slide.page + 1) }
-                            .disabled(session.project.slide.page >= session.pageCount - 1)
-                    }
-                }
+            switch session.mode {
+            case .live: live
+            case .draw: draw
+            case .frame: frame
             }
         }
         // Over a narrow video a hint wraps, then gives way, before a name or a button does:
@@ -415,73 +365,172 @@ struct StageStatus: View {
         .frame(maxWidth: .infinity)
         .animation(Theme.quick, value: session.busy)
     }
+
+    private func line(_ title: String, _ hint: String) -> some View {
+        Group {
+            Text(title).textStyle(.label).foregroundStyle(.primary)
+            Text(hint).textStyle(.caption).foregroundStyle(.secondary).layoutPriority(-1)
+        }
+    }
+
+    @ViewBuilder
+    private var live: some View {
+        switch session.liveStep {
+        case .room:
+            Circle().fill(Theme.camera).frame(width: 7, height: 7)
+            if let note = session.liveNote {
+                line("Live", note)
+            } else {
+                line("Live", "Nothing records until you press Start. Check yourself and your positions, then Start.")
+            }
+        case .counting:
+            RecordingDot()
+            line("Get ready", "Recording starts on the beat.")
+        case .recording:
+            RecordingDot()
+            line("Recording", "→ next, ← back, 1 to 9 a position, 0 the whole slide, D to draw. Close when you're done.")
+        case .closing:
+            RecordingDot()
+            line("Closing", "Still recording your sign-off. It stops by itself.")
+        case .keeping:
+            ProgressView().controlSize(.mini)
+            Text("Keeping your take").textStyle(.label).foregroundStyle(.primary)
+        case .kept:
+            Image(systemName: "checkmark.circle.fill").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.camera)
+            line("Kept", "This take is your video now: your moves, your voice, you. ⌘Z takes it back.")
+        }
+    }
+
+    @ViewBuilder
+    private var draw: some View {
+        Image(systemName: "pencil.tip").font(.system(size: 11, weight: .semibold)).foregroundStyle(session.pen.color.swatch)
+        if session.clock.playing {
+            line("Draw", "Going to where the slide lies still.")
+        } else if session.penCanDraw {
+            line("Draw", "Circle a number, underline a word. In the video it draws on as your hand did.")
+        } else {
+            line("Draw", "The slide is moving here.")
+            Button("Next Still Point") { session.stepStill(1) }
+                .buttonStyle(QuietButtonStyle())
+                .layoutPriority(1)
+                .help("Go to where the slide next lies still (→)")
+        }
+    }
+
+    @ViewBuilder
+    private var frame: some View {
+        if session.recorder.isRecording || session.recorder.counting != nil {
+            Circle().fill(Theme.camera).frame(width: 7, height: 7)
+            line("Recording", "Talk it through. Click Stop when you're done.")
+            Button("Stop") { session.stopRecording() }
+                .buttonStyle(QuietButtonStyle())
+                .layoutPriority(1)
+        } else if session.comparing {
+            line("Original", "The slide exactly as supplied. Let go of \\ to see your look.")
+        } else if let busy = session.busy {
+            ProgressView().controlSize(.mini)
+            Text(busy).textStyle(.label).foregroundStyle(.primary)
+        } else if session.project.slide.kind == .sample {
+            Text("Sample slide").textStyle(.label).foregroundStyle(.primary)
+            // Over a narrow video the invitation is the button alone.
+            ViewThatFits(in: .horizontal) {
+                Text("Drop your own slide and voiceover anywhere").textStyle(.caption).foregroundStyle(.secondary)
+                    .lineLimit(1).fixedSize()
+                Color.clear.frame(width: 0, height: 0)
+            }
+            Button("Choose Slide…") { OOOCommands.chooseSlide(session) }
+                .buttonStyle(QuietButtonStyle())
+                .layoutPriority(1)
+        } else if session.project.shots.isEmpty && session.hasSlide {
+            line("No framings yet", "Draw a box on the slide map, or let OOO plan the tour.")
+            Button("Direct for Me") { session.autoDirect() }
+                .buttonStyle(QuietButtonStyle())
+                .layoutPriority(1)
+        } else if let shot = session.selectedShot, let clip = session.clip(of: shot.id) {
+            let n = (session.index(of: shot.id) ?? 0) + 1
+            line(Director.spokenLabel(shot.label) ?? "Shot \(n)",
+                 "Moves in over \(secondsLabel(clip.move)), holds \(secondsLabel(clip.hold)). Drag its end on the timeline to change it.")
+        } else {
+            Text(session.project.slide.name).textStyle(.label).foregroundStyle(.primary).lineLimit(1)
+            if let zoom = session.project.sharpZoom, let h = session.project.slide.pixelHeight {
+                Text(String(format: "Sharp to %.1f× zoom", zoom))
+                    .textStyle(.caption).foregroundStyle(.secondary).layoutPriority(-1)
+                    .help("This picture is \(h) pixels tall. OOO draws it at up to twice that, sharpened, and Direct for Me "
+                        + "stays within it. For closer looks, export the slide as a PDF, or as a picture at 2× or 3×.")
+            }
+            if session.pageCount > 1 {
+                HStack(spacing: 2) {
+                    IconButton("chevron.left", label: "Previous Page", size: 10) { session.showPage(session.project.slide.page - 1) }
+                        .disabled(session.project.slide.page == 0)
+                    Text("Page \(session.project.slide.page + 1) of \(session.pageCount)")
+                        .textStyle(.data).foregroundStyle(.secondary)
+                    IconButton("chevron.right", label: "Next Page", size: 10) { session.showPage(session.project.slide.page + 1) }
+                        .disabled(session.project.slide.page >= session.pageCount - 1)
+                }
+            }
+        }
+    }
 }
 
 // MARK: - Transport
 
-/// Play, the landings either side, the time and the pen, under the video.
-/// While the pen is out, its tray takes their place.
+/// Under the video, by mode: play, the landings either side and the time in
+/// Frame; the pen's tray in Draw; your positions and Start or Close in Live.
 struct TransportBar: View {
     let session: OOOSession
     @Bindable var clock: PlaybackClock
     /// The width of the video's column.
     let width: CGFloat
 
-    static let height: CGFloat = 44
+    static func height(_ mode: EditorMode) -> CGFloat { mode == .live ? 86 : 44 }
 
     var body: some View {
-        // Under a narrower video Go Live keeps only its dot, the time keeps
-        // only where you are, then gives way, and the pen's tray draws itself
-        // a little smaller.
-        let time = width >= 370 ? 2 : (width >= 320 ? 1 : 0)
+        // Under a narrower video the time keeps only where you are, then gives way.
+        let time = width >= 330 ? 2 : (width >= 250 ? 1 : 0)
         ZStack {
-            if session.pen.on {
-                PenTray(session: session, compact: width < 380)
+            switch session.mode {
+            case .draw:
+                PenTray(session: session, compact: width < 420)
                     .transition(.scale(scale: 0.92).combined(with: .opacity))
-            } else {
-                HStack(spacing: width >= 320 ? 10 : 8) {
-                    IconButton("backward.end.fill", label: "Previous Landing") { session.jump(-1) }
-                        .disabled(session.isLive)
-                    IconButton(clock.playing ? "pause.fill" : "play.fill", label: clock.playing ? "Pause" : "Play", size: 15) {
+            case .live:
+                LiveBar(session: session, capture: session.liveCapture, width: width)
+                    .transition(.opacity)
+            case .frame:
+                HStack(spacing: 10) {
+                    IconButton("backward.end.fill", label: "Previous Landing (⌘[)") { session.jump(-1) }
+                    IconButton(clock.playing ? "pause.fill" : "play.fill", label: clock.playing ? "Pause (Space)" : "Play (Space)", size: 15) {
                         if !clock.playing && clock.time >= clock.duration - 0.01 { clock.time = 0 }
                         clock.playing.toggle()
                         session.touch()
                     }
                     .keyboardShortcut(clock.typing ? nil : KeyboardShortcut(.space, modifiers: []))
-                    .disabled(session.isLive)
-                    IconButton("forward.end.fill", label: "Next Landing") { session.jump(1) }
-                        .disabled(session.isLive)
+                    IconButton("forward.end.fill", label: "Next Landing (⌘])") { session.jump(1) }
                     if time > 0 {
                         HStack(spacing: 4) {
-                            Text(timecode(clock.time)).textStyle(.data).foregroundStyle(.primary)
+                            Text(Self.clockLabel(clock.time)).textStyle(.data).foregroundStyle(.primary)
                             if time > 1 {
                                 Text("/").textStyle(.data).foregroundStyle(.tertiary)
-                                Text(timecode(clock.duration)).textStyle(.data).foregroundStyle(.secondary)
+                                Text(Self.clockLabel(clock.duration)).textStyle(.data).foregroundStyle(.secondary)
                             }
                         }
                         .fixedSize()
                         .padding(.leading, 2)
+                        .help("Minutes, seconds and tenths")
                     }
-                    Rectangle().fill(Theme.hairline).frame(width: 1, height: 20)
-                    PenButton(session: session)
-                    LiveButton(session: session, compact: width < 430)
                 }
                 .transition(.opacity)
             }
         }
-        .animation(Theme.settle, value: session.pen.on)
+        .animation(Theme.settle, value: session.mode)
         .padding(.horizontal, 12)
-        .frame(height: Self.height)
+        .frame(height: Self.height(session.mode))
         .frame(maxWidth: .infinity)
     }
 
-    private func timecode(_ t: Double) -> String {
-        let fps = max(session.project.fps, 1)
-        let total = Int((t * Double(fps)).rounded())
-        let f = total % fps
-        let s = (total / fps) % 60
-        let m = total / fps / 60
-        return String(format: "%d:%02d.%02d", m, s, f)
+    /// The time as people read it: 0:09.4, minutes, seconds and tenths.
+    static func clockLabel(_ t: Double) -> String {
+        let tenths = Int((max(t, 0) * 10).rounded(.down))
+        return String(format: "%d:%02d.%d", tenths / 600, (tenths / 10) % 60, tenths % 10)
     }
 }
 

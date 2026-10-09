@@ -14,7 +14,8 @@ import SwiftUI
 ///         [--tab camera|look|voice] [--shot n] [--time seconds]
 ///         [--title "words" [--kicker "line"]] [--safe-areas] [--show-export]
 ///         [--more file,file [--melt 1,2|all] [--home]] [--marks demo] [--draw]
-///         [--lift whole|4-10,14-] [--no-map] [--no-inspector] [--settle seconds]
+///         [--mode frame|draw|live] [--zoom 2] [--lift whole|4-10,14-]
+///         [--no-map] [--no-inspector] [--settle seconds]
 ///
 /// It opens a new document window (on the sample slide unless `--slide` gives
 /// one), waits until the slide is drawn and its tour planned, sets the window
@@ -124,7 +125,12 @@ public enum OOOSnapshot {
                 }
             }
         }
-        if flag("--draw") { session.pen.on = true }
+        if flag("--draw") || arg("--mode") == "draw" {
+            session.enter(.draw)
+            session.previewUntil = nil
+        }
+        if arg("--mode") == "live" { session.enter(.live) }
+        if let z = arg("--zoom").flatMap(Double.init) { session.timelineZoom = max(z, 1) }
         switch arg("--tab") {
         case "look": session.tab = .look
         case "voice": session.tab = .voice

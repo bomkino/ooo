@@ -159,8 +159,38 @@ public final class OOOSession {
     public let recorder = VoiceRecorder()
     /// The microphone and camera during a live take.
     public let liveCapture = LiveCapture()
-    /// The live take under way, from Go Live until it is kept or given up.
-    @ObservationIgnored var take: LiveRun?
+    /// The live take under way, from Start until it is kept or given up.
+    var take: LiveRun?
+    /// What the mouse does: frame the tour, draw on the slide, or lead it live.
+    public internal(set) var mode: EditorMode = .frame
+    /// Counts each slide drawn onto the GPU (or let go of), so views that ask
+    /// whether a slide is ready hear when it is.
+    public private(set) var drawn = 0
+    /// In Live, before Start: the project as the take will play it, shown on
+    /// the stage without changing the document.
+    @ObservationIgnored var staged: OOOProject?
+    /// The route a take in the room would follow.
+    @ObservationIgnored var roomTake: LiveTake?
+    /// Whether the room was set up to film you.
+    @ObservationIgnored var roomFilming = true
+    /// A preview playing in the Live room stops here.
+    @ObservationIgnored var previewUntil: Double?
+    /// In Live, the take just kept, and the project before it, for Retake.
+    public internal(set) var liveKept = false
+    @ObservationIgnored var keptBefore: OOOProject?
+    /// When you closed the take under way; it records on through the closing.
+    public internal(set) var liveClosingAt: Double?
+    /// True from the moment a take stops recording until it is kept.
+    public internal(set) var liveKeeping = false
+    /// Why the camera or microphone isn't ready in the Live room, if it isn't.
+    public internal(set) var liveNote: String?
+    /// The project as a timing drag on the timeline began: every step of the
+    /// drag is worked out from it, so nothing drifts.
+    @ObservationIgnored var timingBase: OOOProject?
+    /// What the slide map would do with a drag from where the pointer is.
+    public var mapHint: String?
+    /// How far the timeline is zoomed in: 1 fits the whole video.
+    public var timelineZoom: Double = 1
 
     @ObservationIgnored private var slideBase: SlideBase?
     @ObservationIgnored private var slideToken = 0
@@ -291,7 +321,18 @@ public final class OOOSession {
     /// cancels a drag, and holding \ shows the Original look.
     public func handleKey(_ event: NSEvent) -> Bool {
         if take != nil, event.type == .keyDown { return liveKey(event) }
-        if event.type == .keyDown, event.keyCode == 53 { return cancelEdit() }
+        if mode == .live, event.type == .keyDown, !clock.typing, roomKey(event) { return true }
+        if event.type == .keyDown, event.keyCode == 53 {
+            if cancelEdit() { return true }
+            // Esc leaves Draw (as Done does) and Live, back to Frame.
+            guard !clock.typing, event.modifierFlags.intersection([.command, .option, .control]).isEmpty else { return false }
+            switch mode {
+            case .draw: finishDrawing()
+            case .live: enter(.frame)
+            case .frame: return false
+            }
+            return true
+        }
         guard event.charactersIgnoringModifiers == "\\",
               event.modifierFlags.intersection([.command, .option, .control]).isEmpty else { return false }
         if event.type == .keyUp {
@@ -343,7 +384,15 @@ public final class OOOSession {
         if slideChanged || pagesChanged || p.format != project.format { thumbs = [:] }
         project = p
         document.project = p
-        choreography = take?.take.choreography ?? p.choreography()
+        if take == nil, staged != nil {
+            // In the Live room the stage shows the project as the take will play it.
+            let room = p.liveStage(filming: roomFilming)
+            staged = room
+            roomTake = LiveTake(room.choreographyInput)
+            choreography = room.choreography()
+        } else {
+            choreography = take.map { $0.closing ?? $0.take.choreography } ?? p.choreography()
+        }
         sceneCache = nil
         version += 1
         let d = choreography.duration
@@ -383,7 +432,7 @@ public final class OOOSession {
     public var scene: SlideScene? {
         if let s = sceneCache { return s }
         guard let b = slideBase else { return nil }
-        var shown = project
+        var shown = staged ?? project
         if comparing { shown.look.surface = .original }
         // A slide still being drawn shows the first in its place for a moment.
         let pages = project.morePages.map { page in pageBases[page.id].flatMap { $0.ref == page.slide ? $0 : nil } }
@@ -391,7 +440,7 @@ public final class OOOSession {
                            details: [b.details] + pages.map { $0?.details }, inks: InkCache.shared.textures(for: project),
                            choreography: choreography)
         s.pinned = Set(penMarks)
-        s.faceURL = project.face.map { document.media.url(for: $0.file) }
+        s.faceURL = shown.face.map { document.media.url(for: $0.file) }
         sceneCache = s
         return s
     }
@@ -409,9 +458,18 @@ public final class OOOSession {
     }
 
     /// Whether every slide after the first is drawn and ready.
-    public var pagesReady: Bool { project.morePages.allSatisfy { pageBases[$0.id]?.ref == $0.slide } }
+    public var pagesReady: Bool {
+        _ = drawn
+        return project.morePages.allSatisfy { pageBases[$0.id]?.ref == $0.slide }
+    }
 
-    public var hasSlide: Bool { slideBase != nil }
+    /// Whether the slide is drawn and on the stage. Observed: the slide is
+    /// drawn after the window first shows, and every button that waits for
+    /// it must hear when it is.
+    public var hasSlide: Bool {
+        _ = drawn
+        return slideBase != nil
+    }
 
     /// Shows `label` until the job it names ends; jobs can overlap.
     private func begin(_ label: String) -> Int {
@@ -457,6 +515,7 @@ public final class OOOSession {
         for (id, base) in pageBases where wanted.first(where: { $0.id == id })?.slide != base.ref {
             pageBases[id] = nil
             pagePreviews[id] = nil
+            drawn += 1
         }
         let media = document.media.directory
         for page in wanted where pageBases[page.id] == nil && !pagesDrawing.contains(page.id) {
@@ -482,6 +541,7 @@ public final class OOOSession {
                             }
                             self.pageBases[id] = base
                             self.pagePreviews[id] = base.preview
+                            self.drawn += 1
                             self.thumbs = [:]
                             self.sceneCache = nil
                             self.version += 1
@@ -496,6 +556,7 @@ public final class OOOSession {
 
     private func install(_ base: SlideBase) {
         slideBase = base
+        drawn += 1
         base.details.onReady = { [weak self] in
             MainActor.assumeIsolated { self?.touch() }
         }
@@ -833,12 +894,13 @@ public final class OOOSession {
     /// dragged it stays put under the pointer, growing only in steps if the
     /// video outgrows it, and it follows the video again on release.
     public var timelineLength: Double {
-        // During a live take the path runs far ahead; the timeline shows what you have done so far.
-        if take != nil { return max(clock.time + 15, 30) }
+        // During a live take the path runs far ahead; the timeline shows what you have done so
+        // far, and once you close, the whole take.
+        if let run = take { return run.closing != nil ? clock.duration : max(clock.time + 15, 30) }
         let d = clock.duration
+        // While a hand is down the scale holds still; a clip may run past the edge until it lets go.
         guard let held = heldTimelineLength, held > 0 else { return d }
-        guard d > held else { return held }
-        return held * pow(1.25, ceil(log(d / held) / log(1.25)))
+        return held
     }
 
     /// Holds the timeline's scale for a drag, or lets it go.
@@ -1026,7 +1088,7 @@ public final class OOOSession {
     }
 
     /// Listens to the voiceover for its words, on this Mac, then cuts the moves to them.
-    public func transcribe(cut: Bool = true) {
+    public func transcribe(cut: Bool = true, undoable: Bool = true) {
         guard let v = project.voice else { return }
         let url = document.media.url(for: v.file)
         let file = v.file
@@ -1038,11 +1100,19 @@ public final class OOOSession {
                 self.end(job)
                 guard let current = self.project.voice, current.file == file else { return }
                 let offset = current.offset
-                self.update("Transcribe") { p in
+                let heard: (inout OOOProject) -> Void = { p in
                     p.voice?.words = words.map {
                         SpokenWord(text: $0.text, start: $0.start + offset, end: $0.end + offset, confidence: $0.confidence)
                     }
                     p.voice?.language = Locale.current.identifier
+                }
+                if undoable {
+                    self.update("Transcribe", heard)
+                } else {
+                    // A live take's words come with the take: one undo takes both back.
+                    var p = self.project
+                    heard(&p)
+                    if p != self.project { self.set(p) }
                 }
                 if cut { self.cutToVoice() }
             } catch {
@@ -1090,6 +1160,17 @@ public final class OOOSession {
     /// Keeps the voice in step with playback. While it plays, its position is
     /// the clock, so the picture follows the voice and the two never drift.
     public func soundClock(playing: Bool, time: Double) -> Double? {
+        if let until = previewUntil, playing, time >= until {
+            // A preview in the Live room stops where it was asked to.
+            previewUntil = nil
+            clock.playing = false
+            return until
+        }
+        if staged != nil, take == nil {
+            if player.isPlaying { player.stop() }
+            lastSoundTime = nil
+            return nil
+        }
         if let t = liveClock() {
             if player.isPlaying { player.stop() }
             lastSoundTime = nil

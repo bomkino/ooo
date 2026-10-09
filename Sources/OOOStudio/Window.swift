@@ -127,35 +127,50 @@ public struct OOOMenuCommands: Commands {
 
     public init() {}
 
+    /// A take under way: nothing may change the project under it.
+    @MainActor private var taking: Bool { session?.isTaking ?? false }
+
+    @MainActor private func canMoveShot(_ step: Int) -> Bool {
+        guard let session, let id = session.selectedShot?.id else { return false }
+        return session.canMoveShot(id, by: step)
+    }
+
     public var body: some Commands {
         CommandGroup(after: .importExport) {
             Button("Choose Slide…") { if let session { OOOCommands.chooseSlide(session) } }
                 .keyboardShortcut("i", modifiers: .command)
-                .disabled(session == nil)
+                .disabled(session == nil || taking)
             Button("Choose Voiceover…") { if let session { OOOCommands.chooseVoice(session) } }
                 .keyboardShortcut("i", modifiers: [.command, .option])
-                .disabled(session == nil)
+                .disabled(session == nil || taking)
             Button((session?.recorder.isActive ?? false) ? "Stop Recording" : "Record Voiceover") { session?.toggleRecording() }
                 .keyboardShortcut("r", modifiers: [.command, .option])
                 .disabled(session == nil || session?.hasSlide == false || session?.isLive == true)
-            Button((session?.isLive ?? false) ? "Finish Live Take" : "Go Live") { session?.toggleLive() }
+            Divider()
+            Button(session?.liveActionTitle ?? "Go Live") { session?.liveAction() }
                 .keyboardShortcut("l", modifiers: [.command, .option])
                 .disabled(session == nil || session?.hasSlide == false || session?.recorder.isActive == true)
-            Toggle("Film Me in Live Takes", isOn: $liveCamera)
-                .disabled(session?.isLive == true)
+            Button("Discard Take") { session?.discardTake() }
+                .keyboardShortcut(".", modifiers: .command)
+                .disabled(!taking)
+            Toggle("Film Me in Live Takes", isOn: Binding(get: { liveCamera }, set: { on in
+                if let session { session.setFilmMe(on) } else { liveCamera = on }
+            }))
+                .disabled(taking)
+            Divider()
             Button("Add Slide…") { if let session { OOOCommands.addSlides(session) } }
                 .keyboardShortcut("i", modifiers: [.command, .control])
-                .disabled(session == nil || session?.hasSlide == false)
+                .disabled(session == nil || session?.hasSlide == false || taking)
             Button("Replace Slide…") { if let session { OOOCommands.chooseSlide(session, replacing: true) } }
                 .keyboardShortcut("i", modifiers: [.command, .shift])
-                .disabled(session == nil || session?.hasSlide == false)
+                .disabled(session == nil || session?.hasSlide == false || taking)
             Button("Paste Slide") { session?.pasteSlide() }
                 .keyboardShortcut("v", modifiers: [.command, .shift])
-                .disabled(session == nil)
+                .disabled(session == nil || taking)
             Divider()
             Button("Export Video…") { session?.showExport = true }
                 .keyboardShortcut("e", modifiers: .command)
-                .disabled(session == nil)
+                .disabled(session == nil || taking)
             Button("Save Cover Frame…") { if let session { OOOCommands.saveCoverFrame(session) } }
                 .keyboardShortcut("e", modifiers: [.command, .option])
                 .disabled(session == nil || session?.hasSlide == false)
@@ -170,19 +185,25 @@ public struct OOOMenuCommands: Commands {
             Divider()
             Button("Direct for Me") { session?.autoDirect() }
                 .keyboardShortcut("d", modifiers: [.command, .shift])
-                .disabled(session == nil || session?.busy != nil)
+                .disabled(session == nil || session?.busy != nil || taking)
             Button("Cut Moves to Voice") { session?.cutToVoice() }
                 .keyboardShortcut("v", modifiers: [.command, .option])
-                .disabled(session?.project.voice?.words?.isEmpty ?? true)
+                .disabled(session?.project.voice?.words?.isEmpty ?? true || taking)
             Divider()
             Button("New Shot at Playhead") { session?.addShot() }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
-                .disabled(session == nil)
+                .disabled(session == nil || taking)
+            Button("New Framing From This View") { session?.addShotFromView() }
+                .disabled(session == nil || session?.hasSlide == false || taking)
             Button("Duplicate Shot") { session?.duplicateSelectedShot() }
                 .keyboardShortcut("d", modifiers: .command)
-                .disabled(session?.selectedShot == nil)
+                .disabled(session?.selectedShot == nil || taking)
             Button("Delete Shot") { session?.deleteSelectedShot() }
-                .disabled(session?.selectedShot == nil)
+                .disabled(session?.selectedShot == nil || taking)
+            Button("Move Shot Earlier") { if let id = session?.selectedShot?.id { session?.moveShot(id, by: -1) } }
+                .disabled(!canMoveShot(-1) || taking)
+            Button("Move Shot Later") { if let id = session?.selectedShot?.id { session?.moveShot(id, by: 1) } }
+                .disabled(!canMoveShot(1) || taking)
             Divider()
             // Every drag on the map and the timeline has a key; a run of presses is one undo step.
             Button("Move Framing Left") { session?.nudgeFraming(-1, 0) }
@@ -226,7 +247,25 @@ public struct OOOMenuCommands: Commands {
             Button("Next Landing") { session?.jump(1) }
                 .keyboardShortcut("]", modifiers: .command)
         }
+        CommandGroup(before: .toolbar) {
+            ForEach(EditorMode.allCases) { m in
+                Toggle(m.title, isOn: Binding(get: { session?.mode == m }, set: { _ in session?.enter(m) }))
+                    .keyboardShortcut(KeyEquivalent(m.key), modifiers: .command)
+                    .disabled(!(session?.canEnter(m) ?? false))
+            }
+            Divider()
+        }
         CommandGroup(after: .toolbar) {
+            Button("Zoom In on the Timeline") { session?.zoomTimeline(by: 1.5) }
+                .keyboardShortcut("=", modifiers: .command)
+                .disabled(session == nil)
+            Button("Zoom Out on the Timeline") { session?.zoomTimeline(by: 1 / 1.5) }
+                .keyboardShortcut("-", modifiers: .command)
+                .disabled(session == nil || (session?.timelineZoom ?? 1) <= 1)
+            Button("Fit the Timeline") { session?.timelineZoom = 1 }
+                .keyboardShortcut("0", modifiers: .command)
+                .disabled(session == nil || (session?.timelineZoom ?? 1) <= 1)
+            Divider()
             Picker("Appearance", selection: $appearance) {
                 ForEach(AppearanceChoice.allCases) { c in Text(c.title).tag(c.rawValue) }
             }
@@ -298,21 +337,29 @@ public struct OOOWindow: View {
             }
             ToolbarItem(placement: .navigation) {
                 FormatPicker(current: session.project.format) { session.setFormat($0) }
+                    .disabled(session.isTaking)
+            }
+            ToolbarItem(placement: .principal) {
+                ModeSwitch(session: session)
             }
             ToolbarItemGroup(placement: .primaryAction) {
                 DirectButton(session: session)
+                    .disabled(session.isTaking)
                 Button { session.addShot() } label: {
                     Label("New Shot", systemImage: "plus.viewfinder")
                 }
                 .help("A new framing at the playhead (⇧⌘N)")
+                .disabled(session.isTaking)
                 Button { OOOCommands.chooseSlide(session) } label: {
                     Label("Slide", systemImage: "rectangle.on.rectangle.angled")
                 }
                 .help("Choose the slide: a PDF or a picture (⌘I). Or copy a slide in Keynote, Figma or Preview and paste it (⇧⌘V).")
+                .disabled(session.isTaking)
                 Button { OOOCommands.chooseVoice(session) } label: {
                     Label("Voiceover", systemImage: "waveform.badge.plus")
                 }
                 .help("Choose your voiceover (⌥⌘I)")
+                .disabled(session.isTaking)
                 Button { session.showExport = true } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "square.and.arrow.up").font(.system(size: 12, weight: .semibold))
@@ -321,13 +368,14 @@ public struct OOOWindow: View {
                 }
                 .buttonStyle(PrimaryButtonStyle())
                 .help("Export the video (⌘E)")
+                .disabled(session.isTaking)
                 Button { showInspector.toggle() } label: {
                     Label("Inspector", systemImage: "sidebar.right")
                 }
                 .help("Show or hide the inspector")
             }
         }
-        .onDeleteCommand { session.deleteSelectedShot() }
+        .onDeleteCommand { if session.mode == .frame { session.deleteSelectedShot() } }
         .onAppear { if OOOSnapshot.hidesInspector { showInspector = false } }
         .sheet(isPresented: $session.showExport) {
             ExportSheet(session: session)

@@ -23,26 +23,34 @@ struct InspectorPanel: View {
                     .padding(.horizontal, 18)
                     .padding(.top, 8)
             }
-            ChoiceRow(InspectorTab.allCases.map { ($0, $0.title) }, selection: $session.tab)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-            Hairline()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    switch session.tab {
-                    case .shot:
-                        if let shot = session.selectedShot {
-                            ShotInspector(session: session, shot: shot)
-                        } else {
-                            OverviewInspector(session: session)
-                        }
-                    case .look:
-                        LookInspector(session: session)
-                    case .voice:
-                        VoiceInspector(session: session)
-                    }
+            if session.mode == .live {
+                Hairline().padding(.top, session.mapBeside ? 0 : 12)
+                ScrollView {
+                    LiveInspector(session: session)
+                        .padding(.bottom, 24)
                 }
-                .padding(.bottom, 24)
+            } else {
+                ChoiceRow(InspectorTab.allCases.map { ($0, $0.title) }, selection: $session.tab)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                Hairline()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        switch session.tab {
+                        case .shot:
+                            if let shot = session.selectedShot {
+                                ShotInspector(session: session, shot: shot)
+                            } else {
+                                OverviewInspector(session: session)
+                            }
+                        case .look:
+                            LookInspector(session: session)
+                        case .voice:
+                            VoiceInspector(session: session)
+                        }
+                    }
+                    .padding(.bottom, 24)
+                }
             }
         }
         .background(Theme.chrome)
