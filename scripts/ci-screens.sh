@@ -3,8 +3,9 @@
 # headlessly (see OOOSnapshot in Sources/OOOStudio/Snapshot.swift) on the
 # sample slide and on the test slides, dark and light, on each inspector tab,
 # with a shot selected, a title, the safe areas and the export sheet, three
-# slides that turn and melt, marks drawn on the card, and the stage up with
-# room for you.
+# slides that turn and melt, marks drawn on the card with the pen out, the
+# slide map beside the video (with the inspector closed, and kept in the
+# inspector instead), and the stage up with room for you.
 #
 #   bash scripts/ci-screens.sh [out-dir] [fixtures-dir]
 #
@@ -62,6 +63,8 @@ shot look-light --scheme light --tab look --size 1440x1500
 shot voice --tab voice
 shot export --show-export
 shot landscape --format landscape --shot 1
+shot map-wide --slide "$WIDE" --shot 2 --no-inspector
+shot map-in-inspector --slide "$WIDE" --shot 2 --no-map
 echo "== Test slides"
 shot wide-opening --slide "$WIDE" --time 2.4
 shot wide-shot --slide "$WIDE" --shot 3 --size 1440x1500

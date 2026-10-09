@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+An editor that opens up: the slide map has room of its own, and the pen is easy to find.
+
+**The slide map, beside the video**
+- For a tall video, the slide map leaves the inspector for its own pane on the left of the video, in the room the video never used. It grows with the window, and its numbers, corners and handles grow with it, so every framing is easy to see and to grab. A square video gets it too in a wide window; when there isn't room beside the video, the map stays at the top of the inspector.
+- Drag the edge between the map and the video to give either more room; double-click it to let the video's shape decide again. ⇧⌘M, or the button at the left of the toolbar, keeps the map in the inspector.
+- Over the map: which slide it shows and how many framings are on it. With none yet, it asks you to draw one or to let Direct for Me plan the tour.
+
+**The pen, easy to find**
+- **Draw** sits under the video, by name, with a dot of the ink it will draw in. Click it and the pen's tray takes the place of the play buttons: four inks, larger and easier to tell apart, Stays or Fades, and Done (or Return).
+- While the pen is out, the stage is ringed in its ink, and over the card the pointer becomes a drop of that ink, as wide as the line it draws there. Where the card is moving it shows that you can't draw yet, and the line above the stage offers to take you to the next landing, where you can.
+- Marks on the timeline are a little larger, so they're easier to see and to drag.
+
+**Everywhere**
+- Direct for Me says its name in the toolbar.
+- Over a narrow video the line above it wraps instead of spilling, and the time under it keeps where you are.
+
 ## 1.0.2 — 6 October 2026
 
 Marks that lie on the slide the way real ink does.

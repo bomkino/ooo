@@ -251,13 +251,20 @@ extension OOOSession {
     }
 }
 
-/// The output frame on its neutral surround, with the transport below.
+/// The output frame on its neutral surround with the transport below it,
+/// and the slide map beside it, big, when there is room.
 struct StageArea: View {
     @Bindable var session: OOOSession
     @AppStorage("showSafeAreas") private var showSafeAreas = false
+    @AppStorage("showSlideMap") private var showMap = true
+    /// The map's share of the width once its edge is dragged; 0 lets the video's shape decide.
+    @AppStorage("slideMapShare") private var mapShare = 0.0
     @Environment(\.colorScheme) private var scheme
     @State private var dropTargeted = false
     @Environment(\.snapshotStill) private var snapshotStill
+
+    /// The status line over the stage, the room either side of it, and the gap under it.
+    static let top: CGFloat = 40, side: CGFloat = 28, bottom: CGFloat = 12
 
     /// The live stage, or during a snapshot the exported frame in its place.
     @ViewBuilder
@@ -270,58 +277,66 @@ struct StageArea: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            GeometryReader { geo in
-                let side: CGFloat = 28, top: CGFloat = 40, bottom: CGFloat = 12
-                let avail = CGSize(width: max(40, geo.size.width - side * 2), height: max(40, geo.size.height - top - bottom))
-                let aspect = CGFloat(session.project.format.aspect)
-                let fitted = avail.width / avail.height > aspect
-                    ? CGSize(width: avail.height * aspect, height: avail.height)
-                    : CGSize(width: avail.width, height: avail.width / aspect)
-                let scale = NSScreen.main?.backingScaleFactor ?? 2
-                let longSide = max(fitted.width, fitted.height) * scale
-                let cap: CGFloat = 2400
-                let k = longSide > cap ? cap / longSide : 1
-                let px = CGSize(width: (fitted.width * scale * k).rounded(), height: (fitted.height * scale * k).rounded())
-                ZStack {
-                    Theme.surround
-                    VStack(spacing: 0) {
-                        StageStatus(session: session).frame(height: top)
-                        stage(px)
-                            .frame(width: fitted.width, height: fitted.height)
-                            .overlay { if session.showRoom && !(session.project.lift?.isEmpty ?? true) { RoomGuide(session: session, clock: session.clock) } }
-                            .overlay { if showSafeAreas { SafeAreaGuides(format: session.project.format) } }
-                            .overlay { if session.pen.on { PenOverlay(session: session, clock: session.clock) } }
-                            .overlay { if session.recorder.counting != nil || session.recorder.isRecording { RecordingOverlay(recorder: session.recorder) } }
-                            .overlay {
-                                if !session.hasSlide {
-                                    ProgressView().controlSize(.small)
-                                }
-                            }
-                            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.stage, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.stage, style: .continuous)
-                                .strokeBorder(dropTargeted ? Theme.camera : Theme.hairline, lineWidth: dropTargeted ? 2 : 1))
-                            .shadow(color: .black.opacity(scheme == .dark ? 0.55 : 0.18), radius: scheme == .dark ? 28 : 14, y: 4)
-                            .onTapGesture(count: 2) { if !session.pen.on { session.clock.playing.toggle() } }
-                            .overlay(alignment: .top) {
-                                if session.pen.on {
-                                    PenPalette(session: session)
-                                        .padding(.top, 10)
-                                        .transition(.move(edge: .top).combined(with: .opacity))
-                                }
-                            }
-                            .animation(Theme.settle, value: session.pen.on)
-                        Spacer(minLength: 0)
+        GeometryReader { geo in
+            let videoHeight = max(40, geo.size.height - Self.top - Self.bottom - TransportBar.height)
+            let columns = StageColumns(size: geo.size, videoAspect: CGFloat(session.project.format.aspect), videoHeight: videoHeight,
+                                       margin: Self.side, map: showMap, share: mapShare)
+            HStack(spacing: 0) {
+                if columns.shown {
+                    MapPane(session: session, clock: session.clock, top: Self.top, foot: Self.bottom + TransportBar.height)
+                        .frame(width: columns.map)
+                    MapEdge(share: $mapShare, width: geo.size.width, map: columns.map)
+                        .zIndex(1)
+                }
+                stageColumn(CGSize(width: columns.stage, height: geo.size.height), videoHeight: videoHeight)
+            }
+            // Without room beside the video, the map goes back to the inspector.
+            .onChange(of: columns.shown, initial: true) { _, shown in session.mapBeside = shown }
+        }
+        .background(Theme.surround)
+        .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
+            loadDropped(providers) { session.importDropped($0) }
+            return true
+        }
+    }
+
+    private func stageColumn(_ size: CGSize, videoHeight: CGFloat) -> some View {
+        let avail = CGSize(width: max(40, size.width - Self.side * 2), height: videoHeight)
+        let aspect = CGFloat(session.project.format.aspect)
+        let fitted = avail.width / avail.height > aspect
+            ? CGSize(width: avail.height * aspect, height: avail.height)
+            : CGSize(width: avail.width, height: avail.width / aspect)
+        let scale = NSScreen.main?.backingScaleFactor ?? 2
+        let longSide = max(fitted.width, fitted.height) * scale
+        let cap: CGFloat = 2400
+        let k = longSide > cap ? cap / longSide : 1
+        let px = CGSize(width: (fitted.width * scale * k).rounded(), height: (fitted.height * scale * k).rounded())
+        let drawing = session.pen.on
+        return VStack(spacing: 0) {
+            StageStatus(session: session).frame(height: Self.top)
+            stage(px)
+                .frame(width: fitted.width, height: fitted.height)
+                .overlay { if session.showRoom && !(session.project.lift?.isEmpty ?? true) { RoomGuide(session: session, clock: session.clock) } }
+                .overlay { if showSafeAreas { SafeAreaGuides(format: session.project.format) } }
+                .overlay { if drawing { PenOverlay(session: session, clock: session.clock) } }
+                .overlay { if session.recorder.counting != nil || session.recorder.isRecording { RecordingOverlay(recorder: session.recorder) } }
+                .overlay {
+                    if !session.hasSlide {
+                        ProgressView().controlSize(.small)
                     }
                 }
-                .frame(width: geo.size.width, height: geo.size.height)
-            }
-            .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
-                loadDropped(providers) { session.importDropped($0) }
-                return true
-            }
-            TransportBar(session: session, clock: session.clock)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.stage, style: .continuous))
+                // While the pen is out, the stage is ringed in its ink.
+                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.stage, style: .continuous)
+                    .strokeBorder(dropTargeted ? Theme.camera : (drawing ? session.pen.color.ring(scheme) : Theme.hairline),
+                                  lineWidth: dropTargeted || drawing ? 2 : 1))
+                .shadow(color: .black.opacity(scheme == .dark ? 0.55 : 0.18), radius: scheme == .dark ? 28 : 14, y: 4)
+                .onTapGesture(count: 2) { if !session.pen.on { session.clock.playing.toggle() } }
+                .animation(Theme.settle, value: drawing)
+            Spacer(minLength: Self.bottom)
+            TransportBar(session: session, clock: session.clock, width: size.width)
         }
+        .frame(width: size.width, height: size.height)
     }
 }
 
@@ -334,33 +349,44 @@ struct StageStatus: View {
             if session.recorder.isRecording || session.recorder.counting != nil {
                 Circle().fill(Theme.camera).frame(width: 7, height: 7)
                 Text("Recording").textStyle(.label).foregroundStyle(.primary)
-                Text("Talk it through. Click Stop when you're done.").textStyle(.caption).foregroundStyle(.secondary)
+                Text("Talk it through. Click Stop when you're done.").textStyle(.caption).foregroundStyle(.secondary).layoutPriority(-1)
                 Button("Stop") { session.stopRecording() }
                     .buttonStyle(QuietButtonStyle())
+                    .layoutPriority(1)
             } else if session.pen.on {
                 Image(systemName: "pencil.tip").font(.system(size: 11, weight: .semibold)).foregroundStyle(session.pen.color.swatch)
                 Text("Pen").textStyle(.label).foregroundStyle(.primary)
                 if session.penCanDraw {
-                    Text("Draw on the slide. In the video it draws on as your hand did.").textStyle(.caption).foregroundStyle(.secondary)
+                    Text("Draw on the slide. In the video it draws on as your hand did.").textStyle(.caption).foregroundStyle(.secondary).layoutPriority(-1)
                 } else {
-                    Text("Move to where the slide is still to draw on it.").textStyle(.caption).foregroundStyle(.secondary)
+                    Text("Move to where the slide is still to draw on it.").textStyle(.caption).foregroundStyle(.secondary).layoutPriority(-1)
+                    Button("Next Landing") { session.jump(1) }
+                        .buttonStyle(QuietButtonStyle())
+                        .layoutPriority(1)
+                        .help("Go to where the camera next lands, with the slide at rest (⌘])")
                 }
             } else if session.comparing {
                 Text("Original").textStyle(.label).foregroundStyle(.primary)
-                Text("The slide exactly as supplied. Let go of \\ to see your look.").textStyle(.caption).foregroundStyle(.secondary)
+                Text("The slide exactly as supplied. Let go of \\ to see your look.").textStyle(.caption).foregroundStyle(.secondary).layoutPriority(-1)
             } else if let busy = session.busy {
                 ProgressView().controlSize(.mini)
                 Text(busy).textStyle(.label).foregroundStyle(.primary)
             } else if session.project.slide.kind == .sample {
                 Text("Sample slide").textStyle(.label).foregroundStyle(.primary)
-                Text("Drop your own slide and voiceover anywhere").textStyle(.caption).foregroundStyle(.secondary)
+                // Over a narrow video the invitation is the button alone.
+                ViewThatFits(in: .horizontal) {
+                    Text("Drop your own slide and voiceover anywhere").textStyle(.caption).foregroundStyle(.secondary)
+                        .lineLimit(1).fixedSize()
+                    Color.clear.frame(width: 0, height: 0)
+                }
                 Button("Choose Slide…") { OOOCommands.chooseSlide(session) }
                     .buttonStyle(QuietButtonStyle())
+                    .layoutPriority(1)
             } else {
                 Text(session.project.slide.name).textStyle(.label).foregroundStyle(.primary).lineLimit(1)
                 if let zoom = session.project.sharpZoom, let h = session.project.slide.pixelHeight {
                     Text(String(format: "Sharp to %.1f× closer", zoom))
-                        .textStyle(.caption).foregroundStyle(.secondary)
+                        .textStyle(.caption).foregroundStyle(.secondary).layoutPriority(-1)
                         .help("This picture is \(h) pixels tall. OOO draws it at up to twice that, sharpened, and Direct for Me "
                             + "stays within it. For closer looks, export the slide as a PDF, or as a picture at 2× or 3×.")
                 }
@@ -376,6 +402,10 @@ struct StageStatus: View {
                 }
             }
         }
+        // Over a narrow video a hint wraps, then gives way, before a name or a button does:
+        // buttons take their room first.
+        .lineLimit(2)
+        .multilineTextAlignment(.center)
         .padding(.horizontal, 12)
         .frame(maxWidth: .infinity)
         .animation(Theme.quick, value: session.busy)
@@ -384,35 +414,55 @@ struct StageStatus: View {
 
 // MARK: - Transport
 
+/// Play, the landings either side, the time and the pen, under the video.
+/// While the pen is out, its tray takes their place.
 struct TransportBar: View {
     let session: OOOSession
     @Bindable var clock: PlaybackClock
+    /// The width of the video's column.
+    let width: CGFloat
+
+    static let height: CGFloat = 44
 
     var body: some View {
-        HStack(spacing: 10) {
-            IconButton("backward.end.fill", label: "Previous Landing") { session.jump(-1) }
-            IconButton(clock.playing ? "pause.fill" : "play.fill", label: clock.playing ? "Pause" : "Play", size: 15) {
-                if !clock.playing && clock.time >= clock.duration - 0.01 { clock.time = 0 }
-                clock.playing.toggle()
-                session.touch()
+        // Under a narrower video the time keeps only where you are, then gives
+        // way, and the pen's tray draws itself a little smaller.
+        let time = width >= 360 ? 2 : (width >= 290 ? 1 : 0)
+        ZStack {
+            if session.pen.on {
+                PenTray(session: session, compact: width < 380)
+                    .transition(.scale(scale: 0.92).combined(with: .opacity))
+            } else {
+                HStack(spacing: 10) {
+                    IconButton("backward.end.fill", label: "Previous Landing") { session.jump(-1) }
+                    IconButton(clock.playing ? "pause.fill" : "play.fill", label: clock.playing ? "Pause" : "Play", size: 15) {
+                        if !clock.playing && clock.time >= clock.duration - 0.01 { clock.time = 0 }
+                        clock.playing.toggle()
+                        session.touch()
+                    }
+                    .keyboardShortcut(clock.typing ? nil : KeyboardShortcut(.space, modifiers: []))
+                    IconButton("forward.end.fill", label: "Next Landing") { session.jump(1) }
+                    if time > 0 {
+                        HStack(spacing: 4) {
+                            Text(timecode(clock.time)).textStyle(.data).foregroundStyle(.primary)
+                            if time > 1 {
+                                Text("/").textStyle(.data).foregroundStyle(.tertiary)
+                                Text(timecode(clock.duration)).textStyle(.data).foregroundStyle(.secondary)
+                            }
+                        }
+                        .fixedSize()
+                        .padding(.leading, 2)
+                    }
+                    Rectangle().fill(Theme.hairline).frame(width: 1, height: 20)
+                    PenButton(session: session)
+                }
+                .transition(.opacity)
             }
-            .keyboardShortcut(clock.typing ? nil : KeyboardShortcut(.space, modifiers: []))
-            IconButton("forward.end.fill", label: "Next Landing") { session.jump(1) }
-            IconButton("pencil.tip.crop.circle", label: session.pen.on ? "Put the Pen Away" : "Draw on the Slide",
-                       size: 15) { session.togglePen() }
-                .foregroundStyle(session.pen.on ? Theme.camera : Color.primary)
-            HStack(spacing: 4) {
-                Text(timecode(clock.time)).textStyle(.data).foregroundStyle(.primary)
-                Text("/").textStyle(.data).foregroundStyle(.tertiary)
-                Text(timecode(clock.duration)).textStyle(.data).foregroundStyle(.secondary)
-            }
-            .fixedSize()
-            .padding(.leading, 6)
         }
-        .padding(.horizontal, 16)
-        .frame(height: 44)
+        .animation(Theme.settle, value: session.pen.on)
+        .padding(.horizontal, 12)
+        .frame(height: Self.height)
         .frame(maxWidth: .infinity)
-        .background(Theme.surround)
     }
 
     private func timecode(_ t: Double) -> String {
