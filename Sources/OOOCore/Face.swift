@@ -161,6 +161,9 @@ final class FaceReader {
     let duration: Double
     /// Seconds from one frame to the next.
     let frameDuration: Double
+    /// The widest a frame is decoded, keeping its shape; nil for the
+    /// recording's own size.
+    private let widest: Int?
 
     struct Frame {
         var time: Double
@@ -174,8 +177,9 @@ final class FaceReader {
     /// can't be read): later moments aren't tried again until an earlier one is.
     private var barren: Double?
 
-    init(url: URL) {
+    init(url: URL, widest: Int? = nil) {
         self.url = url
+        self.widest = widest
         asset = AVURLAsset(url: url)
         duration = max(asset.duration.seconds.isFinite ? asset.duration.seconds : 0, 0)
         let track = asset.tracks(withMediaType: .video).first
@@ -199,10 +203,15 @@ final class FaceReader {
         output = nil
         guard let track = asset.tracks(withMediaType: .video).first, let r = try? AVAssetReader(asset: asset) else { return }
         r.timeRange = CMTimeRange(start: CMTime(seconds: max(0, time - 0.1), preferredTimescale: 6000), duration: .positiveInfinity)
-        let settings: [String: Any] = [
+        var settings: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
             kCVPixelBufferMetalCompatibilityKey as String: true,
         ]
+        let size = track.naturalSize
+        if composition == nil, let widest, size.width > CGFloat(widest), size.height > 0 {
+            settings[kCVPixelBufferWidthKey as String] = widest
+            settings[kCVPixelBufferHeightKey as String] = max(Int((CGFloat(widest) * size.height / size.width / 2).rounded()) * 2, 2)
+        }
         let out: AVAssetReaderOutput
         if let composition {
             let c = AVAssetReaderVideoCompositionOutput(videoTracks: [track], videoSettings: settings)
@@ -262,7 +271,9 @@ final class FaceReader {
 /// at a time, never for every step; going back, it starts a little earlier
 /// still, so the next steps back are already there. A frame that arrives for
 /// a stage at rest is announced (`FaceCompositor.frameArrived`) so the stage
-/// redraws.
+/// redraws. Frames come no wider than the stage shows them, and a scrub
+/// still moving is followed a few times a second, not at every step: each
+/// start over costs the Mac a decoder.
 final class FaceStream: @unchecked Sendable {
     let url: URL
     private let queue: DispatchQueue
@@ -278,6 +289,8 @@ final class FaceStream: @unchecked Sendable {
     /// On `queue` only: the reader, and the furthest moment it has read to.
     private var reader: FaceReader?
     private var reached = -Double.infinity
+    /// On `queue` only: when it last started over (seconds of uptime).
+    private var restarted = -Double.infinity
 
     /// Frames decoded past the moment asked for.
     static let ahead = 3
@@ -285,6 +298,10 @@ final class FaceStream: @unchecked Sendable {
     static let back = 0.3
     /// Frames kept at once: those, and the ones between.
     static let kept = 14
+    /// The widest a frame is decoded for the stage.
+    static let widest = 1280
+    /// The least time between two starts over.
+    static let gap = 0.2
 
     init(url: URL) {
         self.url = url
@@ -335,7 +352,7 @@ final class FaceStream: @unchecked Sendable {
             lock.withLock { working = false }
             return false
         }
-        let reader = self.reader ?? FaceReader(url: url)
+        let reader = self.reader ?? FaceReader(url: url, widest: Self.widest)
         self.reader = reader
         let step = reader.frameDuration
         // Before the first frame, the first frame.
@@ -343,7 +360,14 @@ final class FaceStream: @unchecked Sendable {
         let still = { self.lock.withLock { self.wanted == w && !self.closed } }
         if first == nil || t + 0.0005 < first! || t > reached + 1 {
             // Back before what is decoded, or far ahead of it: start again
-            // there (going back, a little before, ready for the next step back).
+            // there (going back, a little before, ready for the next step back),
+            // but not again so soon: wait to see where a moving scrub goes.
+            let now = ProcessInfo.processInfo.systemUptime
+            if now - restarted < Self.gap {
+                Thread.sleep(forTimeInterval: Self.gap - (now - restarted))
+                return true
+            }
+            restarted = now
             let backward = first.map { t < $0 } ?? false
             lock.withLock { frames = [] }
             reached = backward ? max(t - Self.back, 0) : t

@@ -27,9 +27,10 @@ enum OOOSoak {
     static let memoryLimit: Double = 3000
     static let stallLimit: Double = 2
     /// Memory gained after going back to Frame, beyond what Frame settled at,
-    /// and how long the 240 scroll steps (four seconds at sixty a second) may take.
+    /// and the share of the scroll the main thread may spend working (the
+    /// test machine's timers run late, so wall time says little).
     static let growthLimit: Double = 400
-    static let scrollLimit: Double = 8
+    static let busyLimit: Double = 0.5
 
     static func run(_ session: OOOSession, done: @escaping (Int32) -> Void) {
         let seconds = max(OOOSnapshot.arg("--soak").flatMap(Double.init) ?? 45, 12)
@@ -118,6 +119,7 @@ enum OOOSoak {
             session.clock.playing = false
             session.clock.time = session.clock.duration * 0.6
             let scrollBegan = CACurrentMediaTime(), framesBefore = SoakCounts.shared.stageFrames
+            let workBegan = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
             for i in 0..<240 {
                 let step = i < 150 ? -0.04 : 0.03
                 session.clock.time = min(max(session.clock.time + step, 0), session.clock.duration)
@@ -125,8 +127,9 @@ enum OOOSoak {
                 await wait(1.0 / 60)
             }
             let scrolled = CACurrentMediaTime() - scrollBegan
-            print(String(format: "soak: 240 scroll steps took %.1f s (limit %.0f), the stage drew %.0f frames a second",
-                         scrolled, scrollLimit, Double(SoakCounts.shared.stageFrames - framesBefore) / max(scrolled, 0.001)))
+            let busy = Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - workBegan) / 1e9 / max(scrolled, 0.001)
+            print(String(format: "soak: 240 scroll steps took %.1f s, the main thread was busy %.0f%% of it (limit %.0f%%), the stage drew %.0f frames a second",
+                         scrolled, busy * 100, busyLimit * 100, Double(SoakCounts.shared.stageFrames - framesBefore) / max(scrolled, 0.001)))
 
             monitor.enter("frame, still")
             session.clock.playing = false
@@ -136,7 +139,7 @@ enum OOOSoak {
             beat.invalidate()
             monitor.stop()
             let verdict = monitor.verdict(memoryLimit: memoryLimit, stallLimit: stallLimit, growthLimit: growthLimit,
-                                          scrolled: scrolled, scrollLimit: scrollLimit)
+                                          busy: busy, busyLimit: busyLimit)
             print(verdict.line)
             ProcessInfo.processInfo.endActivity(awake)
             done(verdict.ok ? 0 : 4)
@@ -265,17 +268,17 @@ final class SoakMonitor: @unchecked Sendable {
     }
 
     func verdict(memoryLimit: Double, stallLimit: Double, growthLimit: Double,
-                 scrolled: Double, scrollLimit: Double) -> (ok: Bool, line: String) {
+                 busy: Double, busyLimit: Double) -> (ok: Bool, line: String) {
         let w = lock.withLock { worst }
         var lines = w.map { String(format: "soak: worst in %@: memory %.0f MB, main thread late %.2f s", $0.phase, $0.memory, $0.late) }
         let memory = w.map(\.memory).max() ?? 0, late = w.map(\.late).max() ?? 0
         let settled = w.first { $0.phase == "frame" }?.memory ?? memory
         let after = w.drop(while: { $0.phase != "frame" }).map(\.memory).max() ?? settled
         let grew = after - settled
-        let ok = memory <= memoryLimit && late <= stallLimit && grew <= growthLimit && scrolled <= scrollLimit
+        let ok = memory <= memoryLimit && late <= stallLimit && grew <= growthLimit && busy <= busyLimit
         lines.append(String(format: "soak: %@ (most memory %.0f MB, limit %.0f; grew %.0f MB after Frame settled, limit %.0f; "
-                                + "longest the main thread was late %.2f s, limit %.1f; scrolling took %.1f s, limit %.0f)",
-                            ok ? "passed" : "FAILED", memory, memoryLimit, grew, growthLimit, late, stallLimit, scrolled, scrollLimit))
+                                + "longest the main thread was late %.2f s, limit %.1f; busy %.0f%% of the scroll, limit %.0f%%)",
+                            ok ? "passed" : "FAILED", memory, memoryLimit, grew, growthLimit, late, stallLimit, busy * 100, busyLimit * 100))
         return (ok, lines.joined(separator: "\n"))
     }
 
