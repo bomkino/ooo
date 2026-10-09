@@ -83,6 +83,8 @@ cat > "$APPDIR/Contents/Info.plist" <<PLIST
   <string>OOO records your voice as you talk the video through, so the camera can land on your words. It stays on this Mac.</string>
   <key>NSCameraUsageDescription</key>
   <string>In a live take, OOO films you to stand in the room under the slide. The recording stays on this Mac.</string>
+  <key>NSCameraUseContinuityCameraDeviceType</key>
+  <true/>
   <key>NSSpeechRecognitionUsageDescription</key>
   <string>OOO listens to your voiceover on this Mac to find when you say each word, so every move lands just before you name it.</string>
   <key>CFBundleDocumentTypes</key>

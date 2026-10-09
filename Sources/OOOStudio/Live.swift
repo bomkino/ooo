@@ -8,6 +8,15 @@ import SwiftUI
 
 // MARK: - Capture
 
+// What open-source recorders taught this capture (ideas, written here in our
+// own code; see NOTICES.md): start the camera and microphone before the count
+// so they have warmed up (snapcap, Cap); take time 0 from a sample's own clock,
+// not from when a callback arrives (snapcap, Cap); give up on a camera that
+// sends no picture within 4 s (Cap, CueRecord); leave Desk View out of the
+// cameras (Cap, snapcap and OBS list it); record unmirrored and mirror only
+// what you see (snapcap, Cap); HEVC for the camera (QuickRecorder, snapcap);
+// warn about Reactions (OBS).
+
 /// The Mac's own microphone and camera during a live take: one recording of
 /// both, so your voice and your lips stay together, and a mirror to see
 /// yourself in while you talk.
@@ -37,20 +46,23 @@ public final class LiveCapture {
 
     @ObservationIgnored private var output: AVCaptureMovieFileOutput?
     @ObservationIgnored private let queue = DispatchQueue(label: "dog.pitch.ooo.live-capture")
-    @ObservationIgnored private var startedAt: Double?
+    @ObservationIgnored private var feed: Feed?
     @ObservationIgnored private var meter: Timer?
     @ObservationIgnored private var countIn: Task<Void, Never>?
     @ObservationIgnored private var delegate: RecordingDelegate?
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
-    @ObservationIgnored private var file: URL?
     @ObservationIgnored private var lost: ((String) -> Void)?
 
     public var isActive: Bool { phase != .idle }
     public var isRecording: Bool { phase == .recording }
     public var isCounting: Bool { if case .counting = phase { return true } else { return false } }
 
-    /// Seconds since recording started; 0 before.
-    public var time: Double { startedAt.map { CACurrentMediaTime() - $0 } ?? 0 }
+    /// Seconds since the recording's first moment, on the clock the camera
+    /// and microphone stamp their samples with; 0 before.
+    public var time: Double {
+        guard let zero = feed?.zero else { return 0 }
+        return max(CACurrentMediaTime() - zero, 0)
+    }
 
     static let shownLevels = 64
 
@@ -59,6 +71,8 @@ public final class LiveCapture {
     static let micDenied = "OOO can't hear the microphone. Allow it in System Settings › Privacy & Security › Microphone, then try again."
     static let cameraDenied = "OOO can't see the camera, so this take is your voice only. Allow it in System Settings › Privacy & Security › Camera."
     static let cameraMissing = "No camera found, so this take is your voice only."
+    static let cameraSilent = "No picture came from the camera (it may be closed, covered or in use by another app), so this take is your voice only."
+    static let reactions = "Reactions are on: a thumbs up during the take can fill it with fireworks. Turn them off under Video Effects in the menu bar."
 
     /// Asks for the microphone (and camera, with `camera`) if it must and
     /// starts them, so you see yourself before the count. `ready` gets
@@ -74,33 +88,48 @@ public final class LiveCapture {
                 failed(Self.micDenied)
                 return
             }
-            var note: String?
+            var notes: [String] = []
             var film = camera
             if camera, !(await Self.allowed(.video)) {
                 film = false
-                note = Self.cameraDenied
+                notes.append(Self.cameraDenied)
             }
-            let wanted = film
-            let made: Result<Capture, Error> = await withCheckedContinuation { done in
-                self.queue.async { done.resume(returning: Result { try Capture(filming: wanted) }) }
+            var made = await self.start(filming: film)
+            if case .success(let c) = made, film {
+                if !c.filming {
+                    notes.append(Self.cameraMissing)
+                } else if !(await c.feed.waitForPicture(seconds: 4)) {
+                    // A camera that sends nothing: your voice, rather than no take.
+                    self.queue.async { c.stop() }
+                    notes.append(Self.cameraSilent)
+                    made = await self.start(filming: false)
+                } else if AVCaptureDevice.reactionEffectGesturesEnabled {
+                    notes.append(Self.reactions)
+                }
             }
             guard self.phase == .preparing else {
                 // Given up while it was starting.
-                if case .success(let c) = made { self.queue.async { c.session.stopRunning() } }
+                if case .success(let c) = made { self.queue.async { c.stop() } }
                 return
             }
             switch made {
             case .success(let c):
-                if wanted && !c.filming && note == nil { note = Self.cameraMissing }
                 self.session = c.session
                 self.output = c.output
+                self.feed = c.feed
                 self.filming = c.filming
                 self.watch(c.session)
-                ready(c.filming, note)
+                ready(c.filming, notes.isEmpty ? nil : notes.joined(separator: " "))
             case .failure(let error):
                 self.phase = .idle
                 failed("Couldn't start the microphone: \(readable(error))")
             }
+        }
+    }
+
+    private func start(filming: Bool) async -> Result<Capture, Error> {
+        await withCheckedContinuation { done in
+            self.queue.async { done.resume(returning: Result { try Capture(filming: filming) }) }
         }
     }
 
@@ -112,10 +141,22 @@ public final class LiveCapture {
         }
     }
 
-    /// The capture: the Mac's microphone and, filming, its camera, into one movie.
+    /// The camera you face: the one macOS prefers (it follows your choice in
+    /// the menu bar and Continuity Camera), never Desk View, which looks down
+    /// at the desk.
+    nonisolated static func camera() -> AVCaptureDevice? {
+        let found = AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInWideAngleCamera, .continuityCamera, .external],
+                                                     mediaType: .video, position: .unspecified).devices
+        if let preferred = AVCaptureDevice.systemPreferredCamera, preferred.deviceType != .deskViewCamera { return preferred }
+        return found.first { $0.deviceType == .builtInWideAngleCamera } ?? found.first
+    }
+
+    /// The capture: the Mac's microphone (the input chosen in Sound settings)
+    /// and, filming, its camera, into one movie.
     private struct Capture: @unchecked Sendable {
         let session: AVCaptureSession
         let output: AVCaptureMovieFileOutput
+        let feed: Feed
         let filming: Bool
 
         init(filming wanted: Bool) throws {
@@ -128,8 +169,7 @@ public final class LiveCapture {
             guard s.canAddInput(micIn) else { throw CocoaError(.featureUnsupported) }
             s.addInput(micIn)
             var film = false
-            if wanted, let cam = AVCaptureDevice.systemPreferredCamera ?? AVCaptureDevice.default(for: .video),
-               let camIn = try? AVCaptureDeviceInput(device: cam), s.canAddInput(camIn) {
+            if wanted, let cam = LiveCapture.camera(), let camIn = try? AVCaptureDeviceInput(device: cam), s.canAddInput(camIn) {
                 s.addInput(camIn)
                 film = true
             }
@@ -137,23 +177,38 @@ public final class LiveCapture {
             let out = AVCaptureMovieFileOutput()
             guard s.canAddOutput(out) else { throw CocoaError(.featureUnsupported) }
             s.addOutput(out)
+            if film, let video = out.connection(with: .video) {
+                // HEVC keeps a long take small; every Apple silicon Mac encodes it in hardware.
+                out.setOutputSettings([AVVideoCodecKey: AVVideoCodecType.hevc], for: video)
+            }
+            let feed = Feed(clock: s.synchronizationClock, filming: film)
+            out.delegate = feed
             s.commitConfiguration()
             s.startRunning()
             session = s
             output = out
+            self.feed = feed
             filming = film
+        }
+
+        /// Stops the camera and microphone, on the capture's queue.
+        func stop() {
+            session.stopRunning()
+            output.delegate = nil
+            withExtendedLifetime(feed) {}
         }
     }
 
     /// A camera or microphone that goes away mid-take (unplugged, taken by
-    /// another app) ends the take there, keeping what was recorded.
+    /// another app, the lid closed) ends the take there, keeping what was recorded.
     private func watch(_ s: AVCaptureSession) {
         let centre = NotificationCenter.default
-        let gone: (Notification) -> Void = { [weak self] note in
+        let gone: @Sendable (Notification) -> Void = { [weak self] note in
+            let device = note.object as? AVCaptureDevice
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard let self, self.isActive else { return }
-                    if let device = note.object as? AVCaptureDevice {
+                    if let device {
                         let used = (self.session?.inputs ?? []).contains { ($0 as? AVCaptureDeviceInput)?.device == device }
                         guard used else { return }
                     }
@@ -164,11 +219,11 @@ public final class LiveCapture {
         observers = [
             centre.addObserver(forName: AVCaptureDevice.wasDisconnectedNotification, object: nil, queue: nil, using: gone),
             centre.addObserver(forName: AVCaptureSession.runtimeErrorNotification, object: s, queue: nil, using: gone),
+            centre.addObserver(forName: AVCaptureSession.wasInterruptedNotification, object: s, queue: nil, using: gone),
         ]
     }
 
-    /// Counts you in, then records; `started` runs as the recording starts,
-    /// the moment the take's clock reads 0.
+    /// Counts you in, then records; `started` runs as the recording starts.
     func count(_ started: @escaping () -> Void) {
         guard phase == .preparing else { return }
         levels = []
@@ -187,7 +242,7 @@ public final class LiveCapture {
     }
 
     private func record(_ started: @escaping () -> Void) {
-        guard let output else { return }
+        guard let feed else { return }
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("Live take \(Int(Date().timeIntervalSince1970)).mov")
         try? FileManager.default.removeItem(at: url)
         let d = RecordingDelegate()
@@ -195,20 +250,19 @@ public final class LiveCapture {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard let self, self.isCounting else { return }
-                    self.startedAt = CACurrentMediaTime()
                     self.phase = .recording
                     started()
                 }
             }
         }
         delegate = d
-        file = url
-        output.startRecording(to: url, recordingDelegate: d)
+        // The recording starts on the next sample to arrive, and that sample's moment is time 0.
+        feed.arm(url, delegate: d)
     }
 
     private func listen() {
         // Loudness the way it sounds: -50 dB is silence, 0 dB as loud as it gets.
-        let db = output?.connection(with: .audio)?.audioChannels.first?.averagePowerLevel ?? -160
+        let db = output?.connection(with: .audio)?.audioChannels.map(\.averagePowerLevel).max() ?? -160
         let level = powf(max(0, min(1, (db + 50) / 50)), 1.6)
         levels.append(level)
         if levels.count > Self.shownLevels { levels.removeFirst(levels.count - Self.shownLevels) }
@@ -228,7 +282,7 @@ public final class LiveCapture {
         meter?.invalidate()
         meter = nil
         delegate.finished = { [weak self] url, error in
-            // A recording that stops with an error may still be whole.
+            // A recording that stops with an error (a camera unplugged) may still be whole up to there.
             let whole = (error as NSError?)?.userInfo[AVErrorRecordingSuccessfullyFinishedKey] as? Bool ?? (error == nil)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
@@ -247,6 +301,8 @@ public final class LiveCapture {
         if phase == .recording || phase == .finishing, let output, let delegate {
             delegate.finished = { url, _ in try? FileManager.default.removeItem(at: url) }
             output.stopRecording()
+        } else {
+            feed?.disarm()
         }
         stop()
     }
@@ -256,13 +312,80 @@ public final class LiveCapture {
         meter = nil
         for o in observers { NotificationCenter.default.removeObserver(o) }
         observers = []
-        if let s = session { queue.async { s.stopRunning() } }
+        if let s = session, let out = output, let f = feed {
+            queue.async {
+                s.stopRunning()
+                // The output doesn't keep its delegate: let go of it only once the samples have stopped.
+                out.delegate = nil
+                withExtendedLifetime(f) {}
+            }
+        }
         session = nil
         output = nil
-        startedAt = nil
-        file = nil
+        feed = nil
         lost = nil
         phase = .idle
+    }
+}
+
+/// Every sample the movie output receives, before and while it records: the
+/// first picture (so a silent camera is found out), and the sample the
+/// recording starts on, exactly, whose moment on the host clock is time 0.
+final class Feed: NSObject, AVCaptureFileOutputDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+    private let clock: CMClock?
+    private let filming: Bool
+    private var pictured = false
+    private var armed: (url: URL, delegate: RecordingDelegate)?
+    private var zeroTime: Double?
+
+    init(clock: CMClock?, filming: Bool) {
+        self.clock = clock
+        self.filming = filming
+    }
+
+    /// The recording's first moment, in host seconds (`CACurrentMediaTime`).
+    var zero: Double? { lock.withLock { zeroTime } }
+
+    var hasPicture: Bool { lock.withLock { pictured } }
+
+    /// Waits up to `seconds` for the camera's first picture.
+    func waitForPicture(seconds: Double) async -> Bool {
+        let until = CACurrentMediaTime() + seconds
+        while CACurrentMediaTime() < until {
+            if hasPicture { return true }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        return hasPicture
+    }
+
+    /// Starts recording to `url` on the next sample that comes (a picture, when filming).
+    func arm(_ url: URL, delegate: RecordingDelegate) {
+        lock.withLock { armed = (url, delegate) }
+    }
+
+    func disarm() {
+        lock.withLock { armed = nil }
+    }
+
+    func fileOutputShouldProvideSampleAccurateRecordingStart(_ output: AVCaptureFileOutput) -> Bool { true }
+
+    func fileOutput(_ output: AVCaptureFileOutput, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        let isPicture = connection.inputPorts.contains { $0.mediaType == .video }
+        lock.lock()
+        if isPicture { pictured = true }
+        guard let start = armed, !filming || isPicture else {
+            lock.unlock()
+            return
+        }
+        armed = nil
+        // The sample's moment, from the capture's clock to the host's: time 0.
+        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        let host = clock.map { CMSyncConvertTime(pts, from: $0, to: CMClockGetHostTimeClock()) } ?? pts
+        zeroTime = host.isNumeric ? host.seconds : CACurrentMediaTime()
+        lock.unlock()
+        // Started from here, the recording begins with this very sample.
+        (output as? AVCaptureMovieFileOutput)?.startRecording(to: start.url, recordingDelegate: start.delegate)
     }
 }
 
