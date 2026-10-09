@@ -89,6 +89,9 @@ echo "== Modes and timing"
 shot mode-draw --slide "$WIDE" --mode draw --time 6
 shot mode-live --slide "$WIDE" --mode live
 shot mode-live-light --scheme light --slide "$WIDE" --mode live --size 1440x1500
+shot live-take --slide "$WIDE" --live-take 6
+shot live-take-pen --slide "$WIDE" --live-take 6 --pen-out --pen circle
+shot live-take-pen-narrow --slide "$WIDE" --live-take 6 --pen-out --size 1100x800
 shot timeline-zoomed --slide "$WIDE" --shot 3 --zoom 2.5
 shot map-picked-light --scheme light --slide "$WIDE" --shot 2 --no-inspector
 

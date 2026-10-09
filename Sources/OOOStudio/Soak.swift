@@ -155,6 +155,28 @@ extension OOOSession {
     /// A take for the soak test, led as you would: the route's stops a few
     /// seconds apart, closed at `end`, the closing recorded to its end. The
     /// recording is supplied afterwards, so this records nothing.
+    /// A take under way, for a screenshot of the editor while it records
+    /// (there is no camera): in Live, recording, the stage held at `at`.
+    func snapshotTake(at time: Double) {
+        settleEdits()
+        let before = project
+        let stage = before.liveStage(filming: false)
+        let run = LiveRun(take: LiveTake(stage.choreographyInput), before: before, filming: false)
+        mode = .live
+        staged = nil
+        roomTake = nil
+        liveKept = false
+        keptBefore = nil
+        previewUntil = nil
+        selection = .overview
+        take = run
+        set(stage)
+        run.held = time
+        clock.playing = false
+        clock.time = time
+        liveCapture.pretendRecording()
+    }
+
     func soakTake(end: Double) -> (run: LiveRun, recorded: Double) {
         settleEdits()
         let before = project

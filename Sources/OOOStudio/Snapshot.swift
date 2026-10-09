@@ -141,7 +141,13 @@ public enum OOOSnapshot {
         }
         if let tool = arg("--pen").flatMap(PenTool.init(rawValue:)) { session.pen.tool = tool }
         if flag("--pen-fades") { session.pen.fades = true }
-        if arg("--mode") == "live" { session.enter(.live) }
+        if let t = arg("--live-take").flatMap(Double.init) {
+            // A take under way, the pen out with --pen-out.
+            session.snapshotTake(at: t)
+            if flag("--pen-out") { session.pen.on = true }
+        } else if arg("--mode") == "live" {
+            session.enter(.live)
+        }
         if let z = arg("--zoom").flatMap(Double.init) { session.timelineZoom = max(z, 1) }
         switch arg("--tab") {
         case "look": session.tab = .look

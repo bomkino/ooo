@@ -409,14 +409,18 @@ struct StageStatus: View {
             if let note = session.liveNote {
                 line("Live", note)
             } else {
-                line("Live", "Nothing records until you press Start.")
+                line("Live", "Nothing records until you press Start. Then D draws as you talk.")
             }
         case .counting:
             RecordingDot()
             line("Get ready", "Recording starts on the beat.")
         case .recording:
             RecordingDot()
-            line("Recording", "→ next, ← back, a number to jump. Close when you're done.")
+            if session.pen.on {
+                line("Drawing", "Draw as you talk; → and ← still lead. D puts the pen away.")
+            } else {
+                line("Recording", "→ next, ← back, a number to jump, D to draw. Close when you're done.")
+            }
         case .closing:
             RecordingDot()
             line("Closing", "Still recording your sign-off. It stops by itself.")

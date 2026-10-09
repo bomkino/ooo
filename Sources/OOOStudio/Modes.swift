@@ -47,9 +47,10 @@ public enum EditorMode: String, CaseIterable, Identifiable {
 
 extension OOOSession {
     /// Whether the window can go into `m` now. A take holds you in Live
-    /// until it is kept or given up.
+    /// until it is kept or given up; while it records, Draw takes the pen
+    /// out in it, so you draw as you talk.
     public func canEnter(_ m: EditorMode) -> Bool {
-        guard take == nil else { return m == mode }
+        guard take == nil else { return m == mode || (m == .draw && liveStep == .recording) }
         switch m {
         case .frame: return true
         case .draw: return hasSlide
@@ -60,6 +61,10 @@ extension OOOSession {
     /// Goes into mode `m`: Draw takes the pen out where the card lies still,
     /// Live opens the room, and Frame puts everything else away.
     public func enter(_ m: EditorMode) {
+        if take != nil {
+            if m == .draw, canEnter(m) { togglePen() }
+            return
+        }
         guard m != mode, canEnter(m) else { return }
         switch mode {
         case .draw: finishDrawing(replay: m == .frame)
@@ -155,7 +160,9 @@ struct ModeSwitch: View {
     var body: some View {
         HStack(spacing: 2) {
             ForEach(EditorMode.allCases) { m in
-                ModeButton(mode: m, on: session.mode == m, enabled: session.canEnter(m)) { session.enter(m) }
+                // During a take Draw shows the pen out, beside Live.
+                let on = session.mode == m || (m == .draw && session.isTaking && session.pen.on)
+                ModeButton(mode: m, on: on, enabled: session.canEnter(m)) { session.enter(m) }
             }
         }
         .padding(2)

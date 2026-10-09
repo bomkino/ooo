@@ -519,15 +519,65 @@ struct PenMenu: View {
 
 /// The pen's tray, in place of the transport while you draw: what it draws
 /// and how wide, its colours, how long its marks stay, the still points
-/// either side, and Done. Ringed in the ink, like the stage.
+/// either side, and Done. Ringed in the ink, like the stage. During a take,
+/// one row (what, colour, width, as room allows) and no keys of its own:
+/// the take's keys stay yours.
 struct PenTray: View {
     @Bindable var session: OOOSession
     /// Under a narrow video: icons in place of words.
     var compact = false
+    var inTake = false
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         let tone = session.pen.tone
+        if inTake {
+            ViewThatFits(in: .horizontal) {
+                takeRow { tools; bar; colours; bar; widths(tone); bar; stay }
+                takeRow { tools; bar; colours; bar; widths(tone) }
+                takeRow { toolMenu; bar; colours; bar; widths(tone) }
+                takeRow { toolMenu; bar; colours }
+                takeRow { colours }
+            }
+        } else {
+            tray(tone)
+        }
+    }
+
+    /// What the pen draws, as one button that opens the four, where the
+    /// four side by side won't fit.
+    private var toolMenu: some View {
+        Menu {
+            Picker("Draw", selection: $session.pen.tool) {
+                ForEach(PenTool.allCases) { Label($0.title, systemImage: $0.symbol).tag($0) }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            Image(systemName: session.pen.tool.symbol)
+                .font(.system(size: 12, weight: .semibold))
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Pen, arrow, box or circle")
+        .accessibilityLabel("Draw: \(session.pen.tool.title)")
+    }
+
+    private var bar: some View {
+        Rectangle().fill(Theme.hairline).frame(width: 1, height: 18)
+    }
+
+    private func takeRow<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        let tone = session.pen.tone
+        return HStack(spacing: 6) { content() }
+            .fixedSize()
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Theme.raised))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(tone.ring(scheme).opacity(0.9), lineWidth: 1.5))
+            .contextMenu { PenMenu(session: session) }
+    }
+
+    private func tray(_ tone: InkTone) -> some View {
         VStack(spacing: 4) {
             HStack(spacing: compact ? 6 : 10) {
                 tools
