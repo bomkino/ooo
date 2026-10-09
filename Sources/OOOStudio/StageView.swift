@@ -100,6 +100,7 @@ final class StageCoordinator: NSObject, MTKViewDelegate {
         }
         cb.present(drawable)
         cb.commit()
+        SoakCounts.shared.stageFrame()
         lastVersion = version
         lastDrawn = clock.time
         lastSize = view.drawableSize

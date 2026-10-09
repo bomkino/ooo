@@ -797,7 +797,7 @@ extension OOOSession {
         }
     }
 
-    private func keep(_ run: LiveRun, movie: URL, end: Double, recorded: Double) async throws {
+    func keep(_ run: LiveRun, movie: URL, end: Double, recorded: Double) async throws {
         let sound = try await LiveTakeFile.voice(from: movie)
         defer { try? FileManager.default.removeItem(at: sound.url) }
         var picture: (duration: Double, aspect: Float)?
@@ -825,7 +825,8 @@ extension OOOSession {
         clock.time = 0
         clock.autoplay()
         // Its words, for reading along and for later; the moves stay where you made them.
-        transcribe(cut: false, undoable: false)
+        // (A headless run has no one to allow speech recognition.)
+        if !OOOSnapshot.isRequested { transcribe(cut: false, undoable: false) }
     }
 
     /// Gives the take under way up (⌘.): nothing is kept, and you are back

@@ -73,6 +73,21 @@ extension SlideScene {
     }
 }
 
+/// How much reading the camera recording has taken since launch: frames
+/// decoded, and readers started over. For the soak test, which watches for
+/// a stage that reads far more than it shows.
+public final class FaceCounts: @unchecked Sendable {
+    public static let shared = FaceCounts()
+    private let lock = NSLock()
+    private var frames = 0
+    private var restarts = 0
+
+    func frame() { lock.withLock { frames += 1 } }
+    func restart() { lock.withLock { restarts += 1 } }
+
+    public var now: (frames: Int, restarts: Int) { lock.withLock { (frames, restarts) } }
+}
+
 /// Reads a camera recording frame by frame, forward in time, restarting on a
 /// seek. Frames come oriented, as sRGB-encoded BGRA the way OOO's frames are
 /// stored, and each is kept alive until the GPU has drawn with it.
@@ -103,6 +118,7 @@ final class FaceReader {
     }
 
     private func start(at time: Double) {
+        FaceCounts.shared.restart()
         reader?.cancelReading()
         current = nil
         pending = nil
@@ -129,6 +145,7 @@ final class FaceReader {
         var cv: CVMetalTexture?
         CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault, cache, pb, nil, .bgra8Unorm, w, h, 0, &cv)
         guard let cv, let tex = CVMetalTextureGetTexture(cv) else { return nil }
+        FaceCounts.shared.frame()
         return Frame(time: CMSampleBufferGetPresentationTimeStamp(sb).seconds, texture: tex, hold: cv)
     }
 
