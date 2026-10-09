@@ -664,7 +664,7 @@ private struct HoldBlock: View {
                         }
                         Text(detail).textStyle(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }
-                } else if room >= Self.full + 14 {
+                } else if room >= Self.full + ((number ?? 0) > 9 ? 20 : 14) {
                     HStack(spacing: 4) {
                         badge
                         length(short: false)
@@ -696,7 +696,7 @@ private struct HoldBlock: View {
     }
 
     @ViewBuilder private var badge: some View {
-        if let number { Text("\(number)").textStyle(.badge).foregroundStyle(selected ? Theme.camera : .secondary) }
+        if let number { Text("\(number)").textStyle(.badge).foregroundStyle(selected ? Theme.camera : .secondary).fixedSize() }
     }
 }
 

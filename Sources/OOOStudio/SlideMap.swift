@@ -188,9 +188,11 @@ struct SlideMap: View {
             let w = (CGFloat(String(number).count) * 6 + 9) * k, h = 13 * k
             let turn = Box.turn(s)
             let tagW: CGFloat = turn > 0.5 ? (CGFloat(String(Int(turn.rounded())).count) * 5.5 + 25) * k : 0
-            // Above its top-left corner, or just inside when that would leave the map.
-            let y = r.minY - h - 2 * k >= 1 ? r.minY - h - 2 * k : r.minY + 2 * k
-            var tab = CGRect(x: max(r.minX, 1), y: y, width: w, height: h)
+            // Above its top-left corner, or just inside when that would leave the map,
+            // and never past the map's edge, however far the framing reaches.
+            let y = r.minY - h - 2 * k >= 1 ? r.minY - h - 2 * k : max(r.minY, 0) + 2 * k
+            let right = 2 * layout.slide.minX + layout.slide.width - w - tagW - 4 * k
+            var tab = CGRect(x: min(max(r.minX, 1), max(right, 1)), y: y, width: w, height: h)
             let span = { (t: CGRect) in CGRect(x: t.minX, y: t.minY, width: t.width + (tagW > 0 ? 3 * k + tagW : 0), height: t.height) }
             var tries = 0
             while tries < 12, let hit = placed.first(where: { $0.insetBy(dx: -2 * k, dy: 0).intersects(span(tab)) }) {
@@ -252,7 +254,7 @@ struct SlideMap: View {
                 ctx.stroke(box, with: .color(Color.white.opacity(hot ? 1 : 0.8)), style: StrokeStyle(lineWidth: hot ? 1.3 : 1))
             }
             // Its number, on a dark tab that reads on any slide.
-            let tabFill = selected ? Theme.camera : Color.black.opacity(hot ? 0.85 : 0.7)
+            let tabFill = selected ? Theme.camera : Color.black.opacity(hot ? 0.9 : 0.78)
             let label = ctx.resolve(Text("\(b.number)").font(.system(size: 9 * k, weight: .bold)).foregroundColor(.white))
             ctx.fill(Path(roundedRect: b.tab, cornerRadius: 3), with: .color(tabFill))
             ctx.draw(label, at: CGPoint(x: b.tab.midX, y: b.tab.midY), anchor: .center)
@@ -260,7 +262,7 @@ struct SlideMap: View {
             if let r = b.tag {
                 let tag = ctx.resolve(Text("\(Image(systemName: "rotate.3d")) \(Int(Box.turn(b.shot).rounded()))°")
                     .font(.system(size: 8.5 * k, weight: .semibold)).foregroundColor(.white))
-                ctx.fill(Path(roundedRect: r, cornerRadius: 3), with: .color(selected ? Theme.camera.opacity(0.85) : Color.black.opacity(0.55)))
+                ctx.fill(Path(roundedRect: r, cornerRadius: 3), with: .color(selected ? Theme.camera.opacity(0.85) : Color.black.opacity(0.72)))
                 ctx.draw(tag, at: CGPoint(x: r.midX, y: r.midY), anchor: .center)
             }
         }
