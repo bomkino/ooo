@@ -162,8 +162,10 @@ struct SlideMap: View {
         let number: Int
         let rect: CGRect
         let tab: CGRect
-        var turned: Bool { abs(shot.yaw) > 0.5 || abs(shot.pitch) > 0.5 || abs(shot.roll) > 0.5 }
+        /// Beside the tab, how far a turned camera is turned.
+        let tag: CGRect?
         var area: CGFloat { rect.width * rect.height }
+        static func turn(_ s: Shot) -> Float { max(abs(s.yaw), abs(s.pitch), abs(s.roll)) }
     }
 
     private var frameMode: Bool { session.mode == .frame }
@@ -172,17 +174,34 @@ struct SlideMap: View {
         let p = session.project
         let A = p.slide(page).aspect, C = p.canvasAspect
         let live = session.mode == .live
-        return session.orderedShots.enumerated().compactMap { i, s in
-            guard p.pageIndex(s.page) == page else { return nil }
+        var out: [Box] = []
+        // Tabs already placed, so that two framings sharing a corner keep both numbers readable.
+        var placed: [CGRect] = []
+        for (i, s) in session.orderedShots.enumerated() where p.pageIndex(s.page) == page {
             let number = live ? (session.positionNumber(s.id) ?? i + 1) : i + 1
-            guard let layout else { return Box(shot: s, number: number, rect: .zero, tab: .zero) }
+            guard let layout else {
+                out.append(Box(shot: s, number: number, rect: .zero, tab: .zero, tag: nil))
+                continue
+            }
             let r = layout.rect(s.frame.visible(slideAspect: A, canvasAspect: C))
             let k = layout.mark
             let w = (CGFloat(String(number).count) * 6 + 9) * k, h = 13 * k
+            let turn = Box.turn(s)
+            let tagW: CGFloat = turn > 0.5 ? (CGFloat(String(Int(turn.rounded())).count) * 5.5 + 25) * k : 0
             // Above its top-left corner, or just inside when that would leave the map.
             let y = r.minY - h - 2 * k >= 1 ? r.minY - h - 2 * k : r.minY + 2 * k
-            return Box(shot: s, number: number, rect: r, tab: CGRect(x: max(r.minX, 1), y: y, width: w, height: h))
+            var tab = CGRect(x: max(r.minX, 1), y: y, width: w, height: h)
+            let span = { (t: CGRect) in CGRect(x: t.minX, y: t.minY, width: t.width + (tagW > 0 ? 3 * k + tagW : 0), height: t.height) }
+            var tries = 0
+            while tries < 12, let hit = placed.first(where: { $0.insetBy(dx: -2 * k, dy: 0).intersects(span(tab)) }) {
+                tab.origin.x = hit.maxX + 4 * k
+                tries += 1
+            }
+            placed.append(span(tab))
+            let tag = tagW > 0 ? CGRect(x: tab.maxX + 3 * k, y: tab.minY, width: tagW, height: h) : nil
+            out.append(Box(shot: s, number: number, rect: r, tab: tab, tag: tag))
         }
+        return out
     }
 
     /// The shot the editor or the take is about.
@@ -228,20 +247,20 @@ struct SlideMap: View {
                 }
                 if case .resize? = gesture { readout(ctx, closer(b.rect, layout: layout), in: b.rect, k: k) }
             } else {
-                ctx.stroke(box, with: .color(Color.white.opacity(hot ? 0.9 : 0.45)), style: StrokeStyle(lineWidth: hot ? 1.3 : 1))
+                // White over a dark edge, so it reads on a light slide and on the dark around it.
+                ctx.stroke(box, with: .color(Color.black.opacity(hot ? 0.55 : 0.4)), style: StrokeStyle(lineWidth: (hot ? 1.3 : 1) + 2))
+                ctx.stroke(box, with: .color(Color.white.opacity(hot ? 1 : 0.8)), style: StrokeStyle(lineWidth: hot ? 1.3 : 1))
             }
-            // Its number, on a tab.
-            let label = ctx.resolve(Text("\(b.number)").font(.system(size: 9 * k, weight: .bold)).foregroundColor(selected ? .white : .black))
-            ctx.fill(Path(roundedRect: b.tab, cornerRadius: 3), with: .color(selected ? Theme.camera : Color.white.opacity(hot ? 0.95 : 0.75)))
+            // Its number, on a dark tab that reads on any slide.
+            let tabFill = selected ? Theme.camera : Color.black.opacity(hot ? 0.85 : 0.7)
+            let label = ctx.resolve(Text("\(b.number)").font(.system(size: 9 * k, weight: .bold)).foregroundColor(.white))
+            ctx.fill(Path(roundedRect: b.tab, cornerRadius: 3), with: .color(tabFill))
             ctx.draw(label, at: CGPoint(x: b.tab.midX, y: b.tab.midY), anchor: .center)
             // A turned camera, said on a tag rather than drawn askew.
-            if b.turned {
-                let angle = max(abs(b.shot.yaw), abs(b.shot.pitch), abs(b.shot.roll))
-                let tag = ctx.resolve(Text("\(Image(systemName: "rotate.3d")) \(Int(angle.rounded()))°")
-                    .font(.system(size: 8.5 * k, weight: .semibold)).foregroundColor(selected ? .white : .black))
-                let size = tag.measure(in: CGSize(width: 80, height: 30))
-                let r = CGRect(x: b.tab.maxX + 3 * k, y: b.tab.minY, width: size.width + 7 * k, height: b.tab.height)
-                ctx.fill(Path(roundedRect: r, cornerRadius: 3), with: .color(selected ? Theme.camera.opacity(0.85) : Color.white.opacity(0.6)))
+            if let r = b.tag {
+                let tag = ctx.resolve(Text("\(Image(systemName: "rotate.3d")) \(Int(Box.turn(b.shot).rounded()))°")
+                    .font(.system(size: 8.5 * k, weight: .semibold)).foregroundColor(.white))
+                ctx.fill(Path(roundedRect: r, cornerRadius: 3), with: .color(selected ? Theme.camera.opacity(0.85) : Color.black.opacity(0.55)))
                 ctx.draw(tag, at: CGPoint(x: r.midX, y: r.midY), anchor: .center)
             }
         }

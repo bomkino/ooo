@@ -353,8 +353,12 @@ struct ClipView: View {
         if clip.kind == .opening {
             HStack(spacing: 5) {
                 Image(systemName: session.project.arrive.kind.symbol).font(.system(size: 10, weight: .semibold))
-                if r > 76 { Text(session.project.arrive.kind.title).textStyle(.label).lineLimit(1) }
-                if r > 120 { Text(secondsLabel(clip.move)).textStyle(.data).foregroundStyle(.secondary) }
+                if r > 124 { Text(session.project.arrive.kind.title).textStyle(.label).lineLimit(1) }
+                if r > 64 {
+                    Text(secondsLabel(clip.move)).textStyle(.data).foregroundStyle(.secondary).fixedSize()
+                } else if r > 44 {
+                    Text(shortSeconds(clip.move)).textStyle(.data).foregroundStyle(.secondary).fixedSize()
+                }
             }
             .foregroundStyle(selected ? Color.primary : Color.secondary)
             .frame(width: max(r - 2, 1), height: TimelineView.camera - 20)
@@ -365,8 +369,11 @@ struct ClipView: View {
                 TravelRamp(selected: selected)
                     .frame(width: r, height: TimelineView.camera - 16)
                 if r > 46 {
-                    Text(secondsLabel(clip.move)).textStyle(.data).foregroundStyle(.secondary)
+                    Text(secondsLabel(clip.move)).textStyle(.data).foregroundStyle(.secondary).fixedSize()
                         .offset(x: r * 0.12, y: -1)
+                } else if r > 26 {
+                    Text(shortSeconds(clip.move)).textStyle(.data).foregroundStyle(.secondary).fixedSize()
+                        .offset(x: r * 0.1, y: -1)
                 }
             }
             .frame(width: r, height: TimelineView.camera - 16)
@@ -624,14 +631,22 @@ private struct HoldBlock: View {
     let selected: Bool
     let lifted: Bool
 
+    /// Room for "2.5 s", and for "2.5" alone.
+    private static let full: CGFloat = 34
+    private static let short: CGFloat = 18
+
     var body: some View {
         GeometryReader { g in
             let w = g.size.width
+            let inner = w - 9
             let thumbH = TimelineView.camera - 14
-            let thumbW = min(thumbH * CGFloat(session.project.canvasAspect), max(w - 6, 0))
-            HStack(spacing: 7) {
-                if thumbW > 8, w > 34, let b = beat, let img = session.thumbnail(b.shot.frame, page: b.page) {
-                    Image(decorative: img, scale: 1)
+            let thumbW = thumbH * CGFloat(session.project.canvasAspect)
+            // How long it holds comes first; the picture only where both fit.
+            let thumb = inner - thumbW - 6 >= Self.short ? beat.flatMap { session.thumbnail($0.shot.frame, page: $0.page) } : nil
+            let room = inner - (thumb != nil ? thumbW + 6 : 0)
+            HStack(spacing: 6) {
+                if let thumb {
+                    Image(decorative: thumb, scale: 1)
                         .resizable()
                         .interpolation(.medium)
                         .aspectRatio(contentMode: .fill)
@@ -639,23 +654,30 @@ private struct HoldBlock: View {
                         .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
                         .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(Color.black.opacity(0.25), lineWidth: 0.5))
                 }
-                if w - thumbW > 76 {
+                if room >= Self.full + 64 {
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 4) {
-                            if let number { Text("\(number)").textStyle(.badge).foregroundStyle(selected ? Theme.camera : .secondary) }
+                            badge
                             Text(title).textStyle(.label).foregroundStyle(.primary).lineLimit(1)
                             Spacer(minLength: 4)
-                            length
+                            length(short: false)
                         }
                         Text(detail).textStyle(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }
-                } else if w - thumbW > 44 {
-                    length
+                } else if room >= Self.full + 14 {
+                    HStack(spacing: 4) {
+                        badge
+                        length(short: false)
+                    }
+                } else if room >= Self.full {
+                    length(short: false)
+                } else if room >= Self.short {
+                    length(short: true)
                 }
                 Spacer(minLength: 0)
             }
-            .padding(.leading, 4)
-            .padding(.trailing, 7)
+            .padding(.leading, room < Self.full ? 2 : 4)
+            .padding(.trailing, 5)
             .frame(width: w, height: g.size.height)
             .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(selected ? Theme.cameraSoft : Theme.raised.opacity(clip.shotID == nil ? 0.45 : 0.75)))
@@ -665,13 +687,22 @@ private struct HoldBlock: View {
         }
     }
 
-    /// How long the camera holds here.
-    private var length: some View {
-        Text(secondsLabel(clip.hold))
+    /// How long the camera holds here; without the "s" where room is short.
+    private func length(short: Bool) -> some View {
+        Text(short ? shortSeconds(clip.hold) : secondsLabel(clip.hold))
             .textStyle(.data)
             .foregroundStyle(selected ? Theme.camera : Color.secondary)
             .fixedSize()
     }
+
+    @ViewBuilder private var badge: some View {
+        if let number { Text("\(number)").textStyle(.badge).foregroundStyle(selected ? Theme.camera : .secondary) }
+    }
+}
+
+/// Seconds as a bare number, for where "2.5 s" will not fit: 2.5, or 12 past ten.
+func shortSeconds(_ t: Double) -> String {
+    t < 9.95 ? String(format: "%.1f", t) : String(format: "%.0f", t)
 }
 
 /// A clip's right-click menu: what you would change about it, in its words.
@@ -837,8 +868,13 @@ struct VoiceLane: View {
             } else {
                 HStack(spacing: 8) {
                     Image(systemName: "waveform").foregroundStyle(.secondary)
-                    Text("Talk it through as it plays, or drop in a recording. Each move will land just before you say its words.")
-                        .textStyle(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    ViewThatFits(in: .horizontal) {
+                        Text("Talk it through as it plays, or drop in a recording. Each move will land just before you say its words.")
+                            .fixedSize()
+                        Text("Talk it through as it plays, or drop in a recording.").fixedSize()
+                        Text("Talk it through as it plays.").lineLimit(1)
+                    }
+                    .textStyle(.caption).foregroundStyle(.secondary)
                     Button(session.recorder.isActive ? "Stop" : "Record") { session.toggleRecording() }
                         .buttonStyle(QuietButtonStyle())
                         .help("Counts you in, then records you as the video plays from the start (⌥⌘R)")

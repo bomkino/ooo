@@ -381,14 +381,14 @@ struct StageStatus: View {
             if let note = session.liveNote {
                 line("Live", note)
             } else {
-                line("Live", "Nothing records until you press Start. Check yourself and your positions, then Start.")
+                line("Live", "Nothing records until you press Start.")
             }
         case .counting:
             RecordingDot()
             line("Get ready", "Recording starts on the beat.")
         case .recording:
             RecordingDot()
-            line("Recording", "→ next, ← back, 1 to 9 a position, 0 the whole slide, D to draw. Close when you're done.")
+            line("Recording", "→ next, ← back, a number to jump. Close when you're done.")
         case .closing:
             RecordingDot()
             line("Closing", "Still recording your sign-off. It stops by itself.")
@@ -397,7 +397,7 @@ struct StageStatus: View {
             Text("Keeping your take").textStyle(.label).foregroundStyle(.primary)
         case .kept:
             Image(systemName: "checkmark.circle.fill").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.camera)
-            line("Kept", "This take is your video now: your moves, your voice, you. ⌘Z takes it back.")
+            line("Kept", "This take is your video now. ⌘Z takes it back.")
         }
     }
 
@@ -449,7 +449,7 @@ struct StageStatus: View {
         } else if let shot = session.selectedShot, let clip = session.clip(of: shot.id) {
             let n = (session.index(of: shot.id) ?? 0) + 1
             line(Director.spokenLabel(shot.label) ?? "Shot \(n)",
-                 "Moves in over \(secondsLabel(clip.move)), holds \(secondsLabel(clip.hold)). Drag its end on the timeline to change it.")
+                 "Moves in over \(secondsLabel(clip.move)), holds \(secondsLabel(clip.hold)).")
         } else {
             Text(session.project.slide.name).textStyle(.label).foregroundStyle(.primary).lineLimit(1)
             if let zoom = session.project.sharpZoom, let h = session.project.slide.pixelHeight {
