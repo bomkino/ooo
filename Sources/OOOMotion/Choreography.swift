@@ -24,6 +24,10 @@ public struct ChoreographyInput: Sendable {
     /// The share of the frame an opening title needs above the slide while
     /// the stage is up (0 without one).
     public var titleRoom: Float
+    /// A path drawn during a live take, whose holds last until someone asks
+    /// for the next move: nothing in a hold depends on how long it lasts
+    /// (see `LiveTake`).
+    public var live = false
 
     public init(overview: Shot, shots: [Shot], arrive: Arrive, ending: Ending, duration: Double,
                 slideAspect: Float, canvasAspect: Float, style: MotionStyle, seed: UInt32 = 1, safe: SafeArea = .none,
@@ -151,6 +155,8 @@ public struct Choreography: Sendable {
     public let slideAspect: Float
     public let canvasAspect: Float
     public let ending: Ending
+    /// Drawn during a live take (see `ChoreographyInput.live`).
+    public let live: Bool
     private let phases: (Float, Float, Float, Float, Float, Float)
 
     /// The shortest hold the camera keeps between two landings (a third of the
@@ -177,6 +183,7 @@ public struct Choreography: Sendable {
         slideAspect = input.slideAspect
         canvasAspect = input.canvasAspect
         ending = input.ending
+        live = input.live
         aspects = input.aspects
         turnSign = turnDirection(overviewYaw: input.overview.yaw)
         let seed = Int(input.seed)
@@ -473,9 +480,10 @@ public struct Choreography: Sendable {
             let leave = i + 1 < plan.count ? departs[i + 1] : duration
             let hold = max(leave - land, 0)
             // The camera is still before the card changes: the last of the move
-            // is taken in by the time the change starts.
-            var settling = hold
-            if let change = changes.first(where: { $0.start >= land - 1e-9 && $0.start < leave }) {
+            // is taken in by the time the change starts. Live, a hold's length
+            // isn't known while it holds, so it settles as if it had all the time.
+            var settling = input.live ? Self.openHold : hold
+            if !input.live, let change = changes.first(where: { $0.start >= land - 1e-9 && $0.start < leave }) {
                 settling = min(hold, max(change.start - land, 0.6))
             }
             var pose = poses[i]
@@ -497,12 +505,16 @@ public struct Choreography: Sendable {
             var from: CameraPose
             if i == 0 {
                 from = Arrival.cameraStart(pose, arrive: input.arrive)
+            } else if input.live {
+                // Wherever the hold has the camera as it sets off.
+                from = Self.held(built[i - 1], at: depart, canvasAspect: C, flight: input.style.flight)
             } else {
                 from = rests[i - 1]
                 from.height *= expf(-built[i - 1].breathe)
             }
-            // Short holds keep still: a breath needs room to be a breath.
-            let breathe = item.shot.breathe * 0.085 * smootherstep(Float((hold - 0.4) / 2.8))
+            // Short holds keep still: a breath needs room to be a breath. Live,
+            // nobody knows yet how long a hold will be, so none breathes.
+            let breathe = input.live ? 0 : item.shot.breathe * 0.085 * smootherstep(Float((hold - 0.4) / 2.8))
             let curve = (i == 0 ? EaseKind.linger : item.shot.ease).curve
             let path = ZoomPath(from: from.target, w0: w(from.height), to: pose.target, w1: w(pose.height), rho: rho)
             let travel = land - depart
@@ -697,12 +709,20 @@ public struct Choreography: Sendable {
             let progress = (1 - beat.overrun) * beat.curve.value(u)
             return interpolate(beat, progress, time: u)
         }
-        // Holding: take in the last of the move, and breathe.
-        let x = t - beat.land
+        return Self.held(beat, at: t, canvasAspect: canvasAspect, flight: style.flight)
+    }
+
+    /// How long a live hold settles over (see `ChoreographyInput.live`).
+    static let openHold = 1000.0
+
+    /// The camera at `t` while `beat` holds: taking in the last of the move,
+    /// reading along, breathing.
+    static func held(_ beat: Beat, at t: Double, canvasAspect: Float, flight: Float) -> CameraPose {
+        let x = max(t - beat.land, 0)
         let hold = max(beat.leave - beat.land, 1e-6)
         let left = Float(max(1 - x / max(beat.settling, 1e-6), 0))
         let rest = beat.overrun > 0 ? beat.overrun * powf(left, beat.tail) : 0
-        var p = interpolate(beat, 1 - rest, time: 1)
+        var p = interpolate(beat, 1 - rest, time: 1, canvasAspect: canvasAspect, flight: flight)
         if let to = beat.sweepTo {
             let e = Curves.along(Float((t - beat.sweepStart) / max(beat.sweepEnd - beat.sweepStart, 1e-3)))
             p.target += (to.target - beat.pose.target) * e
@@ -719,6 +739,10 @@ public struct Choreography: Sendable {
     /// The pose `progress` of the way along the beat's move, `time` (0…1) of
     /// the way through its travel.
     private func interpolate(_ beat: Beat, _ progress: Float, time u: Float) -> CameraPose {
+        Self.interpolate(beat, progress, time: u, canvasAspect: canvasAspect, flight: style.flight)
+    }
+
+    private static func interpolate(_ beat: Beat, _ progress: Float, time u: Float, canvasAspect: Float, flight: Float) -> CameraPose {
         let a = beat.from, b = beat.pose
         let p = clamp01(progress)
         var out = CameraPose(target: b.target, height: b.height,
@@ -736,7 +760,7 @@ public struct Choreography: Sendable {
                 // The swing follows the clock, not the eased progress: an ease that
                 // covers most of the ground early would whip it out and back.
                 let bump = Curves.bump(powf(clamp01(u), 0.75))
-                out.yaw += beat.arcSign * radians(9) * (0.5 + style.flight) * bump
+                out.yaw += beat.arcSign * radians(9) * (0.5 + flight) * bump
                 out.pitch += radians(3.5) * bump
             }
         case .cut:
@@ -792,10 +816,17 @@ public struct Choreography: Sendable {
         guard !beats.isEmpty else { return 0 }
         let i = beatIndex(at: t)
         let b = beats[i]
-        guard t >= b.land else { return 0 }
+        guard t >= b.land else {
+            // Live, the camera sets off the moment it is asked to, so the hold
+            // eases out over the first moments of the move that leaves it.
+            guard live, i > 0, t < beats[i - 1].leave + 0.3 else { return 0 }
+            let a = beats[i - 1]
+            let had = a.melts ? 1 : smootherstep(Float((a.leave - a.land) / 0.5))
+            return had * (1 - smootherstep(Float((t - a.leave) / 0.3)))
+        }
         // A melt's cut is unseen: the camera holds still across it.
         let rise = b.melts ? 1 : smootherstep(Float((t - b.land) / 0.5))
-        let stays = b.leave >= duration - 1e-6 || (i + 1 < beats.count && beats[i + 1].melts)
+        let stays = live || b.leave >= duration - 1e-6 || (i + 1 < beats.count && beats[i + 1].melts)
         let fall: Float = stays ? 1 : 1 - smootherstep(Float((t - (b.leave - 0.3)) / 0.3))
         return rise * fall
     }
