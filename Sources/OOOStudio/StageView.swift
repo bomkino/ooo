@@ -352,6 +352,7 @@ struct StageStatus: View {
                 Text("Talk it through. Click Stop when you're done.").textStyle(.caption).foregroundStyle(.secondary).layoutPriority(-1)
                 Button("Stop") { session.stopRecording() }
                     .buttonStyle(QuietButtonStyle())
+                    .layoutPriority(1)
             } else if session.pen.on {
                 Image(systemName: "pencil.tip").font(.system(size: 11, weight: .semibold)).foregroundStyle(session.pen.color.swatch)
                 Text("Pen").textStyle(.label).foregroundStyle(.primary)
@@ -361,6 +362,7 @@ struct StageStatus: View {
                     Text("Move to where the slide is still to draw on it.").textStyle(.caption).foregroundStyle(.secondary).layoutPriority(-1)
                     Button("Next Landing") { session.jump(1) }
                         .buttonStyle(QuietButtonStyle())
+                        .layoutPriority(1)
                         .help("Go to where the camera next lands, with the slide at rest (⌘])")
                 }
             } else if session.comparing {
@@ -379,6 +381,7 @@ struct StageStatus: View {
                 }
                 Button("Choose Slide…") { OOOCommands.chooseSlide(session) }
                     .buttonStyle(QuietButtonStyle())
+                    .layoutPriority(1)
             } else {
                 Text(session.project.slide.name).textStyle(.label).foregroundStyle(.primary).lineLimit(1)
                 if let zoom = session.project.sharpZoom, let h = session.project.slide.pixelHeight {
@@ -399,7 +402,8 @@ struct StageStatus: View {
                 }
             }
         }
-        // Over a narrow video a hint wraps, then gives way, before a name or a button does.
+        // Over a narrow video a hint wraps, then gives way, before a name or a button does:
+        // buttons take their room first.
         .lineLimit(2)
         .multilineTextAlignment(.center)
         .padding(.horizontal, 12)
