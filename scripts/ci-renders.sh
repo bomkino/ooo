@@ -69,6 +69,7 @@ mkdir -p "$OUT/slides" "$OUT/room"
 MARKED=("$COVER" --more "$WIDE,$OUT/fixtures/standard-1920x1080.png" --marks demo)
 "$LAB" marks --slide "${MARKED[@]}" --close "$OUT/slides/marks-close.png" --out "$OUT/slides/marks.png"
 "$LAB" marks --slide "${MARKED[@]}" --ink flat --close "$OUT/slides/marks-close-1.0.1.png" --out "$OUT/slides/marks-1.0.1.png"
+"$LAB" marks --slide "$COVER" --more "$WIDE" --marks shapes --close "$OUT/slides/shapes-close.png" --out "$OUT/slides/shapes.png"
 "$LAB" lifts --slide "$WIDE" --lift 5-12,16- --title "$TITLE" --kicker "pitch.dog · Series A" --out "$OUT/room/lifts.png"
 "$LAB" landings --slide "$WIDE" --lift whole --title "$TITLE" --kicker "pitch.dog · Series A" --out "$OUT/room/whole"
 "$LAB" render --slide "$COVER" --more "$WIDE,$REVISED" --melt 2 --home --marks demo --lift 9-16 --quality good \

@@ -139,6 +139,8 @@ public enum OOOSnapshot {
             session.enter(.draw)
             session.previewUntil = nil
         }
+        if let tool = arg("--pen").flatMap(PenTool.init(rawValue:)) { session.pen.tool = tool }
+        if flag("--pen-fades") { session.pen.fades = true }
         if arg("--mode") == "live" { session.enter(.live) }
         if let z = arg("--zoom").flatMap(Double.init) { session.timelineZoom = max(z, 1) }
         switch arg("--tab") {

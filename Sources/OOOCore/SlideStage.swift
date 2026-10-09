@@ -556,7 +556,7 @@ public struct SlideScene: @unchecked Sendable {
             let soft = Float(min(max(0.05 / m.inkLength, 0.01), 0.2))
             let body = i < inkBodies.count ? inkBodies[i] : 0.5
             ink.ink = SIMD4<Float>(head * (1 + soft), soft, 1 + body, flatInk ? 0 : 1)
-            let c = m.color.srgb
+            let c = m.ink
             let linear = RGB(c.r, c.g, c.b).linear
             ink.color = SIMD4(linear.x, linear.y, linear.z, light)
             ink.surfaceAmount = 0

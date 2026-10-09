@@ -226,23 +226,7 @@ struct StageMenu: View {
             Button("Save This Frame…") { OOOCommands.saveCoverFrame(session) }
             Toggle("Show Safe Areas", isOn: $showSafeAreas)
         case .draw:
-            Picker("Ink", selection: $session.pen.color) {
-                ForEach(InkColor.allCases) { Text($0.title).tag($0) }
-            }
-            Picker("Marks", selection: $session.pen.fades) {
-                Text("Stay Until the Slide Changes").tag(false)
-                Text("Fade After They Are Drawn").tag(true)
-            }
-            Divider()
-            Button("Previous Still Point") { session.stepStill(-1) }
-            Button("Next Still Point") { session.stepStill(1) }
-            Divider()
-            Button("Undo Last Mark") { session.deleteLastMark() }
-                .disabled(session.project.marks?.isEmpty ?? true)
-            Button("Clear Marks Here") { session.clearMarksHere() }
-                .disabled(session.project.marks?.isEmpty ?? true)
-            Divider()
-            Button("Done Drawing") { session.finishDrawing() }
+            PenMenu(session: session)
         case .live:
             switch session.liveStep {
             case .room:

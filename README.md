@@ -21,7 +21,7 @@ It is for the slide you spent a week on: the chart whose curve you redrew eleven
 
 **More than one slide?** Add Slide (⌃⌘I), or drop several at once, and the same card in your hand goes through them: it turns over to the next slide, or the next melts in where you're looking while whatever the two share holds still. Open on your deck's cover, follow a number from one slide to the next, and turn back to the first at the end.
 
-**Point at something.** Switch to Draw in the toolbar (⌘2) and circle a number or underline a word with one fine pen. Its ink lies like watercolour: the slide shows through it, and it gathers at the edges and feathers a hair as it dries. In the video the mark draws on just as your hand drew it, then stays until the slide changes or fades a moment later.
+**Point at something.** Switch to Draw in the toolbar (⌘2) and circle a number or underline a word. The tray under the video picks the pen or a shape (Arrow, Box, Circle: drag from where it starts to where it ends, ⇧ for a square, a round circle or a straight arrow), four widths, six inks or a colour of your own, and whether marks stay until the slide changes or fade after a stay you choose. Its ink lies like watercolour: the slide shows through it, and it gathers at the edges and feathers a hair as it dries. In the video the mark draws on just as your hand drew it, and shapes draw on as a hand would. On the timeline a mark that fades has a tail as long as it stays: drag its end to keep it longer. Right-click the stage or a mark for the same choices.
 
 **Leave room for you.** Space for You lifts the stage into the top of the frame for as long as you choose, leaving the bottom clear for your talking head in Edits or Premiere.
 

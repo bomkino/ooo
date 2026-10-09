@@ -196,6 +196,30 @@ if value("--marks") == "demo" {
                           color: k % 2 == 0 ? .red : .yellow, fades: k > 0))
     }
     project.marks = marks
+} else if value("--marks") == "shapes" {
+    // The shapes the pen draws for you, round the details the camera lands
+    // on: an arrow at the first, a box round the second, a circle round the
+    // third, in the new inks and widths, some fading after a stay of their own.
+    var marks: [Mark] = []
+    for k in 0..<project.slideCount {
+        let id = project.pageID(k), A = project.slide(k).aspect
+        let shots = project.shots.filter { project.pageIndex($0.page) == k && $0.focus != nil }.sorted { $0.time < $1.time }
+        for (j, shot) in shots.prefix(3).enumerated() {
+            guard let f = shot.focus else { continue }
+            let half = Vec2(f.size.x * 0.62 + 0.012 / A, f.size.y * 0.7 + 0.012)
+            let lo = f.center - half, hi = f.center + half
+            let strokes: [[InkPoint]]
+            switch j {
+            case 0: strokes = Mark.shape(.arrow, from: (lo.x - 0.12 / A, hi.y + 0.12), to: (lo.x - 0.005, hi.y + 0.005), slideAspect: A, seed: k)
+            case 1: strokes = Mark.shape(.box, from: (lo.x, lo.y), to: (hi.x, hi.y), slideAspect: A, seed: k)
+            default: strokes = Mark.shape(.circle, from: (lo.x, lo.y), to: (hi.x, hi.y), slideAspect: A, seed: k)
+            }
+            let inks: [(InkColor, [Float]?)] = [(.blue, nil), (.green, nil), (.red, [0.55, 0.22, 0.85])]
+            marks.append(Mark(page: id, time: shot.time + 0.25, strokes: strokes, color: inks[j].0, custom: inks[j].1,
+                              width: Mark.widths[[2, 1, 3][j]], fades: j == 1, linger: j == 1 ? 3 : nil))
+        }
+    }
+    project.marks = marks
 }
 
 if let spec = value("--lift") {
@@ -709,7 +733,7 @@ case "marks":
     var scene = loadScene()
     scene.flatInk = value("--ink") == "flat"
     let marks = project.marks ?? []
-    guard !marks.isEmpty else { fail("marks needs --marks demo") }
+    guard !marks.isEmpty else { fail("marks needs --marks demo or --marks shapes") }
     let out = URL(fileURLWithPath: value("--out") ?? "marks.png")
     let cw = project.format.width / 3, ch = project.format.height / 3
     do {

@@ -15,6 +15,19 @@ final class LiveCoreTests: XCTestCase {
         XCTAssertEqual(try ProjectPackage.decode(ProjectPackage.encode(filmed)), filmed)
     }
 
+    /// A mark in a colour, width or stay of its own needs OOO 1.2.1; one as 1.0.1 drew it doesn't.
+    func testInkOfYourOwnNeedsOOO121() throws {
+        var p = OOOProject.sample
+        p.marks = [Mark(time: 1, strokes: [[InkPoint(x: 0.4, y: 0.4, t: 0), InkPoint(x: 0.5, y: 0.4, t: 0.3)]])]
+        XCTAssertEqual(p.neededReader, 3)
+        p.marks?[0].width = Mark.widths[3]
+        XCTAssertEqual(p.neededReader, 5)
+        p.marks?[0].width = Mark.penWidth
+        p.marks?[0].color = .blue
+        XCTAssertEqual(p.neededReader, 5)
+        XCTAssertEqual(try ProjectPackage.decode(ProjectPackage.encode(p)), p)
+    }
+
     /// A green screen taken out needs OOO 1.2.1: an older one would show the green.
     func testGreenScreenNeedsOOO121() throws {
         var filmed = OOOProject.sample

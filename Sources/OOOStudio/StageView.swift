@@ -337,7 +337,7 @@ struct StageArea: View {
         let px = CGSize(width: (fitted.width * scale * k).rounded(), height: (fitted.height * scale * k).rounded())
         let drawing = session.pen.on
         let recording = session.isLive && session.liveStep != .room && session.liveStep != .kept
-        let ring: Color = dropTargeted ? Theme.camera : (drawing ? session.pen.color.ring(scheme) : (recording ? Theme.camera : Theme.hairline))
+        let ring: Color = dropTargeted ? Theme.camera : (drawing ? session.pen.tone.ring(scheme) : (recording ? Theme.camera : Theme.hairline))
         return VStack(spacing: 0) {
             StageStatus(session: session).frame(height: Self.top)
             stage(px)
@@ -431,7 +431,7 @@ struct StageStatus: View {
 
     @ViewBuilder
     private var draw: some View {
-        Image(systemName: "pencil.tip").font(.system(size: 11, weight: .semibold)).foregroundStyle(session.pen.color.swatch)
+        Image(systemName: "pencil.tip").font(.system(size: 11, weight: .semibold)).foregroundStyle(session.pen.tone.swatch)
         if session.clock.playing {
             line("Draw", "Going to where the slide lies still.")
         } else if session.penCanDraw {
@@ -510,7 +510,7 @@ struct TransportBar: View {
     /// The width of the video's column.
     let width: CGFloat
 
-    static func height(_ mode: EditorMode) -> CGFloat { mode == .live ? 86 : 44 }
+    static func height(_ mode: EditorMode) -> CGFloat { mode == .frame ? 44 : 86 }
 
     var body: some View {
         // Under a narrower video the time keeps only where you are, then gives way.
