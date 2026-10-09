@@ -6,24 +6,24 @@ import RenderCore
 import StageKit
 import SwiftUI
 
-/// The right-hand panel: the slide map on top, then the camera, the look and
-/// the voice.
+/// The right-hand panel: the camera, the look and the voice. The slide map
+/// sits on top when it isn't in its own pane beside the video.
 struct InspectorPanel: View {
     @Bindable var session: OOOSession
+    @AppStorage("showSlideMap") private var mapPane = true
 
     var body: some View {
         VStack(spacing: 0) {
-            MapHost(session: session, clock: session.clock)
-                .padding(.horizontal, 14)
-                .padding(.top, 14)
-            Text("Drag a framing to move it, a corner to go closer, ⌥-drag to turn. Draw on the slide to add one.")
-                .textStyle(.caption)
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
+            if !mapPane {
+                MapHost(session: session, clock: session.clock)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 14)
                 // Not fixed to its height: at no width at all that is a
                 // letter a line, and the window would never be shorter.
-                .padding(.horizontal, 18)
-                .padding(.top, 8)
+                MapHint(session: session)
+                    .padding(.horizontal, 18)
+                    .padding(.top, 8)
+            }
             ChoiceRow(InspectorTab.allCases.map { ($0, $0.title) }, selection: $session.tab)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)

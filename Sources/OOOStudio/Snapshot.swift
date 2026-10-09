@@ -14,7 +14,7 @@ import SwiftUI
 ///         [--tab camera|look|voice] [--shot n] [--time seconds]
 ///         [--title "words" [--kicker "line"]] [--safe-areas] [--show-export]
 ///         [--more file,file [--melt 1,2|all] [--home]] [--marks demo] [--draw]
-///         [--lift whole|4-10,14-] [--settle seconds]
+///         [--lift whole|4-10,14-] [--no-map] [--no-inspector] [--settle seconds]
 ///
 /// It opens a new document window (on the sample slide unless `--slide` gives
 /// one), waits until the slide is drawn and its tour planned, sets the window
@@ -38,6 +38,9 @@ public enum OOOSnapshot {
 
     static func flag(_ name: String) -> Bool { CommandLine.arguments.contains(name) }
 
+    /// The window opens with its inspector closed.
+    static var hidesInspector: Bool { isRequested && flag("--no-inspector") }
+
     static var size: CGSize {
         let parts = (arg("--size") ?? "1440x900").split(separator: "x").compactMap { Double($0) }
         return CGSize(width: parts.first ?? 1440, height: parts.last ?? 900)
@@ -50,6 +53,9 @@ public enum OOOSnapshot {
         var args = UserDefaults.standard.volatileDomain(forName: UserDefaults.argumentDomain)
         args["appearance"] = arg("--scheme") == "light" ? AppearanceChoice.light.rawValue : AppearanceChoice.dark.rawValue
         args["showSafeAreas"] = flag("--safe-areas")
+        // The slide map in its own pane, shared as it is on a first launch, unless asked to keep it in the inspector.
+        args["showSlideMap"] = !flag("--no-map")
+        args["slideMapShare"] = 0.0
         args["ApplePersistenceIgnoreState"] = true
         // A value after a flag that takes none (`--draw --time 6`) is not a
         // document to open: AppKit would say it can't open "6" and wait for OK.
