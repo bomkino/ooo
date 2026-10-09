@@ -518,7 +518,7 @@ struct TransportBar: View {
         ZStack {
             switch session.mode {
             case .draw:
-                PenTray(session: session, compact: width < 420)
+                PenTray(session: session, compact: width < 480)
                     .transition(.scale(scale: 0.92).combined(with: .opacity))
             case .live:
                 LiveBar(session: session, capture: session.liveCapture, width: width)

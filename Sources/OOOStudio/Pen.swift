@@ -533,21 +533,19 @@ struct PenTray: View {
                 tools
                 Rectangle().fill(Theme.hairline).frame(width: 1, height: 18)
                 widths(tone)
-            }
-            HStack(spacing: compact ? 6 : 8) {
-                colours
-                Rectangle().fill(Theme.hairline).frame(width: 1, height: 18)
-                stay
-                HStack(spacing: 0) {
-                    IconButton("chevron.left", label: "Previous Still Point (←)", size: 11) { session.stepStill(-1) }
-                        .keyboardShortcut(session.clock.typing ? nil : KeyboardShortcut(.leftArrow, modifiers: []))
-                    IconButton("chevron.right", label: "Next Still Point (→)", size: 11) { session.stepStill(1) }
-                        .keyboardShortcut(session.clock.typing ? nil : KeyboardShortcut(.rightArrow, modifiers: []))
-                }
+                Spacer(minLength: 0)
                 Button("Done") { session.finishDrawing() }
                     .buttonStyle(PrimaryButtonStyle())
                     .keyboardShortcut(.defaultAction)
                     .help("Put the pen away and watch what you drew (Return)")
+            }
+            HStack(spacing: compact ? 5 : 8) {
+                colours
+                Rectangle().fill(Theme.hairline).frame(width: 1, height: 18)
+                stay
+                Spacer(minLength: 0)
+                // Under a narrow video the arrows give way; ← and → still step.
+                stills.opacity(compact ? 0 : 1).frame(width: compact ? 0 : nil).allowsHitTesting(!compact)
             }
         }
         .fixedSize()
@@ -557,6 +555,16 @@ struct PenTray: View {
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(tone.ring(scheme).opacity(0.9), lineWidth: 1.5))
         .shadow(color: .black.opacity(scheme == .dark ? 0.35 : 0.1), radius: 8, y: 2)
         .contextMenu { PenMenu(session: session) }
+    }
+
+    /// The still points either side.
+    private var stills: some View {
+        HStack(spacing: 0) {
+            IconButton("chevron.left", label: "Previous Still Point (←)", size: 11) { session.stepStill(-1) }
+                .keyboardShortcut(session.clock.typing ? nil : KeyboardShortcut(.leftArrow, modifiers: []))
+            IconButton("chevron.right", label: "Next Still Point (→)", size: 11) { session.stepStill(1) }
+                .keyboardShortcut(session.clock.typing ? nil : KeyboardShortcut(.rightArrow, modifiers: []))
+        }
     }
 
     /// Pen, Arrow, Box, Circle.
@@ -591,7 +599,7 @@ struct PenTray: View {
                     Circle().fill(tone.swatch)
                         .overlay(Circle().strokeBorder(Color.primary.opacity(0.3), lineWidth: 0.5))
                         .frame(width: Self.dots[i], height: Self.dots[i])
-                        .frame(width: 22, height: 22)
+                        .frame(width: compact ? 18 : 22, height: 22)
                         .overlay(Circle().strokeBorder(selected ? Color.primary.opacity(0.9) : .clear, lineWidth: 2).padding(1))
                         .contentShape(Circle())
                 }
@@ -612,13 +620,7 @@ struct PenTray: View {
                     session.pen.custom = nil
                 }
             }
-            ColorPicker("Your Own Colour", selection: Binding(get: { session.pen.tone.swatch }, set: { c in
-                guard let s = NSColor(c).usingColorSpace(.sRGB) else { return }
-                session.pen.custom = [Float(s.redComponent), Float(s.greenComponent), Float(s.blueComponent)]
-            }), supportsOpacity: false)
-                .labelsHidden()
-                .frame(width: 24)
-                .help("A colour of your own")
+            OwnInk(custom: session.pen.custom, small: compact) { c in session.pen.custom = c }
         }
     }
 
@@ -652,11 +654,50 @@ struct PenTray: View {
                 }
                 .pickerStyle(.inline)
             } label: {
-                Text("after \(PenStay.label(session.pen.linger))").textStyle(.caption)
+                Text(compact ? PenStay.label(session.pen.linger) : "after \(PenStay.label(session.pen.linger))").textStyle(.caption)
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
             .help("How long a mark stays once drawn, before it fades")
+        }
+    }
+
+    /// Your own ink: a ring of every colour until you choose one, then that
+    /// colour; a click opens the colour picker.
+    struct OwnInk: View {
+        let custom: [Float]?
+        var small = false
+        let chose: ([Float]) -> Void
+        @State private var hover = false
+
+        var body: some View {
+            let d: CGFloat = small ? 14 : 18
+            Button {
+                let start = custom.map { NSColor(srgbRed: CGFloat($0[0]), green: CGFloat($0[1]), blue: CGFloat($0[2]), alpha: 1) } ?? .systemPurple
+                InkPanel.shared.open(start) { c in
+                    guard let s = c.usingColorSpace(.sRGB) else { return }
+                    chose([Float(s.redComponent), Float(s.greenComponent), Float(s.blueComponent)])
+                }
+            } label: {
+                Group {
+                    if let c = custom, c.count == 3 {
+                        Circle().fill(Color(.sRGB, red: Double(c[0]), green: Double(c[1]), blue: Double(c[2])))
+                    } else {
+                        Circle().fill(AngularGradient(colors: [.red, .yellow, .green, .cyan, .blue, .purple, .red], center: .center))
+                    }
+                }
+                .overlay(Circle().strokeBorder(Color.primary.opacity(0.3), lineWidth: 0.5))
+                .frame(width: d, height: d)
+                .scaleEffect(hover && custom == nil ? 1.1 : 1)
+                .padding(3)
+                .overlay(Circle().strokeBorder(custom != nil ? Color.primary.opacity(0.9) : .clear, lineWidth: 2))
+                .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hover = $0 }
+            .animation(Theme.quick, value: hover)
+            .help("A colour of your own")
+            .accessibilityLabel("Your own colour")
         }
     }
 
@@ -685,6 +726,28 @@ struct PenTray: View {
             .accessibilityLabel(ink.title)
             .accessibilityAddTraits(selected ? .isSelected : [])
         }
+    }
+}
+
+/// The Mac's colour picker, for a pen's own ink.
+@MainActor
+final class InkPanel: NSObject {
+    static let shared = InkPanel()
+    private var chose: ((NSColor) -> Void)?
+
+    func open(_ color: NSColor, _ chose: @escaping (NSColor) -> Void) {
+        self.chose = chose
+        let panel = NSColorPanel.shared
+        panel.showsAlpha = false
+        panel.isContinuous = true
+        panel.color = color
+        panel.setTarget(self)
+        panel.setAction(#selector(changed(_:)))
+        panel.orderFront(nil)
+    }
+
+    @objc private func changed(_ panel: NSColorPanel) {
+        chose?(panel.color)
     }
 }
 

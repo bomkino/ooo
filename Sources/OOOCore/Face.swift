@@ -288,7 +288,7 @@ final class FaceStream: @unchecked Sendable {
 
     init(url: URL) {
         self.url = url
-        queue = DispatchQueue(label: "dog.pitch.ooo.face", qos: .userInteractive)
+        queue = DispatchQueue(label: "dog.pitch.ooo.face", qos: .userInteractive, autoreleaseFrequency: .workItem)
     }
 
     /// The frame for `t` seconds into the recording, from what is decoded; nil
@@ -320,45 +320,53 @@ final class FaceStream: @unchecked Sendable {
         queue.async { self.reader = nil }
     }
 
+    /// Decodes until it has what was last asked for. Each pass lets go of
+    /// what it borrowed on the way, so a long scrub, which keeps it going,
+    /// doesn't pile up a fresh decoder's worth of memory at every restart.
     private func work() {
-        while true {
-            let (w, first, start, stop) = lock.withLock { (wanted, frames.first?.time, opening, closed) }
-            if stop { break }
-            if reader == nil { reader = FaceReader(url: url) }
-            guard let reader else { break }
-            let step = reader.frameDuration
-            // Before the first frame, the first frame.
-            let t = max(w, start ?? 0)
-            let still = { self.lock.withLock { self.wanted == w && !self.closed } }
-            if first == nil || t + 0.0005 < first! || t > reached + 1 {
-                // Back before what is decoded, or far ahead of it: start again
-                // there (going back, a little before, ready for the next step back).
-                let backward = first.map { t < $0 } ?? false
-                lock.withLock { frames = [] }
-                reached = backward ? max(t - Self.back, 0) : t
-                read(reader, at: reached)
-                while reached < t, still() {
-                    reached = min(reached + step, t)
-                    read(reader, at: reached)
-                }
-            } else if t > reached {
-                // Playback has caught up with the decoding: on to now.
-                reached = t
-                read(reader, at: t)
-            }
-            // A few frames past now, so each display frame finds its own waiting.
-            while reached < t + Double(Self.ahead) * step, still() {
-                reached += step
-                read(reader, at: reached)
-            }
-            let done: Bool = lock.withLock {
-                guard wanted == w || closed else { return false }
-                working = false
-                return true
-            }
-            if done { return }
+        while autoreleasepool(invoking: { pass() }) {}
+    }
+
+    /// One pass toward the moment last asked for; false, and no longer
+    /// working, once nothing new has been asked for meanwhile.
+    private func pass() -> Bool {
+        let (w, first, start, stop) = lock.withLock { (wanted, frames.first?.time, opening, closed) }
+        if stop {
+            lock.withLock { working = false }
+            return false
         }
-        lock.withLock { working = false }
+        let reader = self.reader ?? FaceReader(url: url)
+        self.reader = reader
+        let step = reader.frameDuration
+        // Before the first frame, the first frame.
+        let t = max(w, start ?? 0)
+        let still = { self.lock.withLock { self.wanted == w && !self.closed } }
+        if first == nil || t + 0.0005 < first! || t > reached + 1 {
+            // Back before what is decoded, or far ahead of it: start again
+            // there (going back, a little before, ready for the next step back).
+            let backward = first.map { t < $0 } ?? false
+            lock.withLock { frames = [] }
+            reached = backward ? max(t - Self.back, 0) : t
+            read(reader, at: reached)
+            while reached < t, still() {
+                reached = min(reached + step, t)
+                read(reader, at: reached)
+            }
+        } else if t > reached {
+            // Playback has caught up with the decoding: on to now.
+            reached = t
+            read(reader, at: t)
+        }
+        // A few frames past now, so each display frame finds its own waiting.
+        while reached < t + Double(Self.ahead) * step, still() {
+            reached += step
+            read(reader, at: reached)
+        }
+        return lock.withLock {
+            guard wanted == w || closed else { return true }
+            working = false
+            return false
+        }
     }
 
     /// Reads the frame at `t`. One later than asked for, near the start, is

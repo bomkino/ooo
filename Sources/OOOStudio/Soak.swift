@@ -35,6 +35,9 @@ enum OOOSoak {
         let seconds = max(OOOSnapshot.arg("--soak").flatMap(Double.init) ?? 45, 12)
         let dir = URL(fileURLWithPath: OOOSnapshot.arg("--snapshot") ?? "soak.png").deletingLastPathComponent()
         let monitor = SoakMonitor(samples: dir)
+        // Kept awake and on time as a Mac in use is: a window behind others
+        // on the test machine would otherwise have its timers held back.
+        let awake = ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .latencyCritical], reason: "Soak test")
         let beat = Timer(timeInterval: 0.1, repeats: true) { _ in
             MainActor.assumeIsolated { monitor.beat(time: session.clock.time, duration: session.clock.duration) }
         }
@@ -135,6 +138,7 @@ enum OOOSoak {
             let verdict = monitor.verdict(memoryLimit: memoryLimit, stallLimit: stallLimit, growthLimit: growthLimit,
                                           scrolled: scrolled, scrollLimit: scrollLimit)
             print(verdict.line)
+            ProcessInfo.processInfo.endActivity(awake)
             done(verdict.ok ? 0 : 4)
         }
     }
