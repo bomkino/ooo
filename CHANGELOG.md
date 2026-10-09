@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.2 — 9 October 2026
+
+- Draw as you talk, in plain sight. While a live take records, a Draw button sits beside Close, and Draw at the top of the window (⌘2) takes the pen out too, instead of sitting greyed out. D still does it. With the pen out, the pen's choices (what it draws, the colour, the width, how long marks stay) take the place of the positions under the video, and → and ← still lead the camera. The line above the video says so, and before you start, it tells you D draws.
+
 ## 1.2.1 — 9 October 2026
 
 - Going back to Frame after a live take no longer freezes OOO. The camera recording of you used to be decoded on the window's own thread, and started over from scratch at every step back while you scrubbed or scrolled the playhead, holding the whole window up and piling up memory until the Mac struggled too. It now decodes beside the window, a few frames ahead as the video plays, and after a jump starts over just once, for wherever you stopped. The window never waits for it.

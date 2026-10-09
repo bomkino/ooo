@@ -69,6 +69,13 @@ public final class LiveCapture {
     @ObservationIgnored private var lost: ((String) -> Void)?
     @ObservationIgnored private var deviceWatch: [NSObjectProtocol] = []
 
+    /// For a screenshot of a take under way, where there is no camera: it says it records.
+    func pretendRecording() {
+        guard OOOSnapshot.isRequested else { return }
+        phase = .recording
+        elapsed = 12
+    }
+
     public var isActive: Bool { phase != .idle }
     public var isRecording: Bool { phase == .recording }
     public var isCounting: Bool { if case .counting = phase { return true } else { return false } }
@@ -1023,13 +1030,17 @@ extension OOOSession {
     }
 
     /// The keys during a take: → or Space next, ← back, 1 to 9 a position,
-    /// 0 or ↑ the whole slide, ↓ the next slide, D the pen, Return to close.
-    /// Esc only puts the pen away, so no stray key ends a take; ⌘. gives it
-    /// up and ⌘Q quits. Every other key waits.
+    /// 0 or ↑ the whole slide, ↓ the next slide, D (or ⌘2, or ⇧⌘P) the pen,
+    /// Return to close. Esc only puts the pen away, so no stray key ends a
+    /// take; ⌘. gives it up and ⌘Q quits. Every other key waits.
     func liveKey(_ event: NSEvent) -> Bool {
         let mods = event.modifierFlags.intersection([.command, .option, .control])
         if mods.contains(.command) {
             let c = event.charactersIgnoringModifiers?.lowercased()
+            if !event.isARepeat, mods == [.command], c == "2" || (c == "p" && event.modifierFlags.contains(.shift)) {
+                if leading != nil { pen.on.toggle() }
+                return true
+            }
             return !(c == "." || c == "q")
         }
         guard mods.isEmpty else { return true }
@@ -1170,7 +1181,13 @@ struct LiveBar: View {
     var body: some View {
         let step = session.liveStep
         VStack(spacing: 6) {
-            if step != .kept && step != .keeping {
+            if step == .recording && session.pen.on {
+                // Drawing as you talk: the pen's choices where the positions
+                // were; the keys still lead the camera.
+                PenTray(session: session, compact: true, inTake: true)
+                    .frame(height: 40)
+                    .transition(.opacity)
+            } else if step != .kept && step != .keeping {
                 PositionStrip(session: session)
                     .frame(height: 40)
             }
@@ -1218,6 +1235,7 @@ struct LiveBar: View {
         case .recording:
             RecordingDot()
             Text(minutes(capture.elapsed)).textStyle(.data)
+            LivePenButton(session: session, compact: width < 400)
             Button("Close") { session.closeTake() }
                 .buttonStyle(RecordButtonStyle())
                 .help("Plays the closing, still recording your sign-off; it stops by itself (Return)")
@@ -1255,6 +1273,30 @@ struct LiveBar: View {
 
     private func minutes(_ t: Double) -> String {
         String(format: "%d:%02d", Int(t) / 60, Int(t) % 60)
+    }
+}
+
+/// Draw, during a take: the pen out to draw as you talk, or away again.
+struct LivePenButton: View {
+    @Bindable var session: OOOSession
+    var compact = false
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        let on = session.pen.on
+        Button { session.togglePen() } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "pencil.tip")
+                    .font(.system(size: 11.5, weight: .semibold))
+                if !compact { Text(on ? "Pen Away" : "Draw") }
+            }
+        }
+        .buttonStyle(QuietButtonStyle())
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous)
+            .strokeBorder(on ? session.pen.tone.ring(scheme) : .clear, lineWidth: 1.5))
+        .help(on ? "Put the pen away; the slide is yours to click again (D or Esc)"
+                 : "Draw on the slide as you talk; the camera keeps to your keys (D)")
+        .accessibilityLabel(on ? "Put the pen away" : "Draw")
     }
 }
 
