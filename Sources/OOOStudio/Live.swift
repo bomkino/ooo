@@ -1235,7 +1235,7 @@ struct LiveBar: View {
         case .recording:
             RecordingDot()
             Text(minutes(capture.elapsed)).textStyle(.data)
-            LivePenButton(session: session, compact: width < 400)
+            LivePenButton(session: session, compact: width < 260)
             Button("Close") { session.closeTake() }
                 .buttonStyle(RecordButtonStyle())
                 .help("Plays the closing, still recording your sign-off; it stops by itself (Return)")

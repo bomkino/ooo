@@ -535,12 +535,31 @@ struct PenTray: View {
             ViewThatFits(in: .horizontal) {
                 takeRow { tools; bar; colours; bar; widths(tone); bar; stay }
                 takeRow { tools; bar; colours; bar; widths(tone) }
-                takeRow { tools; bar; colours }
+                takeRow { toolMenu; bar; colours; bar; widths(tone) }
+                takeRow { toolMenu; bar; colours }
                 takeRow { colours }
             }
         } else {
             tray(tone)
         }
+    }
+
+    /// What the pen draws, as one button that opens the four, where the
+    /// four side by side won't fit.
+    private var toolMenu: some View {
+        Menu {
+            Picker("Draw", selection: $session.pen.tool) {
+                ForEach(PenTool.allCases) { Label($0.title, systemImage: $0.symbol).tag($0) }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            Image(systemName: session.pen.tool.symbol)
+                .font(.system(size: 12, weight: .semibold))
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Pen, arrow, box or circle")
+        .accessibilityLabel("Draw: \(session.pen.tool.title)")
     }
 
     private var bar: some View {
