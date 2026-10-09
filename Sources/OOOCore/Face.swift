@@ -90,15 +90,21 @@ public final class FaceCounts: @unchecked Sendable {
 
 /// Reads a camera recording frame by frame, forward in time, restarting on a
 /// seek. Frames come oriented, as sRGB-encoded BGRA the way OOO's frames are
-/// stored, and each is kept alive until the GPU has drawn with it.
+/// stored, and each is kept alive until the GPU has drawn with it. It reads
+/// on whatever thread asks: the export's, or a `FaceStream`'s own queue,
+/// never the main thread.
 final class FaceReader {
     let url: URL
     private let asset: AVURLAsset
     private var reader: AVAssetReader?
-    private var output: AVAssetReaderVideoCompositionOutput?
+    private var output: AVAssetReaderOutput?
     private var cache: CVMetalTextureCache?
+    /// Turns the picture upright when the recording says it lies otherwise;
+    /// nil when it is upright already, so frames come straight from the decoder.
     private let composition: AVVideoComposition?
     let duration: Double
+    /// Seconds from one frame to the next.
+    let frameDuration: Double
 
     struct Frame {
         var time: Double
@@ -108,13 +114,24 @@ final class FaceReader {
 
     private var current: Frame?
     private var pending: Frame?
+    /// Where a fresh start found nothing to read (the picture ends early, or
+    /// can't be read): later moments aren't tried again until an earlier one is.
+    private var barren: Double?
 
     init(url: URL) {
         self.url = url
         asset = AVURLAsset(url: url)
         duration = max(asset.duration.seconds.isFinite ? asset.duration.seconds : 0, 0)
-        composition = asset.tracks(withMediaType: .video).isEmpty ? nil : AVVideoComposition(propertiesOf: asset)
+        let track = asset.tracks(withMediaType: .video).first
+        let upright = track.map { $0.preferredTransform.isIdentity } ?? true
+        composition = track == nil || upright ? nil : AVVideoComposition(propertiesOf: asset)
+        let fps = Double(track?.nominalFrameRate ?? 0)
+        frameDuration = fps > 1 ? 1 / fps : 1.0 / 30
         CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, GPU.shared.device, nil, &cache)
+    }
+
+    deinit {
+        reader?.cancelReading()
     }
 
     private func start(at time: Double) {
@@ -126,11 +143,18 @@ final class FaceReader {
         output = nil
         guard let track = asset.tracks(withMediaType: .video).first, let r = try? AVAssetReader(asset: asset) else { return }
         r.timeRange = CMTimeRange(start: CMTime(seconds: max(0, time - 0.1), preferredTimescale: 6000), duration: .positiveInfinity)
-        let out = AVAssetReaderVideoCompositionOutput(videoTracks: [track], videoSettings: [
+        let settings: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
             kCVPixelBufferMetalCompatibilityKey as String: true,
-        ])
-        out.videoComposition = composition
+        ]
+        let out: AVAssetReaderOutput
+        if let composition {
+            let c = AVAssetReaderVideoCompositionOutput(videoTracks: [track], videoSettings: settings)
+            c.videoComposition = composition
+            out = c
+        } else {
+            out = AVAssetReaderTrackOutput(track: track, outputSettings: settings)
+        }
         out.alwaysCopiesSampleData = false
         guard r.canAdd(out) else { return }
         r.add(out)
@@ -144,6 +168,8 @@ final class FaceReader {
         let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb)
         var cv: CVMetalTexture?
         CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault, cache, pb, nil, .bgra8Unorm, w, h, 0, &cv)
+        // Lets go of the textures of frames already drawn and dropped.
+        CVMetalTextureCacheFlush(cache, 0)
         guard let cv, let tex = CVMetalTextureGetTexture(cv) else { return nil }
         FaceCounts.shared.frame()
         return Frame(time: CMSampleBufferGetPresentationTimeStamp(sb).seconds, texture: tex, hold: cv)
@@ -152,9 +178,10 @@ final class FaceReader {
     /// The frame showing `t` seconds into the recording (held at either end).
     func frame(at t: Double) -> Frame? {
         let target = min(max(t, 0), max(duration - 0.001, 0))
-        if reader == nil || current == nil || target + 0.0005 < (current?.time ?? 0) || target > (current?.time ?? 0) + 1.0 {
-            start(at: target)
-        }
+        if current == nil, let b = barren, target + 0.0005 >= b { return nil }
+        let restart = reader == nil || current == nil || target + 0.0005 < (current?.time ?? 0) || target > (current?.time ?? 0) + 1.0
+        if restart { start(at: target) }
+        defer { if restart { barren = current == nil ? target : nil } }
         var guardCount = 0
         while guardCount < 240 {
             guardCount += 1
@@ -171,32 +198,191 @@ final class FaceReader {
     }
 }
 
+/// The camera recording for the live stage, decoded on a queue of its own so
+/// the window never waits on it. Asked for the frame at a moment, it answers
+/// at once with the latest frame it has for then, and decodes on toward that
+/// moment and a few frames past it in the background. However fast the
+/// playhead is scrubbed, it starts over for the latest place asked only, one
+/// at a time, never for every step; going back, it starts a little earlier
+/// still, so the next steps back are already there. A frame that arrives for
+/// a stage at rest is announced (`FaceCompositor.frameArrived`) so the stage
+/// redraws.
+final class FaceStream: @unchecked Sendable {
+    let url: URL
+    private let queue: DispatchQueue
+    private let lock = NSLock()
+    /// Decoded frames, oldest first, at most `kept` of them.
+    private var frames: [FaceReader.Frame] = []
+    private var shown: FaceReader.Frame?
+    private var wanted = 0.0
+    private var working = false
+    private var closed = false
+    /// When the recording's first frame shows; it stands for every moment before.
+    private var opening: Double?
+    /// On `queue` only: the reader, and the furthest moment it has read to.
+    private var reader: FaceReader?
+    private var reached = -Double.infinity
+
+    /// Frames decoded past the moment asked for.
+    static let ahead = 3
+    /// Seconds decoded before the moment asked for, after a step back.
+    static let back = 0.3
+    /// Frames kept at once: those, and the ones between.
+    static let kept = 14
+
+    init(url: URL) {
+        self.url = url
+        queue = DispatchQueue(label: "dog.pitch.ooo.face", qos: .userInteractive)
+    }
+
+    /// The frame for `t` seconds into the recording, from what is decoded; nil
+    /// before the first frame arrives.
+    func frame(at t: Double) -> FaceReader.Frame? {
+        lock.lock()
+        wanted = t
+        if let f = due(t) { shown = f }
+        let start = !working && !closed
+        if start { working = true }
+        let frame = shown
+        lock.unlock()
+        if start { queue.async { self.work() } }
+        return frame
+    }
+
+    /// The latest decoded frame showing by `t`; under `lock`.
+    private func due(_ t: Double) -> FaceReader.Frame? {
+        let t = max(t, opening ?? 0)
+        return frames.last { $0.time <= t + 0.004 }
+    }
+
+    /// Stops decoding and lets go of the recording.
+    func close() {
+        lock.withLock {
+            closed = true
+            frames = []
+        }
+        queue.async { self.reader = nil }
+    }
+
+    private func work() {
+        while true {
+            let (w, first, start, stop) = lock.withLock { (wanted, frames.first?.time, opening, closed) }
+            if stop { break }
+            if reader == nil { reader = FaceReader(url: url) }
+            guard let reader else { break }
+            let step = reader.frameDuration
+            // Before the first frame, the first frame.
+            let t = max(w, start ?? 0)
+            let still = { self.lock.withLock { self.wanted == w && !self.closed } }
+            if first == nil || t + 0.0005 < first! || t > reached + 1 {
+                // Back before what is decoded, or far ahead of it: start again
+                // there (going back, a little before, ready for the next step back).
+                let backward = first.map { t < $0 } ?? false
+                lock.withLock { frames = [] }
+                reached = backward ? max(t - Self.back, 0) : t
+                read(reader, at: reached)
+                while reached < t, still() {
+                    reached = min(reached + step, t)
+                    read(reader, at: reached)
+                }
+            } else if t > reached {
+                // Playback has caught up with the decoding: on to now.
+                reached = t
+                read(reader, at: t)
+            }
+            // A few frames past now, so each display frame finds its own waiting.
+            while reached < t + Double(Self.ahead) * step, still() {
+                reached += step
+                read(reader, at: reached)
+            }
+            let done: Bool = lock.withLock {
+                guard wanted == w || closed else { return false }
+                working = false
+                return true
+            }
+            if done { return }
+        }
+        lock.withLock { working = false }
+    }
+
+    /// Reads the frame at `t`. One later than asked for, near the start, is
+    /// the recording's first: nothing comes before it.
+    private func read(_ reader: FaceReader, at t: Double) {
+        guard let f = reader.frame(at: t) else { return }
+        if t < 0.5, f.time > t + 0.004 { lock.withLock { opening = f.time } }
+        add(f)
+    }
+
+    /// Adds a decoded frame unless it is one already had, and announces it
+    /// when the stage, at rest, would now show it.
+    private func add(_ f: FaceReader.Frame) {
+        let announce: Bool = lock.withLock {
+            guard f.time > frames.last?.time ?? -.infinity else { return false }
+            frames.append(f)
+            if frames.count > Self.kept { frames.removeFirst(frames.count - Self.kept) }
+            return due(wanted).map { $0.time != shown?.time } ?? false
+        }
+        guard announce else { return }
+        let url = self.url
+        DispatchQueue.main.async { NotificationCenter.default.post(name: FaceCompositor.frameArrived, object: url) }
+    }
+}
+
 /// Draws you into the room below the stage, over the finished frame.
 public final class FaceCompositor {
     private let library: MTLLibrary
-    private var readers: [URL: FaceReader] = [:]
     private let lock = NSLock()
+    /// For export: each frame exactly, read on the export's thread.
+    private var readers: [(url: URL, reader: FaceReader)] = []
+    /// For the live stage: decoded in the background, the most recently used last.
+    private var streams: [FaceStream] = []
+    /// Recordings kept open at once; a retake's new recording lets go of the oldest.
+    private static let kept = 2
+
+    /// Posted on the main queue, with the recording's URL, when a frame the
+    /// live stage is waiting for has been decoded.
+    public static let frameArrived = Notification.Name("dog.pitch.ooo.face-frame")
 
     public init() throws {
         library = try GPU.shared.library(named: "face", source: ShaderPrelude.source + Self.source)
     }
 
+    /// The frame showing `t` seconds into the recording at `url`: exactly
+    /// (`wait`, for export), or the latest decoded without waiting (the live stage).
+    private func picture(_ url: URL, at t: Double, wait: Bool) -> FaceReader.Frame? {
+        lock.lock()
+        defer { lock.unlock() }
+        if wait {
+            let reader: FaceReader
+            if let i = readers.firstIndex(where: { $0.url == url }) {
+                reader = readers.remove(at: i).reader
+            } else {
+                reader = FaceReader(url: url)
+            }
+            readers.append((url: url, reader: reader))
+            if readers.count > Self.kept { readers.removeFirst(readers.count - Self.kept) }
+            return reader.frame(at: t)
+        }
+        let stream: FaceStream
+        if let i = streams.firstIndex(where: { $0.url == url }) {
+            stream = streams.remove(at: i)
+        } else {
+            stream = FaceStream(url: url)
+        }
+        streams.append(stream)
+        while streams.count > Self.kept { streams.removeFirst().close() }
+        return stream.frame(at: t)
+    }
+
     /// Draws the recording's frame at `t` (seconds into it) over `output`:
     /// in a room `room` of the frame tall, risen `rise` of the way in with
-    /// the stage, at `alpha`, with grain like the stage's.
+    /// the stage, at `alpha`, with grain like the stage's. With `wait`, the
+    /// frame is exactly the one at `t` (export); otherwise the latest one
+    /// decoded, so the live stage never waits on the recording.
     func encode(_ cb: MTLCommandBuffer, url: URL, at t: Double, mirrored: Bool, room: Float, rise: Float, alpha: Float,
-                grain: Float, frameIndex: UInt32, output: MTLTexture) throws {
+                grain: Float, frameIndex: UInt32, output: MTLTexture, wait: Bool) throws {
         guard alpha > 0.002 else { return }
-        lock.lock()
-        let reader: FaceReader
-        if let r = readers[url] {
-            reader = r
-        } else {
-            reader = FaceReader(url: url)
-            readers[url] = reader
-        }
-        let frame = reader.frame(at: t)
-        lock.unlock()
+        let frame = picture(url, at: t, wait: wait)
         guard let frame else { return }
         let gpu = GPU.shared
         let pass = MTLRenderPassDescriptor()

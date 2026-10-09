@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.1 — 9 October 2026
+
+- Going back to Frame after a live take no longer freezes OOO. The camera recording of you used to be decoded on the window's own thread, and started over from scratch at every step back while you scrubbed or scrolled the playhead, holding the whole window up and piling up memory until the Mac struggled too. It now decodes beside the window, a few frames ahead as the video plays, and after a jump starts over just once, for wherever you stopped. The window never waits for it.
+- A retake lets go of the recording it replaces, instead of keeping both open.
+- Once a take has put you in the space under the stage, the dashed outline of where you'll be stops drawing over you.
+- CI now films a stand-in take, keeps it, plays it back in Live and in Frame, scrubs and scrolls it, and fails if the window stops answering or its memory runs away.
+
 ## 1.2.0 — 9 October 2026
 
 OOO made for people: three modes you can always see, a timeline that says how long everything lasts and lets you stretch it, a slide map where drawing a new framing just works, and Live as a room you step into, check, start and close.

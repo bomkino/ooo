@@ -707,7 +707,8 @@ public final class SlideStage: @unchecked Sendable {
         }
         if !transparent, let face = scene.project.face, let url = scene.faceURL, let shown = scene.faceShown(at: t) {
             try faces.encode(cb, url: url, at: t - face.offset, mirrored: face.isMirrored, room: scene.faceRoom, rise: shown.rise,
-                             alpha: shown.alpha, grain: 0.035 * look.finish.grain / 0.14, frameIndex: frameIndex, output: output)
+                             alpha: shown.alpha, grain: 0.035 * look.finish.grain / 0.14, frameIndex: frameIndex, output: output,
+                             wait: waitForDetail)
         }
         return request.samples
     }

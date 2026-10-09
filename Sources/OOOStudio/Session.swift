@@ -219,6 +219,7 @@ public final class OOOSession {
     @ObservationIgnored private var nudgeRest: DispatchWorkItem?
 
     public init(document: OOODocument) {
+        SoakCounts.shared.session()
         self.document = document
         project = document.project
         choreography = document.project.choreography()

@@ -26,6 +26,10 @@ enum OOOSoak {
     /// More memory than this, or a main thread silent for longer, fails the run.
     static let memoryLimit: Double = 3000
     static let stallLimit: Double = 2
+    /// Memory gained after going back to Frame, beyond what Frame settled at,
+    /// and how long the 240 scroll steps (four seconds at sixty a second) may take.
+    static let growthLimit: Double = 400
+    static let scrollLimit: Double = 8
 
     static func run(_ session: OOOSession, done: @escaping (Int32) -> Void) {
         let seconds = max(OOOSnapshot.arg("--soak").flatMap(Double.init) ?? 45, 12)
@@ -110,12 +114,16 @@ enum OOOSoak {
             monitor.enter("frame, scrolling")
             session.clock.playing = false
             session.clock.time = session.clock.duration * 0.6
+            let scrollBegan = CACurrentMediaTime(), framesBefore = SoakCounts.shared.stageFrames
             for i in 0..<240 {
                 let step = i < 150 ? -0.04 : 0.03
                 session.clock.time = min(max(session.clock.time + step, 0), session.clock.duration)
                 if i == 20 { monitor.sample("frame-scrolling") }
                 await wait(1.0 / 60)
             }
+            let scrolled = CACurrentMediaTime() - scrollBegan
+            print(String(format: "soak: 240 scroll steps took %.1f s (limit %.0f), the stage drew %.0f frames a second",
+                         scrolled, scrollLimit, Double(SoakCounts.shared.stageFrames - framesBefore) / max(scrolled, 0.001)))
 
             monitor.enter("frame, still")
             session.clock.playing = false
@@ -124,7 +132,8 @@ enum OOOSoak {
 
             beat.invalidate()
             monitor.stop()
-            let verdict = monitor.verdict(memoryLimit: memoryLimit, stallLimit: stallLimit)
+            let verdict = monitor.verdict(memoryLimit: memoryLimit, stallLimit: stallLimit, growthLimit: growthLimit,
+                                          scrolled: scrolled, scrollLimit: scrollLimit)
             print(verdict.line)
             done(verdict.ok ? 0 : 4)
         }
@@ -236,9 +245,9 @@ final class SoakMonitor: @unchecked Sendable {
             let gpu = Double(GPU.shared.device.currentAllocatedSize) / 1_048_576
             let face = FaceCounts.shared.now
             let named = phase.padding(toLength: 17, withPad: " ", startingAt: 0)
-            print(String(format: "soak %6.1f s  %@ t %6.2f/%6.2f  memory %5.0f MB  gpu %5.0f MB  main late %5.2f s  stage frames %6d  face frames %6d  restarts %5d",
+            print(String(format: "soak %6.1f s  %@ t %6.2f/%6.2f  memory %5.0f MB  gpu %5.0f MB  main late %5.2f s  stage frames %6d  face frames %6d  restarts %5d  sessions %d",
                          now - began, named, time, duration, memory, gpu, late, SoakCounts.shared.stageFrames,
-                         face.frames, face.restarts))
+                         face.frames, face.restarts, SoakCounts.shared.sessions))
             fflush(stdout)
             lock.withLock {
                 if var w = worst.last {
@@ -251,13 +260,18 @@ final class SoakMonitor: @unchecked Sendable {
         }
     }
 
-    func verdict(memoryLimit: Double, stallLimit: Double) -> (ok: Bool, line: String) {
+    func verdict(memoryLimit: Double, stallLimit: Double, growthLimit: Double,
+                 scrolled: Double, scrollLimit: Double) -> (ok: Bool, line: String) {
         let w = lock.withLock { worst }
         var lines = w.map { String(format: "soak: worst in %@: memory %.0f MB, main thread late %.2f s", $0.phase, $0.memory, $0.late) }
         let memory = w.map(\.memory).max() ?? 0, late = w.map(\.late).max() ?? 0
-        let ok = memory <= memoryLimit && late <= stallLimit
-        lines.append(String(format: "soak: %@ (most memory %.0f MB, limit %.0f; longest the main thread was late %.2f s, limit %.1f)",
-                            ok ? "passed" : "FAILED", memory, memoryLimit, late, stallLimit))
+        let settled = w.first { $0.phase == "frame" }?.memory ?? memory
+        let after = w.drop(while: { $0.phase != "frame" }).map(\.memory).max() ?? settled
+        let grew = after - settled
+        let ok = memory <= memoryLimit && late <= stallLimit && grew <= growthLimit && scrolled <= scrollLimit
+        lines.append(String(format: "soak: %@ (most memory %.0f MB, limit %.0f; grew %.0f MB after Frame settled, limit %.0f; "
+                                + "longest the main thread was late %.2f s, limit %.1f; scrolling took %.1f s, limit %.0f)",
+                            ok ? "passed" : "FAILED", memory, memoryLimit, grew, growthLimit, late, stallLimit, scrolled, scrollLimit))
         return (ok, lines.joined(separator: "\n"))
     }
 
@@ -272,14 +286,18 @@ final class SoakMonitor: @unchecked Sendable {
     }
 }
 
-/// Frames the live stage has drawn since launch, for the soak test.
+/// Frames the live stage has drawn, and editor sessions made (SwiftUI may
+/// make and drop them as it rebuilds the window), since launch, for the soak test.
 final class SoakCounts: @unchecked Sendable {
     static let shared = SoakCounts()
     private let lock = NSLock()
     private var frames = 0
+    private var made = 0
 
     func stageFrame() { lock.withLock { frames += 1 } }
+    func session() { lock.withLock { made += 1 } }
     var stageFrames: Int { lock.withLock { frames } }
+    var sessions: Int { lock.withLock { made } }
 }
 
 /// A recording like a live take's: a picture of someone in a room, HEVC as
