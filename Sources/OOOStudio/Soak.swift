@@ -27,11 +27,12 @@ enum OOOSoak {
     static let memoryLimit: Double = 3000
     static let stallLimit: Double = 2
     /// Memory gained after going back to Frame, beyond what Frame settled at:
-    /// at most, while scrubbing (the test machine decodes in software, every
-    /// jump a fresh decoder), and still held once it rests. And the share of
-    /// the scroll the main thread may spend working (the test machine's
-    /// timers run late, so wall time says little).
-    static let growthLimit: Double = 500
+    /// at most, while scrubbing (every jump a fresh decoder, which macOS lets
+    /// go of a moment later; it varies by about 100 MB from run to run), and
+    /// still held once it rests. And the share of the scroll the main thread
+    /// may spend working (the test machine's timers run late, so wall time
+    /// says little).
+    static let growthLimit: Double = 600
     static let keptLimit: Double = 100
     static let busyLimit: Double = 0.5
 

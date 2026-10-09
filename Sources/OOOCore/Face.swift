@@ -301,7 +301,7 @@ final class FaceStream: @unchecked Sendable {
     /// The widest a frame is decoded for the stage.
     static let widest = 1280
     /// The least time between two starts over.
-    static let gap = 0.2
+    static let gap = 0.3
 
     init(url: URL) {
         self.url = url
