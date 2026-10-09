@@ -117,6 +117,8 @@ public final class OOOSession {
     public private(set) var pagePreviews: [UUID: CGImage] = [:]
     /// Shows on the stage where you will be while the stage is up for you.
     public var showRoom = true
+    /// The slide map is in its own pane beside the video (so not in the inspector).
+    public var mapBeside = true
     /// The slide's main colours, for a room in them.
     private var slideColours: Palette?
 

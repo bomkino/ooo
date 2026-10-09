@@ -474,30 +474,36 @@ struct MapEdge: View {
                         })
                     .onTapGesture(count: 2) { share = 0 }
             }
-            .help("Drag to give the map or the video more room. Double-click to share it as before.")
+            .help("Drag to give the map or the video more room. Double-click to let the video's shape decide again.")
             .accessibilityHidden(true)
     }
 }
 
 /// How the stage area divides between the slide map and the video. The video
-/// takes the width its shape needs at full height, up to half; the map takes
-/// the rest. Once the edge between them is dragged, the map keeps its share.
+/// keeps the width its shape needs at full height, and the map goes beside it
+/// when that leaves the map more room than the inspector would give it: a
+/// tall video in most windows, a square one in a wide window. Otherwise the
+/// map stays in the inspector. Once the edge between them is dragged, the map
+/// keeps its share.
 struct StageColumns {
     let map: CGFloat
     let stage: CGFloat
+    var shown: Bool { map > 0 }
 
     /// The narrowest the video's column goes, so the transport and the pen's tray fit under it.
     static let least: CGFloat = 280
+    /// The least room worth giving the map beside the video: a little more than the inspector has.
+    static let worth: CGFloat = 340
 
-    init(size: CGSize, videoAspect: CGFloat, videoHeight: CGFloat, margin: CGFloat, map shown: Bool, share: Double) {
-        guard shown else {
+    init(size: CGSize, videoAspect: CGFloat, videoHeight: CGFloat, margin: CGFloat, map wanted: Bool, share: Double) {
+        let W = max(size.width - 1, 1)
+        let natural = videoHeight * videoAspect + 2 * margin
+        guard wanted, share > 0 || W - natural >= Self.worth else {
             map = 0
             stage = size.width
             return
         }
-        let W = max(size.width - 1, 1)
-        let natural = videoHeight * videoAspect + 2 * margin
-        var s = share > 0 ? W * (1 - CGFloat(min(max(share, 0.2), 0.8))) : min(natural, W * 0.5)
+        var s = share > 0 ? W * (1 - CGFloat(min(max(share, 0.2), 0.8))) : natural
         s = max(s, min(Self.least, W * 0.6)).rounded()
         stage = s
         map = W - s

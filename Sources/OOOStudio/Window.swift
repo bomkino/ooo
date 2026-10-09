@@ -288,7 +288,7 @@ public struct OOOWindow: View {
                 Button { withAnimation(Theme.settle) { showSlideMap.toggle() } } label: {
                     Label("Slide Map", systemImage: "sidebar.left")
                 }
-                .help(showSlideMap ? "Hide the slide map (⇧⌘M)" : "Show the slide map beside the video (⇧⌘M)")
+                .help(showSlideMap ? "Keep the slide map in the inspector (⇧⌘M)" : "Show the slide map beside the video, when the window has room (⇧⌘M)")
             }
             ToolbarItem(placement: .navigation) {
                 FormatPicker(current: session.project.format) { session.setFormat($0) }

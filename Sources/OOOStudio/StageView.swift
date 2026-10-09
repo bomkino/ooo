@@ -252,7 +252,7 @@ extension OOOSession {
 }
 
 /// The output frame on its neutral surround with the transport below it,
-/// and the slide map beside it, big, while it shows.
+/// and the slide map beside it, big, when there is room.
 struct StageArea: View {
     @Bindable var session: OOOSession
     @AppStorage("showSafeAreas") private var showSafeAreas = false
@@ -282,7 +282,7 @@ struct StageArea: View {
             let columns = StageColumns(size: geo.size, videoAspect: CGFloat(session.project.format.aspect), videoHeight: videoHeight,
                                        margin: Self.side, map: showMap, share: mapShare)
             HStack(spacing: 0) {
-                if showMap {
+                if columns.shown {
                     MapPane(session: session, clock: session.clock, top: Self.top, foot: Self.bottom + TransportBar.height)
                         .frame(width: columns.map)
                     MapEdge(share: $mapShare, width: geo.size.width, map: columns.map)
@@ -290,6 +290,8 @@ struct StageArea: View {
                 }
                 stageColumn(CGSize(width: columns.stage, height: geo.size.height), videoHeight: videoHeight)
             }
+            // Without room beside the video, the map goes back to the inspector.
+            .onChange(of: columns.shown, initial: true) { _, shown in session.mapBeside = shown }
         }
         .background(Theme.surround)
         .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
@@ -369,7 +371,12 @@ struct StageStatus: View {
                 Text(busy).textStyle(.label).foregroundStyle(.primary)
             } else if session.project.slide.kind == .sample {
                 Text("Sample slide").textStyle(.label).foregroundStyle(.primary)
-                Text("Drop your own slide and voiceover anywhere").textStyle(.caption).foregroundStyle(.secondary).layoutPriority(-1)
+                // Over a narrow video the invitation is the button alone.
+                ViewThatFits(in: .horizontal) {
+                    Text("Drop your own slide and voiceover anywhere").textStyle(.caption).foregroundStyle(.secondary)
+                        .lineLimit(1).fixedSize()
+                    Color.clear.frame(width: 0, height: 0)
+                }
                 Button("Choose Slide…") { OOOCommands.chooseSlide(session) }
                     .buttonStyle(QuietButtonStyle())
             } else {
@@ -414,8 +421,8 @@ struct TransportBar: View {
     static let height: CGFloat = 44
 
     var body: some View {
-        // Under a narrower video the time keeps only where you are, then gives way,
-        // and the pen's tray folds Stays and Fades into one switch.
+        // Under a narrower video the time keeps only where you are, then gives
+        // way, and the pen's tray draws itself a little smaller.
         let time = width >= 360 ? 2 : (width >= 290 ? 1 : 0)
         ZStack {
             if session.pen.on {

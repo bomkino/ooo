@@ -29,7 +29,7 @@ It is for the slide you spent a week on: the chart whose curve you redrew eleven
 
 ## Every move is yours
 
-The slide map sits beside the video, as big as the window allows, and shows every framing as a viewfinder the shape of your video: drag one to move it, drag a corner to go closer, Option-drag to turn the camera, draw a box on the slide to add one. Drag the edge between the map and the video to give either more room, or hide the map (⇧⌘M) to keep a small one at the top of the inspector. On the timeline, drag a framing to change when the camera lands; it snaps to your words. Esc cancels a drag halfway. In the inspector, double-click any value to type it, and a run of arrow presses is one undo.
+The slide map shows every framing as a viewfinder the shape of your video: drag one to move it, drag a corner to go closer, Option-drag to turn the camera, draw a box on the slide to add one. Whenever the window has room beside the video (always for a tall video, and for a square one in a wide window), the map sits there, as big as the room allows; otherwise it sits at the top of the inspector. Drag the edge between the map and the video to give either more room, or press ⇧⌘M to keep the map in the inspector. On the timeline, drag a framing to change when the camera lands; it snaps to your words. Esc cancels a drag halfway. In the inspector, double-click any value to type it, and a run of arrow presses is one undo.
 
 | Keys | |
 |---|---|
@@ -46,7 +46,7 @@ The slide map sits beside the video, as big as the window allows, and shows ever
 | Space or ⌘P | Play and pause |
 | ⌘[ and ⌘] | Previous and next landing; ⌘← goes to the start |
 | hold `\` | The slide exactly as supplied (the Original surface) |
-| ⇧⌘M | Show the slide map beside the video |
+| ⇧⌘M | The slide map beside the video, or in the inspector |
 | ⇧⌘G | Show the safe areas |
 | ⌘E, ⌥⌘E, ⇧⌘E | Export, Save Cover Frame, Save Stills |
 

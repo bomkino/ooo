@@ -272,7 +272,7 @@ struct PenButton: View {
 /// whether its marks stay, and Done. Ringed in the ink, like the stage.
 struct PenTray: View {
     @Bindable var session: OOOSession
-    /// Under a narrow video: Stays and Fades fold into one switch.
+    /// Under a narrow video: no pen at the start, and a smaller Stays and Fades.
     var compact = false
     @Environment(\.colorScheme) private var scheme
 
@@ -290,21 +290,15 @@ struct PenTray: View {
                 }
             }
             Rectangle().fill(Theme.hairline).frame(width: 1, height: 18)
-            if compact {
-                Button(session.pen.fades ? "Fades" : "Stays") { session.pen.fades.toggle() }
-                    .buttonStyle(QuietButtonStyle())
-                    .help(session.pen.fades ? "Marks fade a moment after they're drawn. Click to keep them until the slide changes."
-                                            : "Marks stay until the slide changes. Click to have them fade a moment after they're drawn.")
-            } else {
-                Picker("Marks", selection: $session.pen.fades) {
-                    Text("Stays").tag(false)
-                    Text("Fades").tag(true)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
-                .help("Stays until the slide changes, or fades a moment after it is drawn")
+            Picker("Marks", selection: $session.pen.fades) {
+                Text("Stays").tag(false)
+                Text("Fades").tag(true)
             }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .controlSize(compact ? .small : .regular)
+            .fixedSize()
+            .help("Stays until the slide changes, or fades a moment after it is drawn")
             Button("Done") { session.finishDrawing() }
                 .buttonStyle(PrimaryButtonStyle())
                 .keyboardShortcut(.defaultAction)

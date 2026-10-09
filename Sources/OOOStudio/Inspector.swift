@@ -10,11 +10,10 @@ import SwiftUI
 /// sits on top when it isn't in its own pane beside the video.
 struct InspectorPanel: View {
     @Bindable var session: OOOSession
-    @AppStorage("showSlideMap") private var mapPane = true
 
     var body: some View {
         VStack(spacing: 0) {
-            if !mapPane {
+            if !session.mapBeside {
                 MapHost(session: session, clock: session.clock)
                     .padding(.horizontal, 14)
                     .padding(.top, 14)
