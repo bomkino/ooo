@@ -1,5 +1,5 @@
 import AppKit
-import AVFoundation
+@preconcurrency import AVFoundation
 import Observation
 import OOOCore
 import OOOMotion
@@ -137,12 +137,6 @@ public final class LiveCapture {
             let out = AVCaptureMovieFileOutput()
             guard s.canAddOutput(out) else { throw CocoaError(.featureUnsupported) }
             s.addOutput(out)
-            if film, let video = out.connection(with: .video) {
-                // HEVC keeps a long take small; the picture is redrawn small in the room anyway.
-                if out.availableVideoCodecTypes.contains(.hevc) {
-                    out.setOutputSettings([AVVideoCodecKey: AVVideoCodecType.hevc], for: video)
-                }
-            }
             s.commitConfiguration()
             s.startRunning()
             session = s
