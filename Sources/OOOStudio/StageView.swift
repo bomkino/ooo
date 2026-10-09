@@ -286,6 +286,7 @@ struct StageArea: View {
                     MapPane(session: session, clock: session.clock, top: Self.top, foot: Self.bottom + TransportBar.height)
                         .frame(width: columns.map)
                     MapEdge(share: $mapShare, width: geo.size.width, map: columns.map)
+                        .zIndex(1)
                 }
                 stageColumn(CGSize(width: columns.stage, height: geo.size.height), videoHeight: videoHeight)
             }
