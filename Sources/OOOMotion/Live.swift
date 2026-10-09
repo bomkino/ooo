@@ -286,4 +286,112 @@ public struct LiveTake: Sendable {
         return (shots, out)
     }
 
+    /// How long the video runs once the take ended at `end` is the tour
+    /// (`input`: its shots and slide changes as `finished` gives them): on
+    /// past `end` only for the ending, which sets off as you finish, never
+    /// while you are still talking. `least` is the shortest it may run on.
+    public static func length(_ input: ChoreographyInput, end: Double, least: Double = 0) -> Double {
+        let own = Set(input.shots.map(\.id))
+        var i = input
+        var d = end + max(least, tail(input.ending))
+        for _ in 0..<12 {
+            i.duration = d
+            let c = Choreography(i)
+            var need = d
+            // The ending's first move sets off once you have finished.
+            let last = c.beats.lastIndex { own.contains($0.shot.id) } ?? 0
+            if last + 1 < c.beats.count { need += max(end + 0.15 - c.beats[last + 1].depart, 0) }
+            // And lands, with time to rest, before the end.
+            if let final = c.beats.last {
+                switch final.role {
+                case .pullBack: need = max(need, final.land + 1.1)
+                case .home: need = max(need, final.land + Choreography.coverRest + Choreography.endingTail(input.ending))
+                default: need = max(need, final.land + 1.2 + Choreography.endingTail(input.ending))
+                }
+            }
+            if need - d < 1e-3 { break }
+            d = need
+        }
+        return d
+    }
+
+    /// The least the video runs on past the end of a take for its ending.
+    static func tail(_ ending: Ending) -> Double {
+        switch ending {
+        case .hold: return 1.2
+        case .pullBack: return 2.6
+        case .fade: return 1.7
+        case .leave: return Choreography.leaveLength + 0.5
+        }
+    }
+
+    // MARK: Looking
+
+    /// What a click at `point` on the slide face up (0…1 from the top left)
+    /// asks the camera to look at: the stop on the route about what is
+    /// there, else the detail there framed to be read (`details` is what
+    /// Direct for Me read on the slide), else a closer look around the point
+    /// than `view`, the framing on screen. `stop` is the stop's place in the route.
+    public func target(at point: Vec2, details: [SlideDetail], view: ShotFrame,
+                       minViewHeight: Float? = nil) -> (shot: Shot, stop: Int?) {
+        let k = page
+        let A = base.aspects[k], C = base.canvasAspect
+        func contains(_ f: ShotFrame, pad: Float = 0) -> Bool {
+            point.x >= f.minU - pad && point.x <= f.maxU + pad && point.y >= f.minV - pad && point.y <= f.maxV + pad
+        }
+        func area(_ f: ShotFrame) -> Float { f.size.x * f.size.y }
+
+        // A stop about what is there: the closest one, if several are.
+        let stops = script.indices.filter { base.page(of: script[$0]) == k }.filter { j in
+            let s = script[j]
+            if let focus = s.focus { return contains(focus, pad: 0.01) }
+            return contains(ShotFrame(center: s.frame.center, size: s.frame.size * 0.6))
+        }
+        if let j = stops.min(by: { area(script[$0].focus ?? script[$0].frame) < area(script[$1].focus ?? script[$1].frame) }) {
+            return (script[j], j)
+        }
+
+        // The detail there, framed as Direct for Me would.
+        let blocks = Director.blocks(details).filter { b in
+            contains(ShotFrame(center: b.center, size: b.size), pad: max(b.lineHeight * 0.5, 0.01))
+        }
+        if let b = blocks.min(by: { $0.size.x * $0.size.y < $1.size.x * $1.size.y }) {
+            let overview = Shot.overview(like: base.overview, baseAspect: base.slideAspect, slideAspect: A, canvasAspect: C)
+            let opening = CameraPose(shot: overview, slideAspect: A, canvasAspect: C, safe: base.safe)
+            var shot = Director.shot(for: b, slideAspect: A, canvasAspect: C, safe: base.safe, minViewHeight: minViewHeight,
+                                     overviewHeight: opening.height)
+            shot.page = pageID(k)
+            return (shot, nil)
+        }
+
+        // Nothing read there: a closer look, as near as the slide stays sharp.
+        var size = view.size * 0.5
+        let least = max(minViewHeight ?? 0, 0.08)
+        if size.y < least { size = size * (least / size.y) }
+        func onSlide(_ c: Float, _ s: Float) -> Float { s >= 1 ? 0.5 : min(max(c, s / 2), 1 - s / 2) }
+        let center = Vec2(onSlide(point.x, size.x), onSlide(point.y, size.y))
+        var shot = Shot(time: 0, frame: ShotFrame(center: center, size: size), yaw: clamp((point.x - 0.5) * 10, -6, 6),
+                        pitch: clamp((0.5 - point.y) * 8, -5, 6), lens: 28, aperture: 0.45, breathe: 0.5, label: "A closer look")
+        shot.page = pageID(k)
+        return (shot, nil)
+    }
+}
+
+extension Director {
+    /// One shot of the block `b`, framed and angled the way a tour frames it.
+    public static func shot(for b: DetailBlock, slideAspect A: Float, canvasAspect C: Float, safe: SafeArea = .none,
+                            minViewHeight: Float? = nil, overviewHeight: Float? = nil) -> Shot {
+        let (frame, sweep) = framing(for: b, slideAspect: A, canvasAspect: C, safe: safe, minViewHeight: minViewHeight,
+                                     overviewHeight: overviewHeight)
+        let reads = b.role == .headline || b.role == .text || b.role == .smallPrint
+        // Seen from the side away from the rest of the slide; lines being read stay nearly square-on.
+        let yaw = reads ? clamp((b.center.x - 0.5) * 10, -6, 6) : clamp((b.center.x - 0.5) * 26, -15, 15)
+        let pitch = reads ? clamp((0.5 - b.center.y) * 8, -5, 6) : clamp((0.5 - b.center.y) * 14, -8, 9)
+        let words = Double(b.text.split(separator: " ").count)
+        return Shot(time: 0, frame: frame, yaw: yaw, pitch: pitch, roll: 0, lens: b.role == .smallPrint ? 24 : 28,
+                    aperture: b.role == .figure ? 0.55 : 0.45, move: .glide, ease: b.role == .smallPrint ? .linger : .glide,
+                    breathe: sweep == nil ? 0.55 : 0.25, emphasis: .none, label: label(for: b), cue: b.role == .figure ? nil : b.text,
+                    sweep: sweep, sweepTime: sweep == nil ? nil : min(max(words * 0.32, 1.3), 3.4),
+                    focus: ShotFrame(center: b.center, size: b.size))
+    }
 }

@@ -204,3 +204,108 @@ final class LiveTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(whole?.depart ?? 0, 14)
     }
 }
+
+/// Clicking the slide during a take, and how long the video runs on after it.
+final class LiveLookTests: XCTestCase {
+    let A: Float = 2576.0 / 1080
+    let C: Float = 9.0 / 16
+
+    func take(_ shots: [Shot], ending: Ending = .pullBack) -> LiveTake {
+        LiveTake(ChoreographyInput(overview: .overview(slideAspect: A, canvasAspect: C), shots: shots, arrive: Arrive(), ending: ending,
+                                   duration: 30, slideAspect: A, canvasAspect: C, style: MotionStyle(), safe: .reel))
+    }
+
+    let headline = SlideDetail(frame: ShotFrame(center: Vec2(0.3, 0.15), size: Vec2(0.4, 0.08)), text: "Revenue doubled in a year")
+    let figure = SlideDetail(frame: ShotFrame(center: Vec2(0.75, 0.6), size: Vec2(0.3, 0.5)), kind: .figure)
+
+    func testAClickOnAStopGoesThereAndTheRouteFollowsOn() {
+        var stop = Shot(time: 5, frame: ShotFrame(center: Vec2(0.75, 0.6), size: Vec2(0.4, 0.6)), label: "The chart")
+        stop.focus = ShotFrame(center: Vec2(0.75, 0.6), size: Vec2(0.3, 0.5))
+        let other = Shot(time: 8, frame: ShotFrame(center: Vec2(0.3, 0.15), size: Vec2(0.2, 0.2)), label: "Headline")
+        var t = take([other, stop])
+        let view = ShotFrame.whole().visible(slideAspect: A, canvasAspect: C)
+        let (shot, index) = t.target(at: Vec2(0.7, 0.55), details: [headline, figure], view: view)
+        XCTAssertEqual(shot.label, "The chart")
+        // The route goes by time: the chart first, then the headline.
+        XCTAssertEqual(index, 0)
+        XCTAssertTrue(t.look(shot, stop: index, at: 4))
+        XCTAssertEqual(t.cursor, 0)
+        t.step(.next, at: 9)
+        XCTAssertEqual(t.visits.last?.label, "Headline")
+    }
+
+    func testAClickOnADetailFramesItToBeRead() {
+        var t = take([])
+        let view = ShotFrame.whole().visible(slideAspect: A, canvasAspect: C)
+        let (shot, index) = t.target(at: Vec2(0.25, 0.16), details: [headline, figure], view: view)
+        XCTAssertNil(index)
+        XCTAssertEqual(shot.cue, headline.text)
+        XCTAssertLessThan(shot.frame.size.y, view.size.y * 0.7)
+        XCTAssertTrue(t.look(shot, at: 4))
+        XCTAssertEqual(t.visits.last?.cue, headline.text)
+    }
+
+    func testAClickOnNothingReadLooksCloser() {
+        let t = take([])
+        let view = ShotFrame(center: Vec2(0.5, 0.5), size: Vec2(0.5, 0.6))
+        let (shot, _) = t.target(at: Vec2(0.1, 0.9), details: [headline], view: view, minViewHeight: 0.2)
+        XCTAssertEqual(shot.frame.size.y, 0.3, accuracy: 1e-4)
+        // Kept on the slide.
+        XCTAssertGreaterThanOrEqual(shot.frame.minU, -1e-4)
+        XCTAssertLessThanOrEqual(shot.frame.maxV, 1 + 1e-4)
+        let closest = t.target(at: Vec2(0.5, 0.5), details: [], view: ShotFrame(center: Vec2(0.5, 0.5), size: Vec2(0.1, 0.12)),
+                               minViewHeight: 0.15).shot
+        XCTAssertEqual(closest.frame.size.y, 0.15, accuracy: 1e-4)
+    }
+
+    /// The ending sets off once you have finished talking, not before.
+    func testTheEndingWaitsForYouToFinish() {
+        for ending in Ending.allCases {
+            var t = take([Shot(time: 5, frame: ShotFrame(center: Vec2(0.3, 0.3), size: Vec2(0.2, 0.25)), label: "One")], ending: ending)
+            t.step(.next, at: 4)
+            for end in [9.0, 4.6] {
+                let (shots, _) = t.finished(at: end)
+                var i = t.base
+                i.shots = shots
+                let d = LiveTake.length(i, end: end)
+                i.duration = d
+                let c = Choreography(i)
+                XCTAssertGreaterThanOrEqual(d, end + 1.2, "\(ending)")
+                if let pull = c.beats.first(where: { $0.role == .pullBack }) {
+                    XCTAssertGreaterThanOrEqual(pull.depart, end + 0.1, "\(ending) at \(end)")
+                    XCTAssertLessThanOrEqual(pull.land, d - 1.0, "\(ending) at \(end)")
+                }
+                XCTAssertEqual(c.endingProgress(at: end + 0.3), 0, "\(ending)")
+            }
+        }
+    }
+
+    func testTurningHomeWaitsForYouToFinish() {
+        let second = UUID()
+        var shots = [Shot(time: 5, frame: ShotFrame(center: Vec2(0.3, 0.3), size: Vec2(0.2, 0.25)), label: "One")]
+        var two = shots[0]
+        two.id = UUID()
+        two.time = 15
+        two.page = second
+        shots.append(two)
+        var input = ChoreographyInput(overview: .overview(slideAspect: A, canvasAspect: C), shots: shots, arrive: Arrive(),
+                                      ending: .hold, duration: 30, slideAspect: A, canvasAspect: C, style: MotionStyle(), safe: .reel,
+                                      pages: [PageTiming(id: second, aspect: A, change: .turn)])
+        input.home = HomeTiming()
+        var t = LiveTake(input)
+        for at in [4.0, 9.0, 14.0] { t.step(.next, at: at) }
+        XCTAssertEqual(t.page, 1)
+        let end = 20.0
+        let (kept, changes) = t.finished(at: end)
+        var i = t.base
+        i.shots = kept
+        for k in i.pages.indices { i.pages[k].at = changes[k] }
+        i.duration = LiveTake.length(i, end: end)
+        let c = Choreography(i)
+        let back = c.changes.first { $0.back }
+        XCTAssertNotNil(back)
+        XCTAssertGreaterThan(back?.start ?? 0, end)
+        XCTAssertEqual(c.beats.last?.role, .home)
+        XCTAssertLessThanOrEqual((c.beats.last?.land ?? 0) + Choreography.coverRest, i.duration + 1e-3)
+    }
+}
