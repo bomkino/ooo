@@ -123,6 +123,7 @@ public struct OOOMenuCommands: Commands {
     @AppStorage("appearance") private var appearance = AppearanceChoice.dark.rawValue
     @AppStorage("showSafeAreas") private var showSafeAreas = false
     @AppStorage("live.camera") private var liveCamera = true
+    @AppStorage("showSlideMap") private var showSlideMap = true
 
     public init() {}
 
@@ -229,6 +230,8 @@ public struct OOOMenuCommands: Commands {
             Picker("Appearance", selection: $appearance) {
                 ForEach(AppearanceChoice.allCases) { c in Text(c.title).tag(c.rawValue) }
             }
+            Toggle("Show Slide Map", isOn: $showSlideMap)
+                .keyboardShortcut("m", modifiers: [.command, .shift])
             Toggle("Show Safe Areas", isOn: $showSafeAreas)
                 .keyboardShortcut("g", modifiers: [.command, .shift])
         }
@@ -269,6 +272,7 @@ public struct OOORoot: View {
 public struct OOOWindow: View {
     @Bindable var session: OOOSession
     @State private var showInspector = true
+    @AppStorage("showSlideMap") private var showSlideMap = true
 
     public init(session: OOOSession) {
         self.session = session
@@ -286,6 +290,12 @@ public struct OOOWindow: View {
         }
         .navigationSubtitle(subtitle)
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button { withAnimation(Theme.settle) { showSlideMap.toggle() } } label: {
+                    Label("Slide Map", systemImage: "sidebar.left")
+                }
+                .help(showSlideMap ? "Keep the slide map in the inspector (⇧⌘M)" : "Show the slide map beside the video, when the window has room (⇧⌘M)")
+            }
             ToolbarItem(placement: .navigation) {
                 FormatPicker(current: session.project.format) { session.setFormat($0) }
             }
@@ -318,6 +328,7 @@ public struct OOOWindow: View {
             }
         }
         .onDeleteCommand { session.deleteSelectedShot() }
+        .onAppear { if OOOSnapshot.hidesInspector { showInspector = false } }
         .sheet(isPresented: $session.showExport) {
             ExportSheet(session: session)
         }
@@ -397,6 +408,7 @@ struct DirectButton: View {
     var body: some View {
         Button { session.autoDirect() } label: {
             Label("Direct for Me", systemImage: "wand.and.stars")
+                .labelStyle(.titleAndIcon)
         }
         .help("Read the slide and plan the camera's tour: the headline, the details worth a look, the small print last (⇧⌘D)")
         .disabled(session.busy != nil || !session.hasSlide)

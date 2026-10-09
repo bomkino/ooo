@@ -31,14 +31,14 @@ struct MapLayout {
         let a = point(f.minU, f.minV), b = point(f.maxU, f.maxV)
         return CGRect(x: a.x, y: a.y, width: b.x - a.x, height: b.y - a.y)
     }
+
+    /// How much larger the numbers and handles draw on a big map, so they
+    /// keep in proportion with the slide and stay easy to grab.
+    var mark: CGFloat { min(max(slide.width / 300, 1), 1.45) }
 }
 
-/// The slide seen from above, with every framing the camera lands on drawn
-/// over it as the outline of what the video shows there. Drag a framing to
-/// move it, a corner to go closer or further, Option-drag to turn the camera; draw on
-/// the slide to add a framing at the playhead.
-/// The slide map for the slide the inspector is about: the selected
-/// shot's, or the one face up at the playhead.
+/// The slide map for the slide the editor is about: the selected shot's, or
+/// the one face up at the playhead.
 struct MapHost: View {
     let session: OOOSession
     @Bindable var clock: PlaybackClock
@@ -48,6 +48,10 @@ struct MapHost: View {
     }
 }
 
+/// The slide seen from above, with every framing the camera lands on drawn
+/// over it as the outline of what the video shows there. Drag a framing to
+/// move it, a corner to go closer or further, Option-drag to turn the camera; draw on
+/// the slide to add a framing at the playhead.
 struct SlideMap: View {
     @Bindable var session: OOOSession
     /// The slide shown (0 is the first).
@@ -192,8 +196,9 @@ struct SlideMap: View {
                 // The part kept clear of a phone's interface.
                 ctx.stroke(Path(roundedRect: f.framing, cornerRadius: 2), with: .color(Theme.camera.opacity(0.7)),
                            style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                let side = 7 * layout.mark
                 for corner in f.outline {
-                    let h = CGRect(x: corner.x - 3.5, y: corner.y - 3.5, width: 7, height: 7)
+                    let h = CGRect(x: corner.x - side / 2, y: corner.y - side / 2, width: side, height: side)
                     ctx.fill(Path(roundedRect: h, cornerRadius: 1.5), with: .color(.white))
                     ctx.stroke(Path(roundedRect: h, cornerRadius: 1.5), with: .color(Theme.camera), lineWidth: 1)
                 }
@@ -202,9 +207,10 @@ struct SlideMap: View {
             }
             // The shot's number, in a small tab on its top-left corner.
             let top = f.outline.min { $0.x + $0.y < $1.x + $1.y } ?? f.bounds.origin
-            let label = ctx.resolve(Text("\(f.index + 1)").font(.system(size: 9, weight: .bold)).foregroundColor(selected ? .white : .black))
-            let size = label.measure(in: CGSize(width: 40, height: 20))
-            let tab = CGRect(x: top.x, y: top.y - size.height - 3, width: size.width + 8, height: size.height + 3)
+            let k = layout.mark
+            let label = ctx.resolve(Text("\(f.index + 1)").font(.system(size: 9 * k, weight: .bold)).foregroundColor(selected ? .white : .black))
+            let size = label.measure(in: CGSize(width: 60, height: 30))
+            let tab = CGRect(x: top.x, y: top.y - size.height - 3 * k, width: size.width + 8 * k, height: size.height + 3 * k)
             ctx.fill(Path(roundedRect: tab, cornerRadius: 3), with: .color(selected ? Theme.camera : Color.white.opacity(hot ? 0.95 : 0.75)))
             ctx.draw(label, at: CGPoint(x: tab.midX, y: tab.midY), anchor: .center)
         }
@@ -218,7 +224,7 @@ struct SlideMap: View {
 
     private func hitHandle(_ p: CGPoint, layout: MapLayout) -> UUID? {
         guard let shot = session.selectedShot else { return nil }
-        for c in finder(shot, index: 0, layout: layout).outline where hypot(c.x - p.x, c.y - p.y) <= 8 { return shot.id }
+        for c in finder(shot, index: 0, layout: layout).outline where hypot(c.x - p.x, c.y - p.y) <= 8 * layout.mark { return shot.id }
         return nil
     }
 
@@ -351,7 +357,155 @@ struct CameraFootprint: View {
             ctx.fill(path, with: .color(Theme.camera.opacity(0.08)))
             ctx.stroke(path, with: .color(Theme.camera.opacity(0.95)), style: StrokeStyle(lineWidth: 1.4, lineJoin: .round))
             let c = layout.point(pose.target.x / A + 0.5, 0.5 - pose.target.y)
-            ctx.fill(Path(ellipseIn: CGRect(x: c.x - 2.5, y: c.y - 2.5, width: 5, height: 5)), with: .color(Theme.camera))
+            let r = 2.5 * layout.mark
+            ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)), with: .color(Theme.camera))
         }
+    }
+}
+
+// MARK: - The map's own pane
+
+/// The slide map at full size, on the left of the video: room to place every
+/// framing by eye. Its heading lines up with the stage's status line, the map
+/// sits in the middle of the height the video has, and its foot lines up
+/// with the transport.
+struct MapPane: View {
+    let session: OOOSession
+    @Bindable var clock: PlaybackClock
+    /// The height of the stage's status line.
+    let top: CGFloat
+    /// The height from the stage's foot to the bottom: the gap and the transport.
+    let foot: CGFloat
+
+    var body: some View {
+        let page = session.mapPage(at: clock.time)
+        let a = MapLayout.aspect(slideAspect: CGFloat(session.project.slide(page).aspect))
+        VStack(spacing: 0) {
+            MapHeading(session: session, page: page)
+                .frame(height: top)
+            GeometryReader { g in
+                let w = max(min(g.size.width, g.size.height * a), 40)
+                SlideMap(session: session, page: page)
+                    .frame(width: w, height: w / a)
+                    .frame(width: g.size.width, height: g.size.height)
+            }
+            MapHint(session: session)
+                .frame(height: foot)
+        }
+        .padding(.horizontal, 18)
+    }
+}
+
+/// The line over the map: which slide it shows, and how many framings are on it.
+struct MapHeading: View {
+    let session: OOOSession
+    let page: Int
+
+    var body: some View {
+        let p = session.project
+        let n = session.orderedShots.filter { p.pageIndex($0.page) == page }.count
+        HStack(spacing: 8) {
+            Text(p.slideCount > 1 ? "Slide \(page + 1) of \(p.slideCount)" : "Slide map")
+                .textStyle(.label).foregroundStyle(.primary)
+            Text(n == 1 ? "1 framing" : "\(n) framings")
+                .textStyle(.caption).foregroundStyle(.secondary)
+        }
+        .lineLimit(1)
+        .frame(maxWidth: .infinity)
+    }
+}
+
+/// How the map works, in a line. With no framings yet, an invitation to make some.
+struct MapHint: View {
+    let session: OOOSession
+
+    var body: some View {
+        Group {
+            if session.project.shots.isEmpty && session.hasSlide {
+                VStack(spacing: 4) {
+                    Text("Draw a box around what matters, or let OOO plan the tour.")
+                        .textStyle(.caption).foregroundStyle(.secondary)
+                    Button { session.autoDirect() } label: {
+                        Label("Direct for Me", systemImage: "wand.and.stars")
+                    }
+                    .buttonStyle(QuietButtonStyle())
+                    .disabled(session.busy != nil)
+                }
+            } else {
+                Text("Drag a framing to move it, a corner to go closer, ⌥-drag to turn. Draw on the slide to add one.")
+                    .textStyle(.caption).foregroundStyle(.tertiary)
+            }
+        }
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: .infinity)
+    }
+}
+
+/// The edge between the map and the video. Drag it to give either more room;
+/// double-click it to let the video's shape decide again.
+struct MapEdge: View {
+    /// The map's share of the stage area's width; 0 lets the video's shape decide.
+    @Binding var share: Double
+    let width: CGFloat
+    let map: CGFloat
+    @State private var start: CGFloat?
+    @State private var hover = false
+
+    var body: some View {
+        Rectangle()
+            .fill(hover || start != nil ? Theme.camera.opacity(0.6) : Theme.hairline)
+            .frame(width: 1)
+            .overlay {
+                Color.clear
+                    .frame(width: 9)
+                    .contentShape(Rectangle())
+                    .onHover { inside in
+                        hover = inside
+                        if inside { NSCursor.resizeLeftRight.set() } else if start == nil { NSCursor.arrow.set() }
+                    }
+                    .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                        .onChanged { g in
+                            if start == nil { start = map }
+                            share = Double(((start ?? map) + g.translation.width) / max(width, 1))
+                        }
+                        .onEnded { _ in
+                            start = nil
+                            if !hover { NSCursor.arrow.set() }
+                        })
+                    .onTapGesture(count: 2) { share = 0 }
+            }
+            .help("Drag to give the map or the video more room. Double-click to let the video's shape decide again.")
+            .accessibilityHidden(true)
+    }
+}
+
+/// How the stage area divides between the slide map and the video. The video
+/// keeps the width its shape needs at full height, and the map goes beside it
+/// when that leaves the map more room than the inspector would give it: a
+/// tall video in most windows, a square one in a wide window. Otherwise the
+/// map stays in the inspector. Once the edge between them is dragged, the map
+/// keeps its share.
+struct StageColumns {
+    let map: CGFloat
+    let stage: CGFloat
+    var shown: Bool { map > 0 }
+
+    /// The narrowest the video's column goes, so the transport and the pen's tray fit under it.
+    static let least: CGFloat = 280
+    /// The least room worth giving the map beside the video: a little more than the inspector has.
+    static let worth: CGFloat = 340
+
+    init(size: CGSize, videoAspect: CGFloat, videoHeight: CGFloat, margin: CGFloat, map wanted: Bool, share: Double) {
+        let W = max(size.width - 1, 1)
+        let natural = videoHeight * videoAspect + 2 * margin
+        guard wanted, share > 0 || W - natural >= Self.worth else {
+            map = 0
+            stage = size.width
+            return
+        }
+        var s = share > 0 ? W * (1 - CGFloat(min(max(share, 0.2), 0.8))) : natural
+        s = max(s, min(Self.least, W * 0.6)).rounded()
+        stage = s
+        map = W - s
     }
 }

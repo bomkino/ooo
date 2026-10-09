@@ -21,17 +21,17 @@ It is for the slide you spent a week on: the chart whose curve you redrew eleven
 
 **More than one slide?** Add Slide (⌃⌘I), or drop several at once, and the same card in your hand goes through them: it turns over to the next slide, or the next melts in where you're looking while whatever the two share holds still. Open on your deck's cover, follow a number from one slide to the next, and turn back to the first at the end.
 
-**Point at something.** Draw on the Slide (⇧⌘P) and circle a number or underline a word with one fine pen. Its ink lies like watercolour: the slide shows through it, and it gathers at the edges and feathers a hair as it dries. In the video the mark draws on just as your hand drew it, then stays until the slide changes or fades a moment later.
+**Point at something.** Click Draw under the video (⇧⌘P) and circle a number or underline a word with one fine pen. Its ink lies like watercolour: the slide shows through it, and it gathers at the edges and feathers a hair as it dries. In the video the mark draws on just as your hand drew it, then stays until the slide changes or fades a moment later.
 
 **Leave room for you.** Room for You lifts the stage into the top of the frame for as long as you choose, leaving the bottom clear for your talking head in Edits or Premiere.
 
-**Go live.** Go Live (⌥⌘L) and talk it through while you lead the camera yourself: → or Space to the next stop, ← back, ↑ out to the whole slide, or click what you want to look at, and the last stop on a slide turns the card to the next. Your Mac's own camera and microphone record you as you go, and you stand in the room under the slide, mirrored the way you saw yourself. Return, and the take is the video: every move sets off when you pressed, your voice is the voiceover, and you're in it, all of it editable and one undo away. Export can leave the room empty and save you as your own file instead. Switch the camera off in the File menu for a take that's just your voice.
+**Go live.** Click Go Live under the video (⌥⌘L) and talk it through while you lead the camera yourself: → or Space to the next stop, ← back, ↑ out to the whole slide, or click what you want to look at, and the last stop on a slide turns the card to the next. Your Mac's own camera and microphone record you as you go, and you stand in the room under the slide, mirrored the way you saw yourself. Return, and the take is the video: every move sets off when you pressed, your voice is the voiceover, and you're in it, all of it editable and one undo away. Export can leave the room empty and save you as your own file instead. Switch the camera off in the File menu for a take that's just your voice.
 
 **Fixed a typo after the tour was made?** Replace Slide (⇧⌘I) swaps in the corrected slide and keeps the camera work: each framing follows its words to where they are now, and a shot named after its words takes the new ones. Change the canvas and the framings Direct for Me planned are framed again for it; the ones you set stay where you put them.
 
 ## Every move is yours
 
-The slide map in the inspector shows every framing as a viewfinder the shape of your video: drag one to move it, drag a corner to go closer, Option-drag to turn the camera, draw on the slide to add one. On the timeline, drag a framing to change when the camera lands; it snaps to your words. Esc cancels a drag halfway. In the inspector, double-click any value to type it, and a run of arrow presses is one undo.
+The slide map shows every framing as a viewfinder the shape of your video: drag one to move it, drag a corner to go closer, Option-drag to turn the camera, draw a box on the slide to add one. Whenever the window has room beside the video (always for a tall video, and for a square one in a wide window), the map sits there, as big as the room allows; otherwise it sits at the top of the inspector. Drag the edge between the map and the video to give either more room, or press ⇧⌘M to keep the map in the inspector. On the timeline, drag a framing to change when the camera lands; it snaps to your words. Esc cancels a drag halfway. In the inspector, double-click any value to type it, and a run of arrow presses is one undo.
 
 | Keys | |
 |---|---|
@@ -39,7 +39,7 @@ The slide map in the inspector shows every framing as a viewfinder the shape of 
 | ⌥⌘I, ⌥⌘R | Choose a voiceover, record a scratch take |
 | ⌥⌘L | Go live; then → or Space, ←, ↑ or a click to lead the camera, and Return to finish |
 | ⌃⌘I | Add slides after the last |
-| ⇧⌘P | Draw on the slide |
+| ⇧⌘P, Return | Draw on the slide, and put the pen away |
 | ⇧⌘D | Direct for Me |
 | ⌥⌘V | Cut moves to the voice |
 | ⇧⌘N, ⌘D, Delete | New shot at the playhead, duplicate it, delete it |
@@ -49,6 +49,7 @@ The slide map in the inspector shows every framing as a viewfinder the shape of 
 | Space or ⌘P | Play and pause |
 | ⌘[ and ⌘] | Previous and next landing; ⌘← goes to the start |
 | hold `\` | The slide exactly as supplied (the Original surface) |
+| ⇧⌘M | The slide map beside the video, or in the inspector |
 | ⇧⌘G | Show the safe areas |
 | ⌘E, ⌥⌘E, ⇧⌘E | Export, Save Cover Frame, Save Stills |
 

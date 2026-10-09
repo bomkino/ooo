@@ -32,6 +32,49 @@ extension InkColor {
         let c = srgb
         return Color(.sRGB, red: Double(c.r), green: Double(c.g), blue: Double(c.b))
     }
+
+    /// The ink as an outline that shows on the editor's surround: black ink
+    /// rings in a soft white in the dark, and white ink in a soft black in the light.
+    func ring(_ scheme: ColorScheme) -> Color {
+        switch (self, scheme) {
+        case (.black, .dark): return Color.white.opacity(0.55)
+        case (.white, .light): return Color.black.opacity(0.4)
+        default: return swatch
+        }
+    }
+}
+
+/// The pen's pointer over the card: a dot of its ink, as wide as the line it
+/// draws there, ringed so it shows on any slide.
+@MainActor
+enum InkCursor {
+    private static var made: [String: NSCursor] = [:]
+
+    static func cursor(_ ink: InkColor, width: CGFloat) -> NSCursor {
+        let d = min(max(width, 5), 44).rounded()
+        let key = "\(ink.rawValue) \(Int(d))"
+        if let c = made[key] { return c }
+        let c = ink.srgb
+        let side = d + 6
+        let image = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
+            let dot = rect.insetBy(dx: 3, dy: 3)
+            // Small, it is a dot of ink; wider, a ring, so you see what you're about to cover.
+            NSColor(srgbRed: CGFloat(c.r), green: CGFloat(c.g), blue: CGFloat(c.b), alpha: d > 12 ? 0.35 : 0.95).setFill()
+            NSBezierPath(ovalIn: dot).fill()
+            let edge = NSBezierPath(ovalIn: dot)
+            edge.lineWidth = 1.5
+            NSColor(srgbRed: CGFloat(c.r), green: CGFloat(c.g), blue: CGFloat(c.b), alpha: 1).setStroke()
+            edge.stroke()
+            let halo = NSBezierPath(ovalIn: rect.insetBy(dx: 1.5, dy: 1.5))
+            halo.lineWidth = 1
+            NSColor(white: ink == .black ? 1 : 0, alpha: 0.55).setStroke()
+            halo.stroke()
+            return true
+        }
+        let cursor = NSCursor(image: image, hotSpot: NSPoint(x: side / 2, y: side / 2))
+        made[key] = cursor
+        return cursor
+    }
 }
 
 /// Drawing on the card: circle a number, underline a word. In the video the
@@ -137,7 +180,6 @@ struct PenOverlay: View {
     @State private var stroke: [CGPoint] = []
     @State private var points: [PenPoint] = []
     @State private var width: CGFloat = 3
-    @State private var cursor = false
 
     var body: some View {
         GeometryReader { g in
@@ -168,15 +210,27 @@ struct PenOverlay: View {
                     stroke = []
                     points = []
                 })
-            .onHover { inside in
-                if inside && !cursor { NSCursor.crosshair.push(); cursor = true }
-                if !inside && cursor { NSCursor.pop(); cursor = false }
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let p): pointer(at: p, in: size).set()
+                case .ended: NSCursor.arrow.set()
+                }
             }
         }
-        .onDisappear { if cursor { NSCursor.pop(); cursor = false } }
+        .onDisappear { NSCursor.arrow.set() }
         .onChange(of: clock.playing) { _, playing in
             if playing { session.finishDrawing(replay: false) }
         }
+    }
+
+    /// The pointer: the pen's ink where it would draw, a crosshair off the
+    /// card, and a no-entry sign while the card is moving.
+    private func pointer(at p: CGPoint, in size: CGSize) -> NSCursor {
+        let x = Float(p.x / max(size.width, 1)) * 2 - 1, y = 1 - Float(p.y / max(size.height, 1)) * 2
+        guard let scene = session.scene, let hit = scene.touch(x, y, at: clock.time, canvasAspect: session.project.canvasAspect)
+        else { return NSCursor.operationNotAllowed }
+        guard (0...1).contains(hit.x), (0...1).contains(hit.y) else { return NSCursor.crosshair }
+        return InkCursor.cursor(session.pen.color, width: penWidth(at: p, in: size))
     }
 
     /// The pen's width on screen where it touches the card.
@@ -191,48 +245,103 @@ struct PenOverlay: View {
     }
 }
 
-/// The pen's colours, whether its marks stay, and Done.
-struct PenPalette: View {
+/// Draw, under the video: the pen in the ink it will draw with.
+struct PenButton: View {
     @Bindable var session: OOOSession
+    @State private var hover = false
+
+    var body: some View {
+        Button { session.togglePen() } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "pencil.tip").font(.system(size: 12, weight: .semibold))
+                Text("Draw").font(.system(size: 13, weight: .semibold))
+                Circle().fill(session.pen.color.swatch)
+                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.35), lineWidth: 0.5))
+                    .frame(width: 9, height: 9)
+            }
+            .foregroundStyle(Color.primary)
+            .padding(.horizontal, 11)
+            .frame(height: 28)
+            .background(Capsule().fill(Theme.well.opacity(hover ? 1 : 0.7)))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .disabled(!session.hasSlide)
+        .help("Draw on the slide: circle a number, underline a word. In the video it draws on as your hand did (⇧⌘P)")
+        .accessibilityLabel("Draw on the Slide")
+    }
+}
+
+/// The pen's tray, in place of the transport while you draw: its colours,
+/// whether its marks stay, and Done. Ringed in the ink, like the stage.
+struct PenTray: View {
+    @Bindable var session: OOOSession
+    /// Under a narrow video: no pen at the start, and a smaller Stays and Fades.
+    var compact = false
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        HStack(spacing: 6) {
-            ForEach(InkColor.allCases) { c in
-                Button { session.pen.color = c } label: {
-                    Circle().fill(c.swatch)
-                        .overlay(Circle().strokeBorder(Color.primary.opacity(0.25), lineWidth: 0.5))
-                        .frame(width: 15, height: 15)
-                        .padding(3)
-                        .overlay(Circle().strokeBorder(session.pen.color == c ? Color.primary.opacity(0.85) : .clear, lineWidth: 1.5))
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .help(c.title)
-                .accessibilityLabel(c.title)
+        let ink = session.pen.color
+        HStack(spacing: compact ? 6 : 8) {
+            if !compact {
+                Image(systemName: "pencil.tip").font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(ink.ring(scheme))
+                    .accessibilityHidden(true)
             }
-            Divider().frame(height: 16).padding(.horizontal, 2)
+            HStack(spacing: 2) {
+                ForEach(InkColor.allCases) { c in
+                    Swatch(ink: c, selected: ink == c) { session.pen.color = c }
+                }
+            }
+            Rectangle().fill(Theme.hairline).frame(width: 1, height: 18)
             Picker("Marks", selection: $session.pen.fades) {
                 Text("Stays").tag(false)
                 Text("Fades").tag(true)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .controlSize(.small)
+            .controlSize(compact ? .small : .regular)
             .fixedSize()
             .help("Stays until the slide changes, or fades a moment after it is drawn")
             Button("Done") { session.finishDrawing() }
                 .buttonStyle(PrimaryButtonStyle())
-                .help("Put the pen away and watch what you drew")
+                .keyboardShortcut(.defaultAction)
+                .help("Put the pen away and watch what you drew (Return)")
         }
-        // Whole even over a narrow stage, where it may reach past the card.
         .fixedSize()
-        .padding(.leading, 8)
-        .padding(.trailing, 5)
-        .padding(.vertical, 5)
-        .background(Capsule().fill(.regularMaterial))
-        .overlay(Capsule().strokeBorder(Theme.hairline))
-        .shadow(color: .black.opacity(scheme == .dark ? 0.4 : 0.12), radius: 10, y: 3)
+        .padding(.leading, compact ? 6 : 12)
+        .padding(.trailing, 4)
+        .padding(.vertical, 4)
+        .background(Capsule().fill(Theme.raised))
+        .overlay(Capsule().strokeBorder(ink.ring(scheme).opacity(0.9), lineWidth: 1.5))
+        .shadow(color: .black.opacity(scheme == .dark ? 0.35 : 0.1), radius: 8, y: 2)
+    }
+
+    /// One ink to choose, a little larger under the pointer.
+    struct Swatch: View {
+        let ink: InkColor
+        let selected: Bool
+        let action: () -> Void
+        @State private var hover = false
+
+        var body: some View {
+            Button(action: action) {
+                Circle().fill(ink.swatch)
+                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.3), lineWidth: 0.5))
+                    .frame(width: 18, height: 18)
+                    .scaleEffect(hover && !selected ? 1.1 : 1)
+                    .padding(3)
+                    .overlay(Circle().strokeBorder(selected ? Color.primary.opacity(0.9) : .clear, lineWidth: 2))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hover = $0 }
+            .animation(Theme.quick, value: hover)
+            .help(ink.title)
+            .accessibilityLabel(ink.title)
+            .accessibilityAddTraits(selected ? .isSelected : [])
+        }
     }
 }
 
@@ -248,15 +357,15 @@ struct MarkPin: View {
     @State private var hover = false
 
     var body: some View {
-        let w = max(CGFloat(mark.drawLength) * scale.pointsPerSecond, 10)
+        let w = max(CGFloat(mark.drawLength) * scale.pointsPerSecond, 14)
         Capsule()
             .fill(mark.color.swatch)
             .overlay(Capsule().strokeBorder(Color.black.opacity(0.35), lineWidth: 0.5))
             .overlay(alignment: .leading) {
-                Image(systemName: "pencil.tip").font(.system(size: 7, weight: .bold)).foregroundStyle(.black.opacity(0.6))
+                Image(systemName: "pencil.tip").font(.system(size: 8, weight: .bold)).foregroundStyle(.black.opacity(0.6))
                     .padding(.leading, 3).opacity(w > 16 ? 1 : 0)
             }
-            .frame(width: w, height: hover || dragStart != nil ? 11 : 9)
+            .frame(width: w, height: hover || dragStart != nil ? 13 : 11)
             .opacity(mark.fades ? 0.75 : 1)
             .contentShape(Rectangle().inset(by: -3))
             .onHover { hover = $0 }
