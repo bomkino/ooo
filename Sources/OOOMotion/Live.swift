@@ -301,6 +301,11 @@ public struct LiveTake: Sendable {
             // The ending's first move sets off once you have finished.
             let last = c.beats.lastIndex { own.contains($0.shot.id) } ?? 0
             if last + 1 < c.beats.count { need += max(end + 0.15 - c.beats[last + 1].depart, 0) }
+            // Each of its moves takes the time it wants, however late your last press.
+            for j in c.beats.indices where j > max(last, 0) && c.beats[j].wanted > 0 {
+                let short = c.beats[j - 1].land + Choreography.room(forTravel: c.beats[j].wanted) - c.beats[j].land
+                if short > 1e-3 { need = max(need, d + short) }
+            }
             // And lands, with time to rest, before the end.
             if let final = c.beats.last {
                 switch final.role {

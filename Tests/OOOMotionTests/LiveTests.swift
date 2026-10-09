@@ -263,7 +263,7 @@ final class LiveLookTests: XCTestCase {
         for ending in Ending.allCases {
             var t = take([Shot(time: 5, frame: ShotFrame(center: Vec2(0.3, 0.3), size: Vec2(0.2, 0.25)), label: "One")], ending: ending)
             t.step(.next, at: 4)
-            for end in [9.0, 4.6] {
+            for end in [9.0, 4.6, 4.1] {
                 let (shots, _) = t.finished(at: end)
                 var i = t.base
                 i.shots = shots
@@ -274,6 +274,7 @@ final class LiveLookTests: XCTestCase {
                 if let pull = c.beats.first(where: { $0.role == .pullBack }) {
                     XCTAssertGreaterThanOrEqual(pull.depart, end + 0.1, "\(ending) at \(end)")
                     XCTAssertLessThanOrEqual(pull.land, d - 1.0, "\(ending) at \(end)")
+                    XCTAssertGreaterThanOrEqual(pull.travel, pull.wanted - 1e-3, "the pull back isn't hurried, \(ending) at \(end)")
                 }
                 XCTAssertEqual(c.endingProgress(at: end + 0.3), 0, "\(ending)")
             }
