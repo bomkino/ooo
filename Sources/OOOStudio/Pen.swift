@@ -259,6 +259,7 @@ struct PenButton: View {
                     .overlay(Circle().strokeBorder(Color.primary.opacity(0.35), lineWidth: 0.5))
                     .frame(width: 9, height: 9)
             }
+            .fixedSize()
             .foregroundStyle(Color.primary)
             .padding(.horizontal, 11)
             .frame(height: 28)

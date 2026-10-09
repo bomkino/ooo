@@ -639,7 +639,8 @@ extension OOOSession {
 // MARK: - Views
 
 /// Go Live, beside Draw under the video: a red dot and its name, which
-/// breathes and reads Finish during a take. Under a narrow video, the dot alone.
+/// breathes and reads Finish during a take. Under a narrow video, a camera
+/// alone, so it isn't taken for Draw's dot of ink.
 struct LiveButton: View {
     let session: OOOSession
     var compact = false
@@ -650,15 +651,21 @@ struct LiveButton: View {
         let live = session.isLive
         Button { session.toggleLive() } label: {
             HStack(spacing: 6) {
-                Circle().fill(Theme.camera)
-                    .frame(width: 8, height: 8)
-                    .opacity(live ? (breathe ? 1 : 0.45) : 1)
-                    .animation(live ? .easeInOut(duration: 0.9).repeatForever(autoreverses: true) : .default, value: breathe)
-                    .onAppear { breathe = true }
+                Group {
+                    if compact {
+                        Image(systemName: "video.fill").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.camera)
+                    } else {
+                        Circle().fill(Theme.camera).frame(width: 8, height: 8)
+                    }
+                }
+                .opacity(live ? (breathe ? 1 : 0.45) : 1)
+                .animation(live ? .easeInOut(duration: 0.9).repeatForever(autoreverses: true) : .default, value: breathe)
+                .onAppear { breathe = true }
                 if !compact {
                     Text(live ? "Finish" : "Go Live").font(.system(size: 13, weight: .semibold))
                 }
             }
+            .fixedSize()
             .foregroundStyle(live ? Theme.camera : Color.primary)
             .padding(.horizontal, compact ? 10 : 11)
             .frame(height: 28)
