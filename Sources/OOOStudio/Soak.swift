@@ -26,10 +26,13 @@ enum OOOSoak {
     /// More memory than this, or a main thread silent for longer, fails the run.
     static let memoryLimit: Double = 3000
     static let stallLimit: Double = 2
-    /// Memory gained after going back to Frame, beyond what Frame settled at,
-    /// and the share of the scroll the main thread may spend working (the
-    /// test machine's timers run late, so wall time says little).
-    static let growthLimit: Double = 400
+    /// Memory gained after going back to Frame, beyond what Frame settled at:
+    /// at most, while scrubbing (the test machine decodes in software, every
+    /// jump a fresh decoder), and still held once it rests. And the share of
+    /// the scroll the main thread may spend working (the test machine's
+    /// timers run late, so wall time says little).
+    static let growthLimit: Double = 500
+    static let keptLimit: Double = 100
     static let busyLimit: Double = 0.5
 
     static func run(_ session: OOOSession, done: @escaping (Int32) -> Void) {
@@ -138,7 +141,7 @@ enum OOOSoak {
 
             beat.invalidate()
             monitor.stop()
-            let verdict = monitor.verdict(memoryLimit: memoryLimit, stallLimit: stallLimit, growthLimit: growthLimit,
+            let verdict = monitor.verdict(memoryLimit: memoryLimit, stallLimit: stallLimit, growthLimit: growthLimit, keptLimit: keptLimit,
                                           busy: busy, busyLimit: busyLimit)
             print(verdict.line)
             ProcessInfo.processInfo.endActivity(awake)
@@ -267,7 +270,7 @@ final class SoakMonitor: @unchecked Sendable {
         }
     }
 
-    func verdict(memoryLimit: Double, stallLimit: Double, growthLimit: Double,
+    func verdict(memoryLimit: Double, stallLimit: Double, growthLimit: Double, keptLimit: Double,
                  busy: Double, busyLimit: Double) -> (ok: Bool, line: String) {
         let w = lock.withLock { worst }
         var lines = w.map { String(format: "soak: worst in %@: memory %.0f MB, main thread late %.2f s", $0.phase, $0.memory, $0.late) }
@@ -275,10 +278,13 @@ final class SoakMonitor: @unchecked Sendable {
         let settled = w.first { $0.phase == "frame" }?.memory ?? memory
         let after = w.drop(while: { $0.phase != "frame" }).map(\.memory).max() ?? settled
         let grew = after - settled
-        let ok = memory <= memoryLimit && late <= stallLimit && grew <= growthLimit && busy <= busyLimit
-        lines.append(String(format: "soak: %@ (most memory %.0f MB, limit %.0f; grew %.0f MB after Frame settled, limit %.0f; "
-                                + "longest the main thread was late %.2f s, limit %.1f; busy %.0f%% of the scroll, limit %.0f%%)",
-                            ok ? "passed" : "FAILED", memory, memoryLimit, grew, growthLimit, late, stallLimit, busy * 100, busyLimit * 100))
+        let kept = (w.last?.memory ?? settled) - settled
+        let ok = memory <= memoryLimit && late <= stallLimit && grew <= growthLimit && kept <= keptLimit && busy <= busyLimit
+        lines.append(String(format: "soak: %@ (most memory %.0f MB, limit %.0f; grew %.0f MB after Frame settled, limit %.0f, "
+                                + "and kept %.0f MB at rest, limit %.0f; longest the main thread was late %.2f s, limit %.1f; "
+                                + "busy %.0f%% of the scroll, limit %.0f%%)",
+                            ok ? "passed" : "FAILED", memory, memoryLimit, grew, growthLimit, kept, keptLimit, late, stallLimit,
+                            busy * 100, busyLimit * 100))
         return (ok, lines.joined(separator: "\n"))
     }
 
