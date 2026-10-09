@@ -11,8 +11,32 @@ final class LiveCoreTests: XCTestCase {
         filmed.face = FaceClip(file: "you.mov", duration: 20, aspect: 16.0 / 9.0, mirrored: true)
         let j = try XCTUnwrap(JSONSerialization.jsonObject(with: ProjectPackage.encode(filmed)) as? [String: Any])
         XCTAssertEqual(j["minimumReaderVersion"] as? Int, 4)
-        XCTAssertEqual(OOOProject.readerVersion, 4)
+        XCTAssertEqual(OOOProject.readerVersion, 5)
         XCTAssertEqual(try ProjectPackage.decode(ProjectPackage.encode(filmed)), filmed)
+    }
+
+    /// A mark in a colour, width or stay of its own needs OOO 1.2.1; one as 1.0.1 drew it doesn't.
+    func testInkOfYourOwnNeedsOOO121() throws {
+        var p = OOOProject.sample
+        p.marks = [Mark(time: 1, strokes: [[InkPoint(x: 0.4, y: 0.4, t: 0), InkPoint(x: 0.5, y: 0.4, t: 0.3)]])]
+        XCTAssertEqual(p.neededReader, 3)
+        p.marks?[0].width = Mark.widths[3]
+        XCTAssertEqual(p.neededReader, 5)
+        p.marks?[0].width = Mark.penWidth
+        p.marks?[0].color = .blue
+        XCTAssertEqual(p.neededReader, 5)
+        XCTAssertEqual(try ProjectPackage.decode(ProjectPackage.encode(p)), p)
+    }
+
+    /// A green screen taken out needs OOO 1.2.1: an older one would show the green.
+    func testGreenScreenNeedsOOO121() throws {
+        var filmed = OOOProject.sample
+        filmed.face = FaceClip(file: "you.mov", duration: 20, aspect: 16.0 / 9.0, mirrored: true, greenScreen: true)
+        XCTAssertEqual(filmed.neededReader, 5)
+        XCTAssertEqual(try ProjectPackage.decode(ProjectPackage.encode(filmed)), filmed)
+        XCTAssertEqual(GreenScreen.key(0.27, 0.74, 0.33).screen, 1, accuracy: 0.01)
+        XCTAssertEqual(GreenScreen.key(0.86, 0.67, 0.55).screen, 0, accuracy: 0.01)
+        XCTAssertEqual(GreenScreen.key(0.13, 0.16, 0.22).screen, 0, accuracy: 0.01)
     }
 
     /// Saving keeps every slide's file, the voiceover's and the camera's: 1.0.1

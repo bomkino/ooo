@@ -208,6 +208,7 @@ struct StageMenu: View {
     @Bindable var session: OOOSession
     @AppStorage("showSafeAreas") private var showSafeAreas = false
     @AppStorage("live.camera") private var filmMe = true
+    @AppStorage("live.greenScreen") private var greenScreen = false
 
     var body: some View {
         switch session.mode {
@@ -225,29 +226,28 @@ struct StageMenu: View {
             Button("Save This Frame…") { OOOCommands.saveCoverFrame(session) }
             Toggle("Show Safe Areas", isOn: $showSafeAreas)
         case .draw:
-            Picker("Ink", selection: $session.pen.color) {
-                ForEach(InkColor.allCases) { Text($0.title).tag($0) }
-            }
-            Picker("Marks", selection: $session.pen.fades) {
-                Text("Stay Until the Slide Changes").tag(false)
-                Text("Fade After They Are Drawn").tag(true)
-            }
-            Divider()
-            Button("Previous Still Point") { session.stepStill(-1) }
-            Button("Next Still Point") { session.stepStill(1) }
-            Divider()
-            Button("Undo Last Mark") { session.deleteLastMark() }
-                .disabled(session.project.marks?.isEmpty ?? true)
-            Button("Clear Marks Here") { session.clearMarksHere() }
-                .disabled(session.project.marks?.isEmpty ?? true)
-            Divider()
-            Button("Done Drawing") { session.finishDrawing() }
+            PenMenu(session: session)
         case .live:
             switch session.liveStep {
             case .room:
                 Button("Start") { session.startTake() }
                     .disabled(session.liveCapture.phase != .ready)
                 Toggle("Film Me", isOn: Binding(get: { filmMe }, set: { session.setFilmMe($0) }))
+                Menu("Camera") {
+                    ForEach(session.liveCapture.cameras) { d in
+                        Toggle(d.name, isOn: Binding(get: { filmMe && session.liveCapture.cameraInUse == d.id },
+                                                     set: { _ in session.chooseCamera(d.id) }))
+                    }
+                }
+                .disabled(session.liveCapture.cameras.isEmpty)
+                Menu("Microphone") {
+                    ForEach(session.liveCapture.microphones) { d in
+                        Toggle(d.name, isOn: Binding(get: { session.liveCapture.microphoneInUse == d.id },
+                                                     set: { _ in session.chooseMicrophone(d.id) }))
+                    }
+                }
+                .disabled(session.liveCapture.microphones.isEmpty)
+                Toggle("Green Screen Behind Me", isOn: Binding(get: { greenScreen }, set: { session.setGreenScreen($0) }))
                 Divider()
                 Button("Preview the Opening") { session.previewOpening() }
                 Button("Preview the Closing") { session.previewClosing() }

@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.2.1 — 9 October 2026
+
+- Going back to Frame after a live take no longer freezes OOO. The camera recording of you used to be decoded on the window's own thread, and started over from scratch at every step back while you scrubbed or scrolled the playhead, holding the whole window up and piling up memory until the Mac struggled too. It now decodes beside the window, a few frames ahead as the video plays, and after a jump starts over just once, for wherever you stopped. The window never waits for it.
+- Choose your camera and microphone in the Live room: the camera menu beside Start lists every camera (the Mac's own, an iPhone, a USB camera) and every microphone, and switches at once. OOO remembers your choice.
+- A green screen remover. Tick Green Screen Behind Me in that menu and the green goes from behind you, in the room as you film and in the video, so you stand in front of the backdrop itself, shadows on the screen included, with the green spill taken off your edges. A take already kept can switch it on or off afterwards, under Space for You or beside Play.
+- The pen grows up. Draw's tray now has the pen and three shapes it draws for you, an arrow, a box and a circle: drag from where it starts to where it ends (⇧ for a square, a round circle or a straight arrow), and in the video it draws on as a hand would, never quite ruled. Four widths, from fine to bold. Six inks (green and blue join red, yellow, white and black) and a colour of your own.
+- Say how long a mark stays. Marks that fade choose their stay, from half a second to eight, and on the timeline each one has a tail as long as it stays: drag its end to keep it longer or shorter, and its length is written on it.
+- Right-click the stage while you draw, or during a live take with the pen out, for the same choices; right-click a mark for its colour, width and stay.
+- Files that take out a green screen, or hold marks in the new inks, widths or stays, need OOO 1.2.1 to open.
+- A retake lets go of the recording it replaces, instead of keeping both open.
+- Once a take has put you in the space under the stage, the dashed outline of where you'll be stops drawing over you.
+- CI now films a stand-in take, keeps it, plays it back in Live and in Frame, scrubs and scrolls it, and fails if the window stops answering or its memory runs away.
+
 ## 1.2.0 — 9 October 2026
 
 OOO made for people: three modes you can always see, a timeline that says how long everything lasts and lets you stretch it, a slide map where drawing a new framing just works, and Live as a room you step into, check, start and close.

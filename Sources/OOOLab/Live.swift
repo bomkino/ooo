@@ -9,7 +9,7 @@ import OOOMotion
 /// at a desk, swaying a little and talking, with a clock along the bottom
 /// so a frame shows when it was taken, and a badge on their right shoulder so
 /// a mirror shows. 1280 × 720 at 30 fps, as a Mac's camera records.
-func writeStandIn(to url: URL, seconds: Double, width: Int = 1280, height: Int = 720) throws {
+func writeStandIn(to url: URL, seconds: Double, width: Int = 1280, height: Int = 720, greenScreen: Bool = false) throws {
     try? FileManager.default.removeItem(at: url)
     let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
     let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
@@ -36,7 +36,7 @@ func writeStandIn(to url: URL, seconds: Double, width: Int = 1280, height: Int =
         if let ctx = CGContext(data: CVPixelBufferGetBaseAddress(pb), width: width, height: height, bitsPerComponent: 8,
                                bytesPerRow: CVPixelBufferGetBytesPerRow(pb), space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) {
-            drawStandIn(ctx, width: CGFloat(width), height: CGFloat(height), t: t, length: seconds)
+            drawStandIn(ctx, width: CGFloat(width), height: CGFloat(height), t: t, length: seconds, greenScreen: greenScreen)
         }
         CVPixelBufferUnlockBaseAddress(pb, [])
         adaptor.append(pb, withPresentationTime: CMTime(value: CMTimeValue(n), timescale: CMTimeScale(fps)))
@@ -48,15 +48,21 @@ func writeStandIn(to url: URL, seconds: Double, width: Int = 1280, height: Int =
     if writer.status != .completed { throw writer.error ?? CocoaError(.fileWriteUnknown) }
 }
 
-private func drawStandIn(_ ctx: CGContext, width w: CGFloat, height h: CGFloat, t: Double, length: Double) {
+private func drawStandIn(_ ctx: CGContext, width w: CGFloat, height h: CGFloat, t: Double, length: Double, greenScreen: Bool) {
     let rgb = CGColorSpace(name: CGColorSpace.sRGB)!
-    // A warm room behind.
-    let wall = CGGradient(colorsSpace: rgb, colors: [CGColor(srgbRed: 0.42, green: 0.36, blue: 0.31, alpha: 1),
-                                                     CGColor(srgbRed: 0.2, green: 0.17, blue: 0.16, alpha: 1)] as CFArray,
-                          locations: [0, 1])!
+    // A warm room behind, or a green screen lit unevenly, as one at home is.
+    let colors = greenScreen
+        ? [CGColor(srgbRed: 0.27, green: 0.74, blue: 0.33, alpha: 1), CGColor(srgbRed: 0.1, green: 0.42, blue: 0.18, alpha: 1)]
+        : [CGColor(srgbRed: 0.42, green: 0.36, blue: 0.31, alpha: 1), CGColor(srgbRed: 0.2, green: 0.17, blue: 0.16, alpha: 1)]
+    let wall = CGGradient(colorsSpace: rgb, colors: colors as CFArray, locations: [0, 1])!
     ctx.drawLinearGradient(wall, start: CGPoint(x: 0, y: h), end: CGPoint(x: 0, y: 0), options: [])
     let sway = CGFloat(sin(t * 1.3) * 10 + sin(t * 0.47) * 6)
     let cx = w / 2 + sway
+    if greenScreen {
+        // Your shadow on the screen, a little to one side.
+        ctx.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.45))
+        ctx.fillEllipse(in: CGRect(x: cx - w * 0.2 + w * 0.09, y: -h * 0.3, width: w * 0.5, height: h * 0.95))
+    }
     // Shoulders, and a badge on their right (the left of the picture).
     ctx.setFillColor(CGColor(srgbRed: 0.13, green: 0.16, blue: 0.22, alpha: 1))
     ctx.fillEllipse(in: CGRect(x: cx - w * 0.3, y: -h * 0.35, width: w * 0.6, height: h * 0.62))
@@ -157,6 +163,28 @@ struct LabTake {
 
 /// How different two frames are in the room at the bottom (`room` of the
 /// height): the mean change per channel, 0…1.
+/// The share of the room (the bottom `room` of the frame) that is green
+/// screen: much greener than red or blue.
+func roomGreen(_ img: CGImage, room: Float) -> Double {
+    var data = [UInt8](repeating: 0, count: img.width * img.height * 4)
+    data.withUnsafeMutableBytes { raw in
+        guard let ctx = CGContext(data: raw.baseAddress, width: img.width, height: img.height, bitsPerComponent: 8,
+                                  bytesPerRow: img.width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+        ctx.draw(img, in: CGRect(x: 0, y: 0, width: img.width, height: img.height))
+    }
+    let first = Int(Float(img.height) * (1 - room)), w = img.width
+    var green = 0, count = 0
+    for y in first..<img.height {
+        for x in 0..<w {
+            let i = (y * w + x) * 4
+            if Int(data[i + 1]) - max(Int(data[i]), Int(data[i + 2])) > 40 { green += 1 }
+            count += 1
+        }
+    }
+    return count > 0 ? Double(green) / Double(count) : 0
+}
+
 func roomDifference(_ a: CGImage, _ b: CGImage, room: Float) -> Double {
     func pixels(_ img: CGImage) -> [UInt8] {
         var data = [UInt8](repeating: 0, count: img.width * img.height * 4)

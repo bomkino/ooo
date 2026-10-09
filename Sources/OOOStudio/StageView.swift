@@ -25,9 +25,29 @@ final class StageCoordinator: NSObject, MTKViewDelegate {
     private var gpuMs: Double = 0
     /// Display refreshes in a row with nothing new to draw.
     private var idle = 0
+    /// The view it draws into, to wake when your recording's frame arrives.
+    weak var view: MTKView?
+    /// A frame of your recording the stage was waiting for has been decoded.
+    private var faceDue = false
 
     init(session: OOOSession) {
         self.session = session
+        super.init()
+        NotificationCenter.default.addObserver(self, selector: #selector(faceFrameArrived),
+                                               name: FaceCompositor.frameArrived, object: nil)
+    }
+
+    /// Your recording decodes beside the stage, never holding it up; a frame
+    /// that arrives while the stage is at rest is drawn as it comes.
+    @objc private func faceFrameArrived(_ note: Notification) {
+        MainActor.assumeIsolated {
+            guard session?.project.face != nil else { return }
+            faceDue = true
+            if let view, view.isPaused {
+                lastTime = CACurrentMediaTime()
+                view.isPaused = false
+            }
+        }
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
@@ -59,7 +79,7 @@ final class StageCoordinator: NSObject, MTKViewDelegate {
             return
         }
         let version = session.version
-        let needs = clock.playing || version != lastVersion || clock.time != lastDrawn || view.drawableSize != lastSize
+        let needs = clock.playing || version != lastVersion || clock.time != lastDrawn || view.drawableSize != lastSize || faceDue
         if !needs {
             // Half a second with nothing to draw: stop waking the display
             // until something the stage shows changes.
@@ -68,6 +88,7 @@ final class StageCoordinator: NSObject, MTKViewDelegate {
             return
         }
         idle = 0
+        faceDue = false
         guard let drawable = view.currentDrawable, let cb = GPU.shared.queue.makeCommandBuffer() else { return }
         if let scene = session.scene, let stage = OOOShared.stage {
             let samples = clock.playing ? liveSamples : 8
@@ -100,6 +121,7 @@ final class StageCoordinator: NSObject, MTKViewDelegate {
         }
         cb.present(drawable)
         cb.commit()
+        SoakCounts.shared.stageFrame()
         lastVersion = version
         lastDrawn = clock.time
         lastSize = view.drawableSize
@@ -200,6 +222,7 @@ struct StagePreview: NSViewRepresentable {
         v.autoResizeDrawable = false
         v.preferredFramesPerSecond = 60
         v.delegate = coordinator
+        coordinator.view = v
         v.layer?.isOpaque = true
         (v.layer as? CAMetalLayer)?.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
         v.drawableSize = pixelSize
@@ -314,12 +337,17 @@ struct StageArea: View {
         let px = CGSize(width: (fitted.width * scale * k).rounded(), height: (fitted.height * scale * k).rounded())
         let drawing = session.pen.on
         let recording = session.isLive && session.liveStep != .room && session.liveStep != .kept
-        let ring: Color = dropTargeted ? Theme.camera : (drawing ? session.pen.color.ring(scheme) : (recording ? Theme.camera : Theme.hairline))
+        let ring: Color = dropTargeted ? Theme.camera : (drawing ? session.pen.tone.ring(scheme) : (recording ? Theme.camera : Theme.hairline))
         return VStack(spacing: 0) {
             StageStatus(session: session).frame(height: Self.top)
             stage(px)
                 .frame(width: fitted.width, height: fitted.height)
-                .overlay { if session.showRoom && !session.isLive && !(session.project.lift?.isEmpty ?? true) { RoomGuide(session: session, clock: session.clock) } }
+                // Where you'll be, until a live take has put you there.
+                .overlay {
+                    if session.showRoom && !session.isLive && session.project.face == nil && !(session.project.lift?.isEmpty ?? true) {
+                        RoomGuide(session: session, clock: session.clock)
+                    }
+                }
                 .overlay { if showSafeAreas { SafeAreaGuides(format: session.project.format) } }
                 .overlay { if session.isLive { LiveOverlay(session: session, capture: session.liveCapture) } }
                 .overlay { if drawing { PenOverlay(session: session, clock: session.clock) } }
@@ -403,7 +431,7 @@ struct StageStatus: View {
 
     @ViewBuilder
     private var draw: some View {
-        Image(systemName: "pencil.tip").font(.system(size: 11, weight: .semibold)).foregroundStyle(session.pen.color.swatch)
+        Image(systemName: "pencil.tip").font(.system(size: 11, weight: .semibold)).foregroundStyle(session.pen.tone.swatch)
         if session.clock.playing {
             line("Draw", "Going to where the slide lies still.")
         } else if session.penCanDraw {
@@ -482,7 +510,7 @@ struct TransportBar: View {
     /// The width of the video's column.
     let width: CGFloat
 
-    static func height(_ mode: EditorMode) -> CGFloat { mode == .live ? 86 : 44 }
+    static func height(_ mode: EditorMode) -> CGFloat { mode == .frame ? 44 : 86 }
 
     var body: some View {
         // Under a narrower video the time keeps only where you are, then gives way.
@@ -490,7 +518,7 @@ struct TransportBar: View {
         ZStack {
             switch session.mode {
             case .draw:
-                PenTray(session: session, compact: width < 420)
+                PenTray(session: session, compact: width < 480)
                     .transition(.scale(scale: 0.92).combined(with: .opacity))
             case .live:
                 LiveBar(session: session, capture: session.liveCapture, width: width)

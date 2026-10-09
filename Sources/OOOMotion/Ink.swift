@@ -37,6 +37,10 @@ public enum InkColor: String, Codable, CaseIterable, Sendable, Identifiable {
     case red
     /// A highlighter yellow.
     case yellow
+    /// A felt-tip green.
+    case green
+    /// A ballpoint blue.
+    case blue
     /// Chalk white, for dark slides.
     case white
     /// Ink black.
@@ -47,6 +51,8 @@ public enum InkColor: String, Codable, CaseIterable, Sendable, Identifiable {
         switch self {
         case .red: return "Red"
         case .yellow: return "Yellow"
+        case .green: return "Green"
+        case .blue: return "Blue"
         case .white: return "White"
         case .black: return "Black"
         }
@@ -57,10 +63,22 @@ public enum InkColor: String, Codable, CaseIterable, Sendable, Identifiable {
         switch self {
         case .red: return (0.89, 0.19, 0.16)
         case .yellow: return (1.0, 0.82, 0.12)
+        case .green: return (0.16, 0.68, 0.34)
+        case .blue: return (0.15, 0.42, 0.93)
         case .white: return (0.97, 0.96, 0.93)
         case .black: return (0.08, 0.08, 0.09)
         }
     }
+
+    /// The colours OOO 1.0.1 to 1.2.0 can draw.
+    public var isOriginal: Bool { self == .red || self == .yellow || self == .white || self == .black }
+}
+
+/// A shape drawn for you, as a hand would: an arrow, a box or a circle.
+public enum InkShape: String, Codable, CaseIterable, Sendable {
+    case arrow
+    case box
+    case circle
 }
 
 /// A mark drawn on the card by hand: a circle round a number, a line under
@@ -76,24 +94,46 @@ public struct Mark: Codable, Hashable, Sendable, Identifiable {
     /// The pen's strokes, in the order they were drawn.
     public var strokes: [[InkPoint]]
     public var color: InkColor
+    /// A colour of your own, sRGB 0…1 (r, g, b), in place of `color`.
+    public var custom: [Float]?
     /// The pen's width, as a share of the slide's height.
     public var width: Float
     /// Fades a moment after it is drawn; otherwise it stays until the slide changes.
     public var fades: Bool
+    /// Seconds a mark that fades stays once drawn; nil is `lingers`.
+    public var linger: Double?
 
     public init(id: UUID = UUID(), page: UUID? = nil, time: Double, strokes: [[InkPoint]], color: InkColor = .red,
-                width: Float = Mark.penWidth, fades: Bool = false) {
+                custom: [Float]? = nil, width: Float = Mark.penWidth, fades: Bool = false, linger: Double? = nil) {
         self.id = id
         self.page = page
         self.time = time
         self.strokes = strokes
         self.color = color
+        self.custom = custom
         self.width = width
         self.fades = fades
+        self.linger = linger
     }
 
-    /// One pen: a fine marker.
+    /// The pen as it came: a fine marker.
     public static let penWidth: Float = 0.0075
+    /// The pens to choose from, finest first, as shares of the slide's height.
+    public static let widths: [Float] = [0.0045, 0.0075, 0.013, 0.022]
+    /// How long a mark that fades can stay, in seconds.
+    public static let lingerRange: ClosedRange<Double> = 0.2...30
+
+    /// Its ink in sRGB, 0…1: your own colour, or the pen's.
+    public var ink: (r: Float, g: Float, b: Float) {
+        if let c = custom, c.count == 3 { return (c[0], c[1], c[2]) }
+        return color.srgb
+    }
+
+    /// Seconds it stays once drawn, when it fades.
+    public var stay: Double { linger ?? Mark.lingers }
+
+    /// Uses what OOO 1.2.1 added: a colour, a width or a stay of its own.
+    public var needsOOO121: Bool { custom != nil || linger != nil || !color.isOriginal || width != Mark.penWidth }
 
     /// How long it takes to draw, as it was drawn.
     public var drawLength: Double { max(Double(strokes.last?.last?.t ?? 0), 0.12) }
@@ -103,7 +143,7 @@ public struct Mark: Codable, Hashable, Sendable, Identifiable {
     public static let lingers = 1.4
     public static let fadeLength = 0.6
     /// The last moment it shows when it fades.
-    public var gone: Double { drawn + Mark.lingers + Mark.fadeLength }
+    public var gone: Double { drawn + stay + Mark.fadeLength }
 
     /// How far it has drawn on at `t`, 0…1 of its own time (nil before it starts).
     public func head(at t: Double) -> Float? {
@@ -130,7 +170,7 @@ public struct Mark: Codable, Hashable, Sendable, Identifiable {
     public func presence(at t: Double, until: Double?) -> Float {
         guard t >= time else { return 0 }
         var p: Float = 1
-        if fades { p *= 1 - smoothstep(Float((t - drawn - Mark.lingers) / Mark.fadeLength)) }
+        if fades { p *= 1 - smoothstep(Float((t - drawn - stay) / Mark.fadeLength)) }
         if let until { p *= 1 - smoothstep(Float((t - (until - 0.3)) / 0.3)) }
         return p
     }
@@ -150,6 +190,101 @@ public struct Mark: Codable, Hashable, Sendable, Identifiable {
             let y = f.center.y + ry * sinf(a) * wobble - 0.01 * u
             let t = 0.95 * (u - 0.08 * sinf(2 * .pi * u) / (2 * .pi))
             return InkPoint(x: x, y: y, t: t)
+        }
+    }
+
+    /// A shape as a hand draws one, from `a` to `b` on a slide `A` wide
+    /// (points across and down it, 0…1): an arrow from `a` pointing at `b`,
+    /// or a box or a circle filling the rectangle between them. Never quite
+    /// ruled, drawn on at a hand's pace, slowing at corners; its strokes stay
+    /// on the slide.
+    public static func shape(_ kind: InkShape, from a: (x: Float, y: Float), to b: (x: Float, y: Float),
+                             slideAspect A: Float, seed: Int = 0) -> [[InkPoint]] {
+        // Worked out across the slide's own proportions, so a circle is round.
+        let A = max(A, 0.01)
+        let p0 = SIMD2<Float>(a.x * A, a.y), p1 = SIMD2<Float>(b.x * A, b.y)
+        let s = Float(seed)
+        var strokes: [[SIMD3<Float>]] = []
+        switch kind {
+        case .circle:
+            let c = (p0 + p1) / 2
+            let r = SIMD2<Float>(max(abs(p1.x - p0.x) / 2, 0.012), max(abs(p1.y - p0.y) / 2, 0.012))
+            let length = 2 * Float.pi * (r.x + r.y) / 2 * 1.08
+            let d = min(max(length / 1.3, 0.45), 1.1)
+            let n = max(Int(length / 0.004), 40)
+            let start: Float = -2.3 + 0.2 * sinf(s)
+            strokes.append((0...n).map { i in
+                let u = Float(i) / Float(n)
+                let angle = start + u * 2 * .pi * 1.08
+                let wobble = 1 + 0.022 * sinf(3 * angle + s) + 0.012 * sinf(5 * angle + 1.3)
+                // A loop drifts a little as it closes, as a hand's does.
+                let x = c.x + r.x * cosf(angle) * wobble + 0.15 * r.x * 0.04 * u
+                let y = c.y + r.y * sinf(angle) * wobble - 0.15 * r.y * 0.06 * u
+                return SIMD3(x, y, d * (u - 0.08 * sinf(2 * .pi * u) / (2 * .pi)))
+            })
+        case .box:
+            let lo = SIMD2<Float>(min(p0.x, p1.x), min(p0.y, p1.y)), hi = SIMD2<Float>(max(p0.x, p1.x), max(p0.y, p1.y))
+            let w = max(hi.x - lo.x, 0.012), h = max(hi.y - lo.y, 0.012)
+            let corners = [SIMD2(lo.x, lo.y), SIMD2(lo.x + w, lo.y), SIMD2(lo.x + w, lo.y + h), SIMD2(lo.x, lo.y + h), SIMD2(lo.x, lo.y)]
+            var points: [SIMD3<Float>] = []
+            var t: Float = 0
+            for k in 0..<4 {
+                var from = corners[k], to = corners[k + 1]
+                let side = (to - from).length, dir = (to - from) / max(side, 1e-6)
+                // Each side runs a touch past its corner, the last one most.
+                from -= dir * min(side * 0.02, 0.006)
+                to += dir * min(side * (k == 3 ? 0.06 : 0.025), 0.012)
+                let normal = SIMD2(-dir.y, dir.x)
+                let bow = min(side * 0.012, 0.004) * (k % 2 == 0 ? 1 : -1) * (1 + 0.3 * sinf(s + Float(k)))
+                let n = max(Int((to - from).length / 0.004), 8)
+                let d = min(max(side / 1.6, 0.12), 0.4)
+                for i in 0...n {
+                    let u = Float(i) / Float(n)
+                    let q = from + (to - from) * u + normal * bow * sinf(.pi * u)
+                    points.append(SIMD3(q.x, q.y, t + d * (u - 0.1 * sinf(2 * .pi * u) / (2 * .pi))))
+                }
+                // The hand turns the corner.
+                t += d + 0.05
+            }
+            strokes.append(points)
+        case .arrow:
+            var along = p1 - p0
+            if along.length < 0.02 { along = SIMD2(0.02, 0) }
+            let tip = p0 + along
+            let length = along.length, dir = along / length, normal = SIMD2(-dir.y, dir.x)
+            let bow = length * 0.03 * (sinf(s) >= 0 ? 1 : -1)
+            let n = max(Int(length / 0.004), 10)
+            let d = min(max(length / 1.5, 0.2), 0.7)
+            strokes.append((0...n).map { i in
+                let u = Float(i) / Float(n)
+                let q = p0 + along * u + normal * bow * sinf(.pi * u)
+                return SIMD3(q.x, q.y, d * (u - 0.1 * sinf(2 * .pi * u) / (2 * .pi)))
+            })
+            // The head: one stroke, in to the tip and back out, a moment later.
+            let wing = min(max(length * 0.22, 0.025), 0.09)
+            // The shaft arrives at the tip a little turned by its bow.
+            let bent = dir - normal * bow * .pi / length, arriving = bent / max(bent.length, 1e-6)
+            func turned(_ v: SIMD2<Float>, _ angle: Float) -> SIMD2<Float> {
+                SIMD2(v.x * cosf(angle) - v.y * sinf(angle), v.x * sinf(angle) + v.y * cosf(angle))
+            }
+            let left = tip - turned(arriving, 0.48) * wing, right = tip - turned(arriving, -0.44) * wing * 0.95
+            let m = max(Int(wing / 0.003), 8)
+            let start = d + 0.12, half: Float = 0.12
+            var head: [SIMD3<Float>] = []
+            for i in 0...m {
+                let u = Float(i) / Float(m)
+                let q = left + (tip - left) * u
+                head.append(SIMD3(q.x, q.y, start + half * u))
+            }
+            for i in 1...m {
+                let u = Float(i) / Float(m)
+                let q = tip + (right - tip) * u
+                head.append(SIMD3(q.x, q.y, start + half + 0.02 + half * u))
+            }
+            strokes.append(head)
+        }
+        return strokes.map { stroke in
+            stroke.map { InkPoint(x: min(max($0.x / A, 0), 1), y: min(max($0.y, 0), 1), t: $0.z) }
         }
     }
 

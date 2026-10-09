@@ -155,6 +155,8 @@ public final class OOOSession {
     @ObservationIgnored var penMarks: [UUID] = [] { didSet { sceneCache = nil } }
     /// The mark the pen is adding to, and when its last stroke ended (seconds).
     @ObservationIgnored var penLast: (id: UUID, ended: Double)?
+    /// Varies each shape the pen draws for you a little, as a hand would.
+    @ObservationIgnored var shapeSeed = 0
     /// A scratch voiceover being recorded.
     public let recorder = VoiceRecorder()
     /// The microphone and camera during a live take.
@@ -219,6 +221,7 @@ public final class OOOSession {
     @ObservationIgnored private var nudgeRest: DispatchWorkItem?
 
     public init(document: OOODocument) {
+        SoakCounts.shared.session()
         self.document = document
         project = document.project
         choreography = document.project.choreography()

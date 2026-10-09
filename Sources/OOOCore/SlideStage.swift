@@ -556,7 +556,7 @@ public struct SlideScene: @unchecked Sendable {
             let soft = Float(min(max(0.05 / m.inkLength, 0.01), 0.2))
             let body = i < inkBodies.count ? inkBodies[i] : 0.5
             ink.ink = SIMD4<Float>(head * (1 + soft), soft, 1 + body, flatInk ? 0 : 1)
-            let c = m.color.srgb
+            let c = m.ink
             let linear = RGB(c.r, c.g, c.b).linear
             ink.color = SIMD4(linear.x, linear.y, linear.z, light)
             ink.surfaceAmount = 0
@@ -706,8 +706,10 @@ public final class SlideStage: @unchecked Sendable {
                               output: output)
         }
         if !transparent, let face = scene.project.face, let url = scene.faceURL, let shown = scene.faceShown(at: t) {
-            try faces.encode(cb, url: url, at: t - face.offset, mirrored: face.isMirrored, room: scene.faceRoom, rise: shown.rise,
-                             alpha: shown.alpha, grain: 0.035 * look.finish.grain / 0.14, frameIndex: frameIndex, output: output)
+            try faces.encode(cb, url: url, at: t - face.offset, mirrored: face.isMirrored, greenScreen: face.isGreenScreen,
+                             room: scene.faceRoom, rise: shown.rise,
+                             alpha: shown.alpha, grain: 0.035 * look.finish.grain / 0.14, frameIndex: frameIndex, output: output,
+                             wait: waitForDetail)
         }
         return request.samples
     }

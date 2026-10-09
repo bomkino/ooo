@@ -59,8 +59,9 @@ import StageKit
 // [--home [--home-at 20]] (slides after the first: the card turns over or melts to each, and turns back to
 // the first at the end), --marks demo (a mark drawn round the first detail on each slide), and --lift
 // whole|4-10,14- [--room 0.42] (room for you: when the stage is up, and how much of the frame it leaves clear), and
-// --live "4,8,12.5b,15w,17@0.7:0.55" [--live-end 20] [--voice-only] (a live take: each press a step to the next stop,
-// b back, w the whole slide, @u:v a click there; filmed by a stand-in recording of someone talking).
+// --live "4,8,12.5b,15w,17@0.7:0.55" [--live-end 20] [--voice-only] [--green-screen] (a live take: each press a step
+// to the next stop, b back, w the whole slide, @u:v a click there; filmed by a stand-in recording of someone talking,
+// in front of a green screen that the video takes out with --green-screen).
 
 let args = CommandLine.arguments
 func value(_ name: String) -> String? {
@@ -195,6 +196,30 @@ if value("--marks") == "demo" {
                           color: k % 2 == 0 ? .red : .yellow, fades: k > 0))
     }
     project.marks = marks
+} else if value("--marks") == "shapes" {
+    // The shapes the pen draws for you, round the details the camera lands
+    // on: an arrow at the first, a box round the second, a circle round the
+    // third, in the new inks and widths, some fading after a stay of their own.
+    var marks: [Mark] = []
+    for k in 0..<project.slideCount {
+        let id = project.pageID(k), A = project.slide(k).aspect
+        let shots = project.shots.filter { project.pageIndex($0.page) == k && $0.focus != nil }.sorted { $0.time < $1.time }
+        for (j, shot) in shots.prefix(3).enumerated() {
+            guard let f = shot.focus else { continue }
+            let half = Vec2(f.size.x * 0.62 + 0.012 / A, f.size.y * 0.7 + 0.012)
+            let lo = f.center - half, hi = f.center + half
+            let strokes: [[InkPoint]]
+            switch j {
+            case 0: strokes = Mark.shape(.arrow, from: (lo.x - 0.12 / A, hi.y + 0.12), to: (lo.x - 0.005, hi.y + 0.005), slideAspect: A, seed: k)
+            case 1: strokes = Mark.shape(.box, from: (lo.x, lo.y), to: (hi.x, hi.y), slideAspect: A, seed: k)
+            default: strokes = Mark.shape(.circle, from: (lo.x, lo.y), to: (hi.x, hi.y), slideAspect: A, seed: k)
+            }
+            let inks: [(InkColor, [Float]?)] = [(.blue, nil), (.green, nil), (.red, [0.55, 0.22, 0.85])]
+            marks.append(Mark(page: id, time: shot.time + 0.25, strokes: strokes, color: inks[j].0, custom: inks[j].1,
+                              width: Mark.widths[[2, 1, 3][j]], fades: j == 1, linger: j == 1 ? 3 : nil))
+        }
+    }
+    project.marks = marks
 }
 
 if let spec = value("--lift") {
@@ -221,12 +246,13 @@ if let spec = value("--live") {
         let dir = media ?? FileManager.default.temporaryDirectory.appendingPathComponent("ooo-lab-\(UUID().uuidString)", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            try writeStandIn(to: dir.appendingPathComponent("you.mov"), seconds: end + 0.15)
+            try writeStandIn(to: dir.appendingPathComponent("you.mov"), seconds: end + 0.15, greenScreen: args.contains("--green-screen"))
         } catch {
             fail("could not write the stand-in recording: \(error)")
         }
         media = dir
-        face = FaceClip(file: "you.mov", offset: 0, duration: end + 0.15, aspect: 16.0 / 9.0, mirrored: true)
+        face = FaceClip(file: "you.mov", offset: 0, duration: end + 0.15, aspect: 16.0 / 9.0, mirrored: true,
+                        greenScreen: args.contains("--green-screen") ? true : nil)
     }
     project = stage.taken(take, end: end, voice: nil, face: face)
     liveLines = lines
@@ -707,7 +733,7 @@ case "marks":
     var scene = loadScene()
     scene.flatInk = value("--ink") == "flat"
     let marks = project.marks ?? []
-    guard !marks.isEmpty else { fail("marks needs --marks demo") }
+    guard !marks.isEmpty else { fail("marks needs --marks demo or --marks shapes") }
     let out = URL(fileURLWithPath: value("--out") ?? "marks.png")
     let cw = project.format.width / 3, ch = project.format.height / 3
     do {
@@ -842,6 +868,12 @@ case "live":
                 let you = scene.faceShown(at: t)?.alpha ?? 0
                 let seen = roomDifference(with, without, room: scene.faceRoom)
                 shown.append(String(format: "%.2f s: you %.0f%%, room changed %.3f", t, you * 100, seen))
+                if project.face?.isGreenScreen == true {
+                    // The screen taken out: no more green in the room than the backdrop has.
+                    let green = roomGreen(with, room: scene.faceRoom) - roomGreen(without, room: scene.faceRoom)
+                    shown.append(String(format: "  green screen left in the room: %.1f%%", green * 100))
+                    if green > 0.01 { problems.append(String(format: "at %.2f s the green screen still shows (%.1f%% of the room)", t, green * 100)) }
+                }
                 if you > 0.9 && seen < 0.02 { problems.append(String(format: "at %.2f s you should be in the room but it is empty", t)) }
                 if you == 0 && seen > 0.002 { problems.append(String(format: "at %.2f s the room should be empty", t)) }
             }

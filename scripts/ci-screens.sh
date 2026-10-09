@@ -5,7 +5,9 @@
 # with a shot selected, a title, the safe areas and the export sheet, three
 # slides that turn and melt, marks drawn on the card with the pen out, the
 # slide map beside the video (with the inspector closed, and kept in the
-# inspector instead), and the stage up with room for you.
+# inspector instead), and the stage up with room for you. Last, a soak: a
+# live take kept and played back in Frame on the running stage, failed if
+# it would freeze the window or swamp the Mac's memory.
 #
 #   bash scripts/ci-screens.sh [out-dir] [fixtures-dir]
 #
@@ -28,14 +30,19 @@ shot() {
   local name="$1"; shift
   "$APP" --snapshot "$OUT/$name.png" "$@" > "$OUT/$name.log" 2>&1 &
   local pid=$!
-  # The app gives up by itself after two minutes; this is the backstop. A
-  # window that never gave up is sampled first, so its log says where it hung.
-  ( sleep 135; sample "$pid" 3 -file "$OUT/$name.sample.txt" >/dev/null 2>&1; kill -9 "$pid" 2>/dev/null ) &
+  # The app gives up by itself after two minutes (five for a soak); this is
+  # the backstop. A window that never gave up is sampled first, so its log
+  # says where it hung.
+  local backstop=135
+  case " $* " in *" --soak "*) backstop=315 ;; esac
+  ( sleep "$backstop"; sample "$pid" 3 -file "$OUT/$name.sample.txt" >/dev/null 2>&1; kill -9 "$pid" 2>/dev/null ) &
   local watchdog=$!
   wait "$pid"
   local rc=$?
   kill "$watchdog" 2>/dev/null
   wait "$watchdog" 2>/dev/null
+  # A soak's verdict, whichever way it went.
+  grep -h '^soak: \(worst\|passed\|FAILED\|kept\|the main\|couldn\|240 scroll\)' "$OUT/$name.log" | sed 's/^/  /'
   if [ "$rc" -eq 0 ] && [ -s "$OUT/$name.png" ]; then
     grep -h '^snapshot' "$OUT/$name.log" | sed "s|^snapshot $OUT/|  |"
     # The whole editor fits the window: the timeline is never off the bottom.
@@ -74,6 +81,7 @@ echo "== Slides, marks, and room for you"
 shot slides --slide "$FIX/cover-2576x1080.png" --more "$WIDE,$FIX/wide-revised-2576x1080.png" --melt 2 --home --time 4.5 --size 1440x1500
 shot marks --slide "$WIDE" --more "$STANDARD" --marks demo --time 6 --size 1440x1500
 shot pen --slide "$WIDE" --marks demo --time 6 --size 1440x900 --draw
+shot pen-shapes --slide "$WIDE" --more "$STANDARD" --marks demo --time 6 --size 1100x800 --draw --pen arrow --pen-fades
 shot room --slide "$WIDE" --lift whole --title 'How we grew 3.1× in nine months' --kicker 'pitch.dog' --time 9 --size 1440x1500
 shot room-light --scheme light --slide "$WIDE" --lift 5-12,16- --time 8 --size 1440x900
 
@@ -83,6 +91,9 @@ shot mode-live --slide "$WIDE" --mode live
 shot mode-live-light --scheme light --slide "$WIDE" --mode live --size 1440x1500
 shot timeline-zoomed --slide "$WIDE" --shot 3 --zoom 2.5
 shot map-picked-light --scheme light --slide "$WIDE" --shot 2 --no-inspector
+
+echo "== A live take, kept, then back to Frame (memory and a main thread that answers)"
+shot soak-take --slide "$WIDE" --soak 45 --size 1440x900
 
 echo "screens: $failures failed"
 exit $((failures > 0 ? 1 : 0))

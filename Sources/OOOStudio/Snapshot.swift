@@ -62,14 +62,16 @@ public enum OOOSnapshot {
         // document to open: AppKit would say it can't open "6" and wait for OK.
         args["NSTreatUnknownArgumentsAsOpen"] = false
         UserDefaults.standard.setVolatileDomain(args, forName: UserDefaults.argumentDomain)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 120) {
+        // A soak runs a take and minutes of playback; anything else is a still.
+        let deadline: Double = OOOSoak.isRequested ? 300 : 120
+        DispatchQueue.main.asyncAfter(deadline: .now() + deadline) {
             print("snapshot: timed out")
             fflush(stdout)
             _exit(3)
         }
         // Only a main thread that never comes back misses the deadline above:
         // say so, with everything printed so far, before the script samples it.
-        DispatchQueue.global().asyncAfter(deadline: .now() + 125) {
+        DispatchQueue.global().asyncAfter(deadline: .now() + deadline + 5) {
             print("snapshot: the main thread has not answered for at least five seconds")
             fflush(stdout)
         }
@@ -109,6 +111,14 @@ public enum OOOSnapshot {
 
     private static func stage(_ session: OOOSession, still: @escaping (CGImage?) -> Void) {
         sizeWindows()
+        if OOOSoak.isRequested {
+            // The live stage stays on screen: the soak watches it run.
+            OOOSoak.run(session) { code in
+                exitCode = code
+                capture(session)
+            }
+            return
+        }
         // How the card changes to each added slide, then a mark or two, now the tour is planned.
         let melts = arg("--melt") ?? ""
         for k in 1..<max(session.project.slideCount, 1) where melts == "all" || melts.split(separator: ",").contains(where: { Int($0) == k }) {
@@ -129,6 +139,8 @@ public enum OOOSnapshot {
             session.enter(.draw)
             session.previewUntil = nil
         }
+        if let tool = arg("--pen").flatMap(PenTool.init(rawValue:)) { session.pen.tool = tool }
+        if flag("--pen-fades") { session.pen.fades = true }
         if arg("--mode") == "live" { session.enter(.live) }
         if let z = arg("--zoom").flatMap(Double.init) { session.timelineZoom = max(z, 1) }
         switch arg("--tab") {
@@ -245,6 +257,8 @@ public enum OOOSnapshot {
 
     /// Set once the PNG is written, so a late capture doesn't write it again.
     static var written = false
+    /// What the run exits with once the PNG is written: a soak that failed says so.
+    static var exitCode: Int32 = 0
 
     /// The window drawn from its views, its sheet over it.
     private static func drawn(_ window: NSWindow) -> NSBitmapImageRep? {
@@ -285,7 +299,7 @@ public enum OOOSnapshot {
                      path, output.pixelsWide, output.pixelsHigh, p.slide.name, p.shots.count,
                      session.clock.time, session.clock.duration)
               + " message \(session.message.map { "\"\($0)\"" } ?? "none") via \(method)")
-        exit(0)
+        exit(exitCode)
     }
 }
 

@@ -100,4 +100,52 @@ final class InkTests: XCTestCase {
         XCTAssertEqual(back.strokes[0][1].t, 0.333, accuracy: 1e-6)
         XCTAssertEqual(back.color, .yellow)
     }
+
+    /// The shapes drawn for you: on the slide, drawn on at a hand's pace, a
+    /// circle round on any slide, an arrow whose head ends at its point.
+    func testShapesAsAHandDrawsThem() throws {
+        let A: Float = 2576.0 / 1080
+        for kind in InkShape.allCases {
+            let strokes = Mark.shape(kind, from: (0.3, 0.3), to: (0.6, 0.7), slideAspect: A)
+            let all = strokes.flatMap { $0 }
+            XCTAssertFalse(all.isEmpty, "\(kind)")
+            XCTAssertTrue(all.allSatisfy { (0...1).contains($0.x) && (0...1).contains($0.y) }, "\(kind) stays on the slide")
+            // Time only runs forward, within a stroke and from one stroke to the next.
+            let times = all.map(\.t)
+            XCTAssertEqual(times, times.sorted(), "\(kind)")
+            let mark = Mark(time: 2, strokes: strokes)
+            XCTAssertGreaterThan(mark.drawLength, 0.2, "\(kind) is drawn, not stamped")
+            XCTAssertLessThan(mark.drawLength, 1.6, "\(kind) is quick")
+            XCTAssertNotNil(InkRaster(mark, slideAspect: A, pixelsPerHeight: 400))
+        }
+        // Round across the slide's proportions.
+        let circle = Mark.shape(.circle, from: (0.4, 0.3), to: (0.4 + 0.4 / A, 0.7), slideAspect: A)[0]
+        let wide = (circle.map(\.x).max()! - circle.map(\.x).min()!) * A
+        let tall = circle.map(\.y).max()! - circle.map(\.y).min()!
+        XCTAssertEqual(wide / tall, 1, accuracy: 0.08)
+        // The arrow: a shaft from the tail, then a head round the point.
+        let arrow = Mark.shape(.arrow, from: (0.2, 0.5), to: (0.7, 0.5), slideAspect: A)
+        XCTAssertEqual(arrow.count, 2)
+        XCTAssertEqual(arrow[0].first!.x, 0.2, accuracy: 0.001)
+        XCTAssertEqual(arrow[0].last!.x, 0.7, accuracy: 0.001)
+        XCTAssertEqual(arrow[1].map(\.x).max()!, 0.7, accuracy: 0.002, "the head's point is the arrow's")
+        XCTAssertLessThan(arrow[1].first!.x, 0.7)
+        XCTAssertLessThan(arrow[1].last!.x, 0.7)
+    }
+
+    /// A mark's own stay: how long it lingers once drawn before it fades.
+    func testAMarkStaysAsLongAsYouSay() throws {
+        var mark = Mark(time: 1, strokes: [[InkPoint(x: 0.5, y: 0.5, t: 0), InkPoint(x: 0.6, y: 0.5, t: 0.5)]], fades: true)
+        XCTAssertEqual(mark.gone, 1.5 + Mark.lingers + Mark.fadeLength, accuracy: 1e-9)
+        XCTAssertFalse(mark.needsOOO121)
+        mark.linger = 5
+        XCTAssertEqual(mark.presence(at: 6.4, until: nil), 1, accuracy: 1e-6)
+        XCTAssertEqual(mark.presence(at: 1.5 + 5 + Mark.fadeLength + 0.01, until: nil), 0, accuracy: 1e-6)
+        XCTAssertTrue(mark.needsOOO121)
+        mark.linger = nil
+        mark.custom = [0.2, 0.4, 0.6]
+        XCTAssertEqual(mark.ink.g, 0.4)
+        let back = try JSONDecoder().decode(Mark.self, from: JSONEncoder().encode(mark))
+        XCTAssertEqual(back, mark)
+    }
 }
