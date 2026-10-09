@@ -208,6 +208,7 @@ struct StageMenu: View {
     @Bindable var session: OOOSession
     @AppStorage("showSafeAreas") private var showSafeAreas = false
     @AppStorage("live.camera") private var filmMe = true
+    @AppStorage("live.greenScreen") private var greenScreen = false
 
     var body: some View {
         switch session.mode {
@@ -248,6 +249,21 @@ struct StageMenu: View {
                 Button("Start") { session.startTake() }
                     .disabled(session.liveCapture.phase != .ready)
                 Toggle("Film Me", isOn: Binding(get: { filmMe }, set: { session.setFilmMe($0) }))
+                Menu("Camera") {
+                    ForEach(session.liveCapture.cameras) { d in
+                        Toggle(d.name, isOn: Binding(get: { filmMe && session.liveCapture.cameraInUse == d.id },
+                                                     set: { _ in session.chooseCamera(d.id) }))
+                    }
+                }
+                .disabled(session.liveCapture.cameras.isEmpty)
+                Menu("Microphone") {
+                    ForEach(session.liveCapture.microphones) { d in
+                        Toggle(d.name, isOn: Binding(get: { session.liveCapture.microphoneInUse == d.id },
+                                                     set: { _ in session.chooseMicrophone(d.id) }))
+                    }
+                }
+                .disabled(session.liveCapture.microphones.isEmpty)
+                Toggle("Green Screen Behind Me", isOn: Binding(get: { greenScreen }, set: { session.setGreenScreen($0) }))
                 Divider()
                 Button("Preview the Opening") { session.previewOpening() }
                 Button("Preview the Closing") { session.previewClosing() }

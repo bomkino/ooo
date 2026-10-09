@@ -1,5 +1,6 @@
 import AppKit
 @preconcurrency import AVFoundation
+import CoreImage
 import Observation
 import OOOCore
 import OOOMotion
@@ -45,6 +46,18 @@ public final class LiveCapture {
     public private(set) var elapsed: Double = 0
     /// The running capture, for the mirror.
     public private(set) var session: AVCaptureSession?
+    /// The cameras and microphones on this Mac, to choose from in the room.
+    public private(set) var cameras: [Device] = []
+    public private(set) var microphones: [Device] = []
+    /// The camera (nil: none) and microphone the capture is using.
+    public private(set) var cameraInUse: String?
+    public private(set) var microphoneInUse: String?
+
+    /// A camera or microphone, by its unique ID and the name macOS gives it.
+    public struct Device: Identifiable, Hashable, Sendable {
+        public let id: String
+        public let name: String
+    }
 
     @ObservationIgnored private var output: AVCaptureMovieFileOutput?
     @ObservationIgnored private let queue = DispatchQueue(label: "dog.pitch.ooo.live-capture")
@@ -54,6 +67,7 @@ public final class LiveCapture {
     @ObservationIgnored private var delegate: RecordingDelegate?
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var lost: ((String) -> Void)?
+    @ObservationIgnored private var deviceWatch: [NSObjectProtocol] = []
 
     public var isActive: Bool { phase != .idle }
     public var isRecording: Bool { phase == .recording }
@@ -84,6 +98,7 @@ public final class LiveCapture {
         guard phase == .idle else { return }
         phase = .preparing
         self.lost = lost
+        refreshDevices()
         Task {
             guard await Self.allowed(.audio) else {
                 self.phase = .idle
@@ -120,6 +135,8 @@ public final class LiveCapture {
                 self.output = c.output
                 self.feed = c.feed
                 self.filming = c.filming
+                self.cameraInUse = c.camera
+                self.microphoneInUse = c.microphone
                 self.watch(c.session)
                 self.phase = .ready
                 self.levels = []
@@ -146,37 +163,88 @@ public final class LiveCapture {
         }
     }
 
-    /// The camera you face: the one macOS prefers (it follows your choice in
-    /// the menu bar and Continuity Camera), never Desk View, which looks down
-    /// at the desk.
+    /// The camera you chose in the room, and the microphone (unique IDs);
+    /// nil, or one not plugged in, leaves the choice to the Mac.
+    nonisolated static var chosenCamera: String? {
+        get { UserDefaults.standard.string(forKey: "live.camera.device") }
+        set { UserDefaults.standard.set(newValue, forKey: "live.camera.device") }
+    }
+    nonisolated static var chosenMicrophone: String? {
+        get { UserDefaults.standard.string(forKey: "live.microphone.device") }
+        set { UserDefaults.standard.set(newValue, forKey: "live.microphone.device") }
+    }
+
+    /// Cameras that face you, never Desk View, which looks down at the desk.
+    nonisolated static func cameraDevices() -> [AVCaptureDevice] {
+        AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInWideAngleCamera, .continuityCamera, .external],
+                                         mediaType: .video, position: .unspecified).devices
+            .filter { $0.deviceType != .deskViewCamera }
+    }
+
+    /// Every microphone: the Mac's own, a headset, a USB or audio-interface mic.
+    nonisolated static func microphoneDevices() -> [AVCaptureDevice] {
+        var seen = Set<String>()
+        return AVCaptureDevice.DiscoverySession(deviceTypes: [.microphone, .external], mediaType: .audio, position: .unspecified)
+            .devices.filter { seen.insert($0.uniqueID).inserted }
+    }
+
+    /// The camera you face: the one you chose in the room, else the one
+    /// macOS prefers (it follows your choice in the menu bar and Continuity
+    /// Camera), never Desk View.
     nonisolated static func camera() -> AVCaptureDevice? {
-        let found = AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInWideAngleCamera, .continuityCamera, .external],
-                                                     mediaType: .video, position: .unspecified).devices
+        let found = cameraDevices()
+        if let id = chosenCamera, let chosen = found.first(where: { $0.uniqueID == id }) { return chosen }
         if let preferred = AVCaptureDevice.systemPreferredCamera, preferred.deviceType != .deskViewCamera { return preferred }
         return found.first { $0.deviceType == .builtInWideAngleCamera } ?? found.first
     }
 
-    /// The capture: the Mac's microphone (the input chosen in Sound settings)
-    /// and, filming, its camera, into one movie.
+    /// The microphone you chose in the room, else the input chosen in Sound settings.
+    nonisolated static func microphone() -> AVCaptureDevice? {
+        if let id = chosenMicrophone, let chosen = microphoneDevices().first(where: { $0.uniqueID == id }) { return chosen }
+        return AVCaptureDevice.default(for: .audio)
+    }
+
+    /// Lists the cameras and microphones again, and again whenever one is
+    /// plugged in or taken away.
+    func refreshDevices() {
+        cameras = Self.cameraDevices().map { Device(id: $0.uniqueID, name: $0.localizedName) }
+        microphones = Self.microphoneDevices().map { Device(id: $0.uniqueID, name: $0.localizedName) }
+        guard deviceWatch.isEmpty else { return }
+        let centre = NotificationCenter.default
+        let changed: @Sendable (Notification) -> Void = { [weak self] _ in
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.refreshDevices() } }
+        }
+        deviceWatch = [
+            centre.addObserver(forName: AVCaptureDevice.wasConnectedNotification, object: nil, queue: nil, using: changed),
+            centre.addObserver(forName: AVCaptureDevice.wasDisconnectedNotification, object: nil, queue: nil, using: changed),
+        ]
+    }
+
+    /// The capture: the microphone and, filming, the camera, into one movie.
     private struct Capture: @unchecked Sendable {
         let session: AVCaptureSession
         let output: AVCaptureMovieFileOutput
         let feed: Feed
         let filming: Bool
+        /// The unique IDs of the camera filming (nil: none) and the microphone.
+        let camera: String?
+        let microphone: String
 
         init(filming wanted: Bool) throws {
             let s = AVCaptureSession()
             s.beginConfiguration()
-            guard let mic = AVCaptureDevice.default(for: .audio) else {
+            guard let mic = LiveCapture.microphone() else {
                 throw CocoaError(.featureUnsupported, userInfo: [NSLocalizedDescriptionKey: "No microphone found."])
             }
             let micIn = try AVCaptureDeviceInput(device: mic)
             guard s.canAddInput(micIn) else { throw CocoaError(.featureUnsupported) }
             s.addInput(micIn)
             var film = false
+            var filmedBy: String?
             if wanted, let cam = LiveCapture.camera(), let camIn = try? AVCaptureDeviceInput(device: cam), s.canAddInput(camIn) {
                 s.addInput(camIn)
                 film = true
+                filmedBy = cam.uniqueID
             }
             s.sessionPreset = film && s.canSetSessionPreset(.hd1920x1080) ? .hd1920x1080 : .high
             let out = AVCaptureMovieFileOutput()
@@ -194,6 +262,8 @@ public final class LiveCapture {
             output = out
             self.feed = feed
             filming = film
+            camera = filmedBy
+            microphone = mic.uniqueID
         }
 
         /// Stops the camera and microphone, on the capture's queue.
@@ -599,6 +669,33 @@ extension OOOSession {
         clock.playing = false
     }
 
+    /// Whether you film against a green screen: takes from now on take the
+    /// green out, and the room shows you without it.
+    public static var liveGreenScreen: Bool {
+        get { UserDefaults.standard.bool(forKey: "live.greenScreen") }
+        set { UserDefaults.standard.set(newValue, forKey: "live.greenScreen") }
+    }
+
+    /// Films you with this camera from now on; the room switches to it at once.
+    public func chooseCamera(_ id: String) {
+        LiveCapture.chosenCamera = id
+        setFilmMe(true)
+    }
+
+    /// Records you with this microphone from now on; the room switches to it at once.
+    public func chooseMicrophone(_ id: String) {
+        LiveCapture.chosenMicrophone = id
+        setFilmMe(Self.liveCamera)
+    }
+
+    /// A green screen behind you, or not: for takes from now on, and for the
+    /// take already in the video.
+    public func setGreenScreen(_ on: Bool) {
+        Self.liveGreenScreen = on
+        guard take == nil, let face = project.face, face.isGreenScreen != on else { return }
+        update(on ? "Remove Green Screen" : "Keep Green Screen") { $0.face?.greenScreen = on }
+    }
+
     /// Films you in live takes, or not; the room shows it at once.
     public func setFilmMe(_ on: Bool) {
         Self.liveCamera = on
@@ -808,7 +905,7 @@ extension OOOSession {
         if let picture {
             // Mirrored, as you saw yourself while you talked.
             face = FaceClip(file: try store.importFile(movie), offset: 0, duration: picture.duration, aspect: picture.aspect,
-                            mirrored: true)
+                            mirrored: true, greenScreen: Self.liveGreenScreen ? true : nil)
         }
         guard take === run else { return }
         let when = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .short)
@@ -970,6 +1067,7 @@ extension OOOSession {
 struct LiveOverlay: View {
     @Bindable var session: OOOSession
     let capture: LiveCapture
+    @AppStorage("live.greenScreen") private var greenScreen = false
 
     var body: some View {
         let step = session.liveStep
@@ -979,7 +1077,7 @@ struct LiveOverlay: View {
                 if step != .kept, capture.filming, let s = capture.session {
                     VStack(spacing: 0) {
                         Spacer(minLength: 0)
-                        LivePreview(session: s)
+                        LivePreview(session: s, greenScreen: greenScreen)
                             .frame(width: g.size.width, height: g.size.height * room)
                             // The top edge melts into the backdrop, as it does in the video.
                             .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.12)],
@@ -1086,6 +1184,7 @@ struct LiveBar: View {
         switch step {
         case .room:
             let ready = capture.phase == .ready || OOOSnapshot.isRequested
+            LiveDevicesMenu(session: session, capture: capture, compact: width < 360)
             if ready || capture.phase == .preparing {
                 if capture.phase == .preparing {
                     ProgressView().controlSize(.small)
@@ -1139,6 +1238,12 @@ struct LiveBar: View {
         case .kept:
             Button { session.playKept() } label: { Label("Play", systemImage: "play.fill") }
                 .buttonStyle(QuietButtonStyle())
+            if let face = session.project.face, width >= 380 {
+                Toggle("Green screen", isOn: Binding(get: { face.isGreenScreen }, set: { session.setGreenScreen($0) }))
+                    .toggleStyle(.checkbox)
+                    .textStyle(.bodyCompact)
+                    .help("Takes the green screen out from behind you, so you stand in front of the backdrop")
+            }
             Button("Retake") { session.retake() }
                 .buttonStyle(QuietButtonStyle())
                 .help("Back to the room to try again; this take is undone (⌥⌘L)")
@@ -1450,13 +1555,16 @@ struct PositionList: View {
     }
 }
 
-/// You, as the camera sees you, mirrored the way you know yourself.
+/// You, as the camera sees you, mirrored the way you know yourself; with a
+/// green screen, without the green, as the video will have you.
 struct LivePreview: NSViewRepresentable {
     let session: AVCaptureSession
+    var greenScreen = false
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
         view.wantsLayer = true
+        view.layerUsesCoreImageFilters = true
         let layer = AVCaptureVideoPreviewLayer(session: session)
         layer.videoGravity = .resizeAspectFill
         if let c = layer.connection, c.isVideoMirroringSupported {
@@ -1464,11 +1572,76 @@ struct LivePreview: NSViewRepresentable {
             c.isVideoMirrored = true
         }
         view.layer = layer
+        key(layer)
         return view
     }
 
     func updateNSView(_ view: NSView, context: Context) {
-        guard let layer = view.layer as? AVCaptureVideoPreviewLayer, layer.session !== session else { return }
-        layer.session = session
+        guard let layer = view.layer as? AVCaptureVideoPreviewLayer else { return }
+        if layer.session !== session { layer.session = session }
+        key(layer)
+    }
+
+    private func key(_ layer: CALayer) {
+        let on = !(layer.filters ?? []).isEmpty
+        guard on != greenScreen else { return }
+        layer.filters = greenScreen ? Self.keyer().map { [$0 as Any] } : nil
+    }
+
+    /// Core Image's colour cube, filled with the same key the video uses.
+    private static func keyer() -> CIFilter? {
+        guard let f = CIFilter(name: "CIColorCubeWithColorSpace") else { return nil }
+        f.setValue(cubeSize, forKey: "inputCubeDimension")
+        f.setValue(cube, forKey: "inputCubeData")
+        f.setValue(CGColorSpace(name: CGColorSpace.sRGB), forKey: "inputColorSpace")
+        return f
+    }
+
+    private static let cubeSize = 32
+    private static let cube = GreenScreen.cube(size: cubeSize)
+}
+
+/// The room's camera and microphone, and whether a green screen is behind you.
+struct LiveDevicesMenu: View {
+    let session: OOOSession
+    let capture: LiveCapture
+    var compact = false
+    @AppStorage("live.camera") private var filming = true
+    @AppStorage("live.greenScreen") private var greenScreen = false
+
+    var body: some View {
+        let camera = capture.cameraInUse ?? LiveCapture.chosenCamera
+        let microphone = capture.microphoneInUse ?? LiveCapture.chosenMicrophone
+        Menu {
+            Section("Camera") {
+                ForEach(capture.cameras) { d in
+                    Toggle(d.name, isOn: Binding(get: { filming && camera == d.id }, set: { _ in session.chooseCamera(d.id) }))
+                }
+                Toggle("No Camera, Just My Voice", isOn: Binding(get: { !filming }, set: { _ in session.setFilmMe(false) }))
+            }
+            Section("Microphone") {
+                ForEach(capture.microphones) { d in
+                    Toggle(d.name, isOn: Binding(get: { microphone == d.id }, set: { _ in session.chooseMicrophone(d.id) }))
+                }
+            }
+            Section {
+                Toggle("Green Screen Behind Me", isOn: Binding(get: { greenScreen }, set: { session.setGreenScreen($0) }))
+            }
+        } label: {
+            if compact {
+                Image(systemName: filming ? "video" : "mic")
+            } else {
+                Label(name(camera, in: capture.cameras, or: "Camera"), systemImage: filming ? "video" : "mic")
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Choose your camera and microphone, and say if a green screen is behind you")
+    }
+
+    private func name(_ id: String?, in list: [LiveCapture.Device], or fallback: String) -> String {
+        guard filming else { return "Voice only" }
+        let name = list.first { $0.id == id }?.name ?? fallback
+        return name.count > 18 ? String(name.prefix(17)) + "…" : name
     }
 }

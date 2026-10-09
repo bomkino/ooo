@@ -30,6 +30,13 @@ struct RoomSection: View {
                 Toggle("Show where you'll be", isOn: $session.showRoom)
                     .toggleStyle(.checkbox)
                     .textStyle(.bodyCompact)
+                if let face = session.project.face {
+                    Toggle("Green screen behind you", isOn: Binding(get: { face.isGreenScreen }, set: { session.setGreenScreen($0) }))
+                        .toggleStyle(.checkbox)
+                        .textStyle(.bodyCompact)
+                        .help("Takes the green out from behind you in your live take, so you stand in front of the backdrop")
+                        .disabled(session.isTaking)
+                }
                 ForEach(lift?.spans.sorted { $0.start < $1.start } ?? []) { span in
                     HStack {
                         Text(spanLabel(span)).textStyle(.data).foregroundStyle(.secondary)

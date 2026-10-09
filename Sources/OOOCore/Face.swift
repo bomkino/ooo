@@ -21,17 +21,22 @@ public struct FaceClip: Codable, Hashable, Sendable {
     public var aspect: Float
     /// Shows the picture as a mirror does, the way you saw yourself while recording.
     public var mirrored: Bool?
+    /// Filmed against a green screen: the green goes, and you stand in front
+    /// of the backdrop itself.
+    public var greenScreen: Bool?
 
-    public init(file: String, offset: Double = 0, duration: Double, aspect: Float, mirrored: Bool? = nil) {
+    public init(file: String, offset: Double = 0, duration: Double, aspect: Float, mirrored: Bool? = nil, greenScreen: Bool? = nil) {
         self.file = file
         self.offset = offset
         self.duration = duration
         self.aspect = aspect
         self.mirrored = mirrored
+        self.greenScreen = greenScreen
     }
 
     public var end: Double { offset + duration }
     public var isMirrored: Bool { mirrored ?? false }
+    public var isGreenScreen: Bool { greenScreen ?? false }
 
     /// Seconds you take to come in at the start of the recording and to go at its end.
     public static let fadeIn = 0.3
@@ -70,6 +75,57 @@ extension SlideScene {
     public var faceRoom: Float {
         let room = project.lift?.room ?? Lift.defaultRoom
         return min(max(room, Lift.roomRange.lowerBound), Lift.roomRange.upperBound)
+    }
+}
+
+/// Takes a green screen out from behind you. The same sum runs in the face
+/// shader and in the live preview, so the room shows what the video will.
+public enum GreenScreen {
+    /// How much of a colour (sRGB-encoded, 0…1) is the screen, 0 (you) to 1
+    /// (screen), and the colour with the screen's green spill taken out.
+    public static func key(_ r: Float, _ g: Float, _ b: Float) -> (screen: Float, r: Float, g: Float, b: Float) {
+        let rb = max(r, b)
+        let spill = g - rb
+        // Greener than anything else, for its brightness, so the screen in
+        // shadow goes too; and by enough, so the dark of hair and clothes stays.
+        let k = spill / max(g, 0.05)
+        let screen = smoothstep((k - 0.12) / 0.2) * smoothstep((spill - 0.03) / 0.06)
+        return (screen, r, min(g, rb), b)
+    }
+
+    /// The same sum, in Metal: `float4 green_screen(float3 c)` returns the
+    /// colour despilled and, in w, how much of it is you.
+    static let metal = """
+    float4 green_screen(float3 c) {
+        float rb = max(c.r, c.b);
+        float spill = c.g - rb;
+        float k = spill / max(c.g, 0.05);
+        float screen = smoothstep(0.0, 1.0, (k - 0.12) / 0.2) * smoothstep(0.0, 1.0, (spill - 0.03) / 0.06);
+        return float4(c.r, min(c.g, rb), c.b, 1.0 - screen);
+    }
+
+    """
+
+    /// A colour cube (sRGB in, premultiplied RGBA out) that keys the screen,
+    /// for Core Image: `size` steps a side.
+    public static func cube(size n: Int = 32) -> Data {
+        var data = [Float](repeating: 0, count: n * n * n * 4)
+        let step = 1 / Float(n - 1)
+        var i = 0
+        for z in 0..<n {
+            for y in 0..<n {
+                for x in 0..<n {
+                    let k = key(Float(x) * step, Float(y) * step, Float(z) * step)
+                    let a = 1 - k.screen
+                    data[i] = k.r * a
+                    data[i + 1] = k.g * a
+                    data[i + 2] = k.b * a
+                    data[i + 3] = a
+                    i += 4
+                }
+            }
+        }
+        return data.withUnsafeBufferPointer { Data(buffer: $0) }
     }
 }
 
@@ -344,7 +400,7 @@ public final class FaceCompositor {
     public static let frameArrived = Notification.Name("dog.pitch.ooo.face-frame")
 
     public init() throws {
-        library = try GPU.shared.library(named: "face", source: ShaderPrelude.source + Self.source)
+        library = try GPU.shared.library(named: "face", source: ShaderPrelude.source + GreenScreen.metal + Self.source)
     }
 
     /// The frame showing `t` seconds into the recording at `url`: exactly
@@ -376,11 +432,12 @@ public final class FaceCompositor {
 
     /// Draws the recording's frame at `t` (seconds into it) over `output`:
     /// in a room `room` of the frame tall, risen `rise` of the way in with
-    /// the stage, at `alpha`, with grain like the stage's. With `wait`, the
-    /// frame is exactly the one at `t` (export); otherwise the latest one
-    /// decoded, so the live stage never waits on the recording.
-    func encode(_ cb: MTLCommandBuffer, url: URL, at t: Double, mirrored: Bool, room: Float, rise: Float, alpha: Float,
-                grain: Float, frameIndex: UInt32, output: MTLTexture, wait: Bool) throws {
+    /// the stage, at `alpha`, with grain like the stage's; with `greenScreen`,
+    /// the green behind you taken out. With `wait`, the frame is exactly the
+    /// one at `t` (export); otherwise the latest one decoded, so the live
+    /// stage never waits on the recording.
+    func encode(_ cb: MTLCommandBuffer, url: URL, at t: Double, mirrored: Bool, greenScreen: Bool, room: Float, rise: Float,
+                alpha: Float, grain: Float, frameIndex: UInt32, output: MTLTexture, wait: Bool) throws {
         guard alpha > 0.002 else { return }
         let frame = picture(url, at: t, wait: wait)
         guard let frame else { return }
@@ -397,7 +454,7 @@ public final class FaceCompositor {
         let T = Float(frame.texture.width) / Float(max(frame.texture.height, 1))
         // The top edge melts into the backdrop over a short distance.
         let feather = 0.05 * min(room / Lift.defaultRoom, 1.2)
-        var p = FaceParams(band: SIMD4(room, feather, alpha, 0), crop: FaceClip.crop(pictureAspect: T, canvasAspect: C, room: room),
+        var p = FaceParams(band: SIMD4(room, feather, alpha, greenScreen ? 1 : 0), crop: FaceClip.crop(pictureAspect: T, canvasAspect: C, room: room),
                            misc: SIMD4(rise, mirrored ? 1 : 0, grain, Float(frameIndex % 4096)))
         enc.setFragmentBytes(&p, length: MemoryLayout<FaceParams>.stride, index: 0)
         enc.setFragmentTexture(frame.texture, index: 0)
@@ -417,7 +474,7 @@ public final class FaceCompositor {
 
     static let source = #"""
 struct FaceParams {
-    float4 band;   // x: the room's share of the frame, y: the top edge's feather, z: alpha
+    float4 band;   // x: the room's share of the frame, y: the top edge's feather, z: alpha, w: green screen
     float4 crop;   // the picture's part that fills the room: u0, v0, u1, v1
     float4 misc;   // x: how far the stage has risen, y: mirrored, z: grain, w: frame
 };
@@ -433,11 +490,17 @@ fragment float4 face_fragment(FSOut in [[stage_in]], texture2d<float> face [[tex
     float u = p.misc.y > 0.5 ? 1.0 - in.uv.x : in.uv.x;
     float2 tuv = float2(mix(p.crop.x, p.crop.z, u), mix(p.crop.y, p.crop.w, v));
     float3 c = face.sample(s, tuv).rgb;
+    float you = 1.0;
+    if (p.band.w > 0.5) {
+        float4 k = green_screen(c);
+        c = k.rgb;
+        you = k.w;
+    }
     // A fine grain, like the stage's, so the slide and you are one picture.
     uint2 px = uint2(in.position.xy);
     float n = float(pcg(px.x + px.y * 4099u + uint(p.misc.w) * 7919u) & 0xffffu) / 65535.0;
     c = saturate(c + (n - 0.5) * p.misc.z);
-    float a = p.band.z * smoothstep(0.0, p.band.y, in.uv.y - top);
+    float a = p.band.z * smoothstep(0.0, p.band.y, in.uv.y - top) * you;
     return float4(c * a, a);
 }
 """#

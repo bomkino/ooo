@@ -11,8 +11,19 @@ final class LiveCoreTests: XCTestCase {
         filmed.face = FaceClip(file: "you.mov", duration: 20, aspect: 16.0 / 9.0, mirrored: true)
         let j = try XCTUnwrap(JSONSerialization.jsonObject(with: ProjectPackage.encode(filmed)) as? [String: Any])
         XCTAssertEqual(j["minimumReaderVersion"] as? Int, 4)
-        XCTAssertEqual(OOOProject.readerVersion, 4)
+        XCTAssertEqual(OOOProject.readerVersion, 5)
         XCTAssertEqual(try ProjectPackage.decode(ProjectPackage.encode(filmed)), filmed)
+    }
+
+    /// A green screen taken out needs OOO 1.2.1: an older one would show the green.
+    func testGreenScreenNeedsOOO121() throws {
+        var filmed = OOOProject.sample
+        filmed.face = FaceClip(file: "you.mov", duration: 20, aspect: 16.0 / 9.0, mirrored: true, greenScreen: true)
+        XCTAssertEqual(filmed.neededReader, 5)
+        XCTAssertEqual(try ProjectPackage.decode(ProjectPackage.encode(filmed)), filmed)
+        XCTAssertEqual(GreenScreen.key(0.27, 0.74, 0.33).screen, 1, accuracy: 0.01)
+        XCTAssertEqual(GreenScreen.key(0.86, 0.67, 0.55).screen, 0, accuracy: 0.01)
+        XCTAssertEqual(GreenScreen.key(0.13, 0.16, 0.22).screen, 0, accuracy: 0.01)
     }
 
     /// Saving keeps every slide's file, the voiceover's and the camera's: 1.0.1

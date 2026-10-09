@@ -216,13 +216,14 @@ public struct OOOProject: Codable, Hashable, Sendable {
     /// `neededReader` what needs it, when a setting older builds would drop arrives.
     /// 1: OOO 0.2. 2: OOO 1.0 (Weave, a kicker as typed). 3: OOO 1.0.1
     /// (several slides, room for you, marks drawn on the card). 4: OOO 1.1
-    /// (you on camera in the room).
-    public static let readerVersion = 4
+    /// (you on camera in the room). 5: OOO 1.2.1 (a green screen taken out from behind you).
+    public static let readerVersion = 5
 
     /// The oldest reader that draws everything this project uses, written as
     /// `minimumReaderVersion`: a file 0.2 can draw still opens there.
     public var neededReader: Int {
         let typedKicker = title.map { !$0.kickerCaps && !$0.kicker.trimmingCharacters(in: .whitespaces).isEmpty } ?? false
+        if face?.isGreenScreen == true { return 5 }
         if face != nil { return 4 }
         if !(pages?.isEmpty ?? true) || !(lift?.isEmpty ?? true) || !(marks?.isEmpty ?? true) { return 3 }
         return arrive.kind == .weave || typedKicker ? 2 : 1

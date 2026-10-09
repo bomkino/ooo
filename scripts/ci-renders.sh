@@ -88,6 +88,7 @@ LIVE=(--slide "$COVER" --more "$WIDE" --live "3.2,7,10.5,14,18@0.72:0.5,21.5,25b
 "$LAB" motioncheck "${LIVE[@]}" | tee "$OUT/live/motion.txt"
 "$LAB" render "${LIVE[@]}" --quality draft --scale 0.5 --out "$OUT/live/draft.mp4"
 "$LAB" live --slide "$WIDE" --live "4,9,13w,17" --live-end 21 --voice-only | tee "$OUT/live/voice-only.txt"
+"$LAB" live --slide "$WIDE" --live "4,9,13" --live-end 17 --green-screen --out "$OUT/live/green-screen" | tee "$OUT/live/green-screen.txt"
 
 echo "== Replace Slide: the wide tour, moved onto the corrected slide"
 mkdir -p "$OUT/replace"
@@ -142,7 +143,7 @@ echo "== Summary"
   echo "export timings (Good):"; sed 's/^/  /' "$OUT/timings.txt"
   echo "adaptive blur:"; sed 's/^/  /' "$OUT/blur.txt"
   echo "loop:"; tail -1 "$OUT/loop.txt" | sed 's/^/  /'
-  echo "live:"; grep -h '^the video runs\|^live ok\|problem' "$OUT/live/live.txt" "$OUT/live/voice-only.txt" | sed 's/^/  /'
+  echo "live:"; grep -h '^the video runs\|^live ok\|problem\|green screen' "$OUT/live/live.txt" "$OUT/live/voice-only.txt" "$OUT/live/green-screen.txt" | sed 's/^/  /'
   echo "bench:"; grep -v '^bench:' "$OUT/bench.txt" | sed 's/^/  /'
   echo "colour:"; grep -v '^colorcheck:' "$OUT/color.txt" | sed 's/^/  /'
 } | tee "$OUT/summary.txt"
