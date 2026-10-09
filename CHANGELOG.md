@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+Live: lead the camera yourself while you talk, with you on camera in the room.
+
+**Go Live**
+- **Go Live (⌥⌘L)**, or the button under the video: OOO starts your Mac's own microphone and camera and shows you in the room under the slide, mirrored, so you can settle before the count of three. Then talk it through and lead the camera: → or Space to the next stop, ← back, ↑ out to the whole slide, or click a number, a line or the chart to look at it. At the last stop on a slide, the next press turns the card over or melts it to the next.
+- Each move sets off the moment you press. Press while the camera is still on its way and it goes on as soon as it has landed; press again before then and it goes to the one after instead. A lit emphasis fades before the camera leaves. While you talk, the camera holds still where you stopped it.
+- Return (or Finish) keeps the take, one undo away: every move at the moment you made it, each hold given back its slow push-in and its read-along, your voice as the voiceover, its words heard for later, and you in the room until you finish, when you go as the stage settles and the ending plays. Draw with the pen during a take and the marks draw on in time.
+- Your voice and your face are one recording from the Mac's camera and microphone, so they never drift apart. Turn off **Film Me in Live Takes** in the File menu for your voice only.
+
+**You in the room**
+- You fill the room the stage leaves, edge to edge, your picture's top edge melting into the backdrop, with the same fine grain as the slide, so you and the slide are one picture. In export, **You: In the Room** draws you in; **Own File** leaves the room empty and saves the recording beside the video as "… – you.mov", for Premiere or Edits.
+
+**Fixed**
+- Saving a video over several slides kept only the first slide's file: the others went missing when the document was opened again. Every slide is kept now, with the voiceover and the camera recording.
+
+**Made and checked**
+- `ooo-lab --live "4,8,12.5b,15@0.7:0.55"` plays a take from written presses, filmed by a stand-in recording of someone talking, since CI's Mac has no camera; `ooo-lab live` prints what each press did and when the video ends, and checks you're in the room exactly while you should be. CI renders a take over two slides.
+
 ## 1.0.2 — 6 October 2026
 
 Marks that lie on the slide the way real ink does.

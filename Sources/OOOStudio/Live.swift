@@ -499,8 +499,10 @@ extension OOOSession {
         guard event.modifierFlags.intersection([.command, .option, .control]).isEmpty else { return false }
         switch event.keyCode {
         case 53, 36, 76:
-            // Esc, Return, Enter.
-            if !event.isARepeat { finishTake() }
+            // Esc, Return, Enter: the pen away if it's out, else the take is done.
+            if !event.isARepeat {
+                if pen.on { finishDrawing(replay: false) } else { finishTake() }
+            }
             return true
         case 49, 124:
             if !event.isARepeat { liveStep(.next) }
