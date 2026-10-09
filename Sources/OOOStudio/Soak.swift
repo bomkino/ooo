@@ -14,7 +14,8 @@ import RenderCore
 ///
 /// No camera here, so a stand-in recording of `--soak` seconds (a picture
 /// like the camera's and a voice) is kept exactly as a take's recording is.
-/// It then plays in Live, goes back to Frame, sits, plays, scrubs and rests,
+/// It then plays in Live, goes back to Frame, sits, plays, scrubs, scrolls
+/// the playhead back and forth as a trackpad over the stage does, and rests,
 /// logging every half second; the main thread is sampled in each stretch
 /// (and whenever it stalls) into files beside the screenshot. Fails when
 /// the window would have frozen or swamped the Mac.
@@ -102,6 +103,17 @@ enum OOOSoak {
                 session.touch()
                 if i == 6 { monitor.sample("frame-scrubbing") }
                 await wait(0.15)
+            }
+
+            // Two fingers on the trackpad over the stage: small steps back,
+            // then forward, sixty a second, as scrolling scrubs.
+            monitor.enter("frame, scrolling")
+            session.clock.time = session.clock.duration * 0.6
+            for i in 0..<240 {
+                let step = i < 150 ? -0.04 : 0.03
+                session.clock.time = min(max(session.clock.time + step, 0), session.clock.duration)
+                if i == 20 { monitor.sample("frame-scrolling") }
+                await wait(1.0 / 60)
             }
 
             monitor.enter("frame, still")
