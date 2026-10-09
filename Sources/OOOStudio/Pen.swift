@@ -56,10 +56,13 @@ extension OOOSession {
     public func penStroke(_ points: [PenPoint]) {
         guard let scene, let start = points.first?.at, let end = points.last?.at else { return }
         let t = clock.time, C = project.canvasAspect
+        // During a live take the camera may move as you draw: each point lands
+        // where the card was under it then, and the mark starts when you began.
+        let inTake = take != nil
         var page: Int?
         var pieces: [[InkPoint]] = [[]]
         for p in points {
-            guard let hit = scene.touch(p.x, p.y, at: t, canvasAspect: C), page == nil || hit.page == page,
+            guard let hit = scene.touch(p.x, p.y, at: inTake ? t - (end - p.at) : t, canvasAspect: C), page == nil || hit.page == page,
                   (0...1).contains(hit.x), (0...1).contains(hit.y) else {
                 if pieces.last?.isEmpty == false { pieces.append([]) }
                 continue
@@ -81,19 +84,21 @@ extension OOOSession {
             // A new mark, drawn on after the ones drawn before it.
             let after = marks.filter { penMarks.contains($0.id) }.map { $0.drawn + 0.35 }.max() ?? t
             let strokes = pieces.map { $0.map { InkPoint(x: $0.x, y: $0.y, t: $0.t - t0) } }
-            let mark = Mark(page: id, time: max(t, after), strokes: strokes, color: pen.color, fades: pen.fades)
+            let mark = Mark(page: id, time: inTake ? max(t - (end - start), 0) : max(t, after), strokes: strokes, color: pen.color,
+                            fades: pen.fades)
             marks.append(mark)
             penMarks.append(mark.id)
             penLast = (mark.id, end)
         }
-        update("Draw") { $0.marks = marks }
+        // A take is one undo step, kept when it ends.
+        if inTake { live { $0.marks = marks } } else { update("Draw") { $0.marks = marks } }
     }
 
     /// Puts the pen away and plays what it drew, from a moment before.
     public func finishDrawing(replay: Bool = true) {
         let first = (project.marks ?? []).filter { penMarks.contains($0.id) }.map(\.time).min()
         pen.on = false
-        guard replay, let first else { return }
+        guard replay, take == nil, let first else { return }
         clock.time = max(first - 0.8, 0)
         clock.playing = true
     }

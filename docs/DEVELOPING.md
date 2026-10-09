@@ -39,9 +39,10 @@ swift run -c release ooo-lab bench                         # export and preview 
 swift run -c release ooo-lab colorcheck                    # how the slide's colour survives the encoder
 swift run -c release ooo-lab path --out path.csv           # the camera's path, sampled at 120 Hz
 swift run -c release ooo-lab fixture --kind wide --out wide.png # a 2576 × 1080 test slide (also standard, wide-revised)
+swift run -c release ooo-lab live --live "4,8,12.5b" --out dir # a live take: each press, the end, and a stand-in for you in the room
 ```
 
-Every command takes `--project file.ooo` (the sample by default) or `--slide file.pdf|png` (read and directed as the app does on a drop) with `--replace file` (then Replace Slide with it), `--format reel|portrait|square|landscape|uhd`, `--floor none|soft|mirror`, `--ending hold|pullBack|fade|leave`, `--arrive rise|unfold|drop|develop|turn|glide|weave|none` and `--title "…"` (with `--kicker "…"`, `--kicker-as-typed` and `--face`).
+Every command takes `--project file.ooo` (the sample by default) or `--slide file.pdf|png` (read and directed as the app does on a drop) with `--replace file` (then Replace Slide with it), `--format reel|portrait|square|landscape|uhd`, `--floor none|soft|mirror`, `--ending hold|pullBack|fade|leave`, `--arrive rise|unfold|drop|develop|turn|glide|weave|none` and `--title "…"` (with `--kicker "…"`, `--kicker-as-typed` and `--face`). `--live "4,8,12.5b,15w,17@0.7:0.55"` (with `--live-end` and `--voice-only`) plays a live take on any of them first: each time a press to the next stop, `b` back, `w` the whole slide, `@u:v` a click on the slide, filmed by a stand-in recording, since CI's Mac has no camera.
 
 The app has a headless mode too, for screenshots of the real window: `OOO --snapshot out.png [--scheme light] [--slide file] [--tab look] [--shot 2] [--show-export]` (all the flags are in `Sources/OOOStudio/Snapshot.swift`).
 

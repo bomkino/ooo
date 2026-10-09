@@ -289,10 +289,11 @@ struct StageArea: View {
                         StageStatus(session: session).frame(height: top)
                         stage(px)
                             .frame(width: fitted.width, height: fitted.height)
-                            .overlay { if session.showRoom && !(session.project.lift?.isEmpty ?? true) { RoomGuide(session: session, clock: session.clock) } }
+                            .overlay { if session.showRoom && !session.isLive && !(session.project.lift?.isEmpty ?? true) { RoomGuide(session: session, clock: session.clock) } }
                             .overlay { if showSafeAreas { SafeAreaGuides(format: session.project.format) } }
                             .overlay { if session.pen.on { PenOverlay(session: session, clock: session.clock) } }
                             .overlay { if session.recorder.counting != nil || session.recorder.isRecording { RecordingOverlay(recorder: session.recorder) } }
+                            .overlay { if session.isLive { LiveOverlay(session: session, capture: session.liveCapture) } }
                             .overlay {
                                 if !session.hasSlide {
                                     ProgressView().controlSize(.small)
@@ -302,7 +303,7 @@ struct StageArea: View {
                             .overlay(RoundedRectangle(cornerRadius: Theme.Radius.stage, style: .continuous)
                                 .strokeBorder(dropTargeted ? Theme.camera : Theme.hairline, lineWidth: dropTargeted ? 2 : 1))
                             .shadow(color: .black.opacity(scheme == .dark ? 0.55 : 0.18), radius: scheme == .dark ? 28 : 14, y: 4)
-                            .onTapGesture(count: 2) { if !session.pen.on { session.clock.playing.toggle() } }
+                            .onTapGesture(count: 2) { if !session.pen.on && !session.isLive { session.clock.playing.toggle() } }
                             .overlay(alignment: .top) {
                                 if session.pen.on {
                                     PenPalette(session: session)
@@ -331,7 +332,11 @@ struct StageStatus: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            if session.recorder.isRecording || session.recorder.counting != nil {
+            if session.isLive {
+                Circle().fill(Theme.camera).frame(width: 7, height: 7)
+                Text("Live").textStyle(.label).foregroundStyle(.primary)
+                Text("Talk it through and lead the camera. Return when you're done.").textStyle(.caption).foregroundStyle(.secondary)
+            } else if session.recorder.isRecording || session.recorder.counting != nil {
                 Circle().fill(Theme.camera).frame(width: 7, height: 7)
                 Text("Recording").textStyle(.label).foregroundStyle(.primary)
                 Text("Talk it through. Click Stop when you're done.").textStyle(.caption).foregroundStyle(.secondary)
@@ -401,6 +406,11 @@ struct TransportBar: View {
             IconButton("pencil.tip.crop.circle", label: session.pen.on ? "Put the Pen Away" : "Draw on the Slide",
                        size: 15) { session.togglePen() }
                 .foregroundStyle(session.pen.on ? Theme.camera : Color.primary)
+            IconButton("dot.radiowaves.left.and.right", label: session.isLive ? "Finish the Live Take" : "Go Live", size: 15) {
+                session.toggleLive()
+            }
+            .foregroundStyle(session.isLive ? Theme.camera : Color.primary)
+            .disabled(!session.hasSlide || session.recorder.isActive)
             HStack(spacing: 4) {
                 Text(timecode(clock.time)).textStyle(.data).foregroundStyle(.primary)
                 Text("/").textStyle(.data).foregroundStyle(.tertiary)

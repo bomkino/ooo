@@ -80,7 +80,9 @@ cat > "$APPDIR/Contents/Info.plist" <<PLIST
   <key>SUEnableAutomaticChecks</key><true/>
   <key>NSHumanReadableCopyright</key><string>© 2026 pitch.dog. Free software under the GNU AGPL 3.0.</string>
   <key>NSMicrophoneUsageDescription</key>
-  <string>OOO records a scratch voiceover as you talk the video through, so the camera can land on your words. It stays on this Mac.</string>
+  <string>OOO records your voice as you talk the video through, so the camera can land on your words. It stays on this Mac.</string>
+  <key>NSCameraUsageDescription</key>
+  <string>In a live take, OOO films you to stand in the room under the slide. The recording stays on this Mac.</string>
   <key>NSSpeechRecognitionUsageDescription</key>
   <string>OOO listens to your voiceover on this Mac to find when you say each word, so every move lands just before you name it.</string>
   <key>CFBundleDocumentTypes</key>

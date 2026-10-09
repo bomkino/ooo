@@ -97,7 +97,7 @@ public final class OOOSession {
     @ObservationIgnored public weak var undoManager: UndoManager?
 
     public private(set) var project: OOOProject
-    public private(set) var choreography: Choreography
+    public internal(set) var choreography: Choreography
     /// Increments whenever anything visible changes; the stage redraws on change.
     public private(set) var version = 0
     public let clock = PlaybackClock()
@@ -144,7 +144,8 @@ public final class OOOSession {
             guard pen.on != oldValue.on else { return }
             penMarks = []
             penLast = nil
-            if pen.on { clock.playing = false }
+            // During a live take the clock is yours: drawing never stops it.
+            if pen.on && take == nil { clock.playing = false }
             version += 1
         }
     }
@@ -154,13 +155,17 @@ public final class OOOSession {
     @ObservationIgnored var penLast: (id: UUID, ended: Double)?
     /// A scratch voiceover being recorded.
     public let recorder = VoiceRecorder()
+    /// The microphone and camera during a live take.
+    public let liveCapture = LiveCapture()
+    /// The live take under way, from Go Live until it is kept or given up.
+    @ObservationIgnored var take: LiveRun?
 
     @ObservationIgnored private var slideBase: SlideBase?
     @ObservationIgnored private var slideToken = 0
     /// The slides after the first on the GPU, by id, and those being drawn.
     @ObservationIgnored private var pageBases: [UUID: SlideBase] = [:]
     @ObservationIgnored private var pagesDrawing: Set<UUID> = []
-    @ObservationIgnored private var sceneCache: SlideScene?
+    @ObservationIgnored var sceneCache: SlideScene?
     /// A dropped slide whose tour is still being planned: the drop and its
     /// tour become one undo step when the plan lands.
     @ObservationIgnored private var pendingDrop: (before: OOOProject, name: String)?
@@ -283,6 +288,7 @@ public final class OOOSession {
     /// Keys no menu can carry. Returns true when the key was used: Esc
     /// cancels a drag, and holding \ shows the Original look.
     public func handleKey(_ event: NSEvent) -> Bool {
+        if take != nil, event.type == .keyDown { return liveKey(event) }
         if event.type == .keyDown, event.keyCode == 53 { return cancelEdit() }
         guard event.charactersIgnoringModifiers == "\\",
               event.modifierFlags.intersection([.command, .option, .control]).isEmpty else { return false }
@@ -315,14 +321,27 @@ public final class OOOSession {
         pendingDrop = (before, name)
     }
 
-    private func set(_ p: OOOProject) {
+    /// Closes whatever gesture or drop is still open, as its own undo step.
+    func settleEdits() {
+        finishDrop()
+        if pendingEditStart != nil { commitEdit(pendingEditName ?? "Edit") }
+    }
+
+    /// Shows `c` as the camera's path without changing the project: a live take's path as you lead it.
+    func show(_ c: Choreography) {
+        choreography = c
+        sceneCache = nil
+        version += 1
+    }
+
+    func set(_ p: OOOProject) {
         let slideChanged = p.slide != project.slide
         let voiceChanged = p.voice?.file != project.voice?.file
         let pagesChanged = p.morePages.map(\.id) != project.morePages.map(\.id) || p.morePages.map(\.slide) != project.morePages.map(\.slide)
         if slideChanged || pagesChanged || p.format != project.format { thumbs = [:] }
         project = p
         document.project = p
-        choreography = p.choreography()
+        choreography = take?.take.choreography ?? p.choreography()
         sceneCache = nil
         version += 1
         let d = choreography.duration
@@ -336,7 +355,7 @@ public final class OOOSession {
         if pagesChanged { loadPages() }
     }
 
-    private func registerUndo(from old: OOOProject, name: String) {
+    func registerUndo(from old: OOOProject, name: String) {
         guard let um = undoManager else { return }
         let current = project
         um.registerUndo(withTarget: document) { [weak self] _ in
@@ -370,6 +389,7 @@ public final class OOOSession {
                            details: [b.details] + pages.map { $0?.details }, inks: InkCache.shared.textures(for: project),
                            choreography: choreography)
         s.pinned = Set(penMarks)
+        s.faceURL = project.face.map { document.media.url(for: $0.file) }
         sceneCache = s
         return s
     }
@@ -379,9 +399,11 @@ public final class OOOSession {
     public func exportScene() -> SlideScene? {
         guard let b = slideBase, pagesReady else { return nil }
         let pages = project.morePages.compactMap { pageBases[$0.id] }
-        return SlideScene(project: project, bases: [b.texture] + pages.map(\.texture),
-                          details: ([b] + pages).map { DetailCache(source: $0.source, baseDensity: $0.density) },
-                          inks: InkCache.shared.textures(for: project), choreography: choreography)
+        var s = SlideScene(project: project, bases: [b.texture] + pages.map(\.texture),
+                           details: ([b] + pages).map { DetailCache(source: $0.source, baseDensity: $0.density) },
+                           inks: InkCache.shared.textures(for: project), choreography: choreography)
+        s.faceURL = project.face.map { document.media.url(for: $0.file) }
+        return s
     }
 
     /// Whether every slide after the first is drawn and ready.
@@ -809,6 +831,8 @@ public final class OOOSession {
     /// dragged it stays put under the pointer, growing only in steps if the
     /// video outgrows it, and it follows the video again on release.
     public var timelineLength: Double {
+        // During a live take the path runs far ahead; the timeline shows what you have done so far.
+        if take != nil { return max(clock.time + 15, 30) }
         let d = clock.duration
         guard let held = heldTimelineLength, held > 0 else { return d }
         guard d > held else { return held }
@@ -1000,7 +1024,7 @@ public final class OOOSession {
     }
 
     /// Listens to the voiceover for its words, on this Mac, then cuts the moves to them.
-    public func transcribe() {
+    public func transcribe(cut: Bool = true) {
         guard let v = project.voice else { return }
         let url = document.media.url(for: v.file)
         let file = v.file
@@ -1018,7 +1042,7 @@ public final class OOOSession {
                     }
                     p.voice?.language = Locale.current.identifier
                 }
-                self.cutToVoice()
+                if cut { self.cutToVoice() }
             } catch {
                 self?.end(job)
                 self?.message = readable(error)
@@ -1064,6 +1088,11 @@ public final class OOOSession {
     /// Keeps the voice in step with playback. While it plays, its position is
     /// the clock, so the picture follows the voice and the two never drift.
     public func soundClock(playing: Bool, time: Double) -> Double? {
+        if let t = liveClock() {
+            if player.isPlaying { player.stop() }
+            lastSoundTime = nil
+            return t
+        }
         guard playing, !showExport, !recorder.isActive, var key = voiceKey, voiceTrack != nil else {
             if player.isPlaying { player.stop() }
             lastSoundTime = nil
