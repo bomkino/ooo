@@ -43,6 +43,8 @@ shot() {
   wait "$watchdog" 2>/dev/null
   # A soak's verdict, whichever way it went.
   grep -h '^soak: \(worst\|passed\|FAILED\|kept\|the main\|couldn\|240 scroll\)' "$OUT/$name.log" | sed 's/^/  /'
+  # And whether the voice and the picture stayed together, clap by clap.
+  grep -h '^sync: ' "$OUT/$name.log" | sed 's/^/  /'
   if [ "$rc" -eq 0 ] && [ -s "$OUT/$name.png" ]; then
     grep -h '^snapshot' "$OUT/$name.log" | sed "s|^snapshot $OUT/|  |"
     # The whole editor fits the window: the timeline is never off the bottom.
