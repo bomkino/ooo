@@ -429,6 +429,10 @@ struct SlideMap: View {
             } else {
                 r = CGRect(x: dx < 0 ? start.x - w : start.x, y: dy < 0 ? start.y - h : start.y, width: w, height: h)
             }
+            if hypot(dx, dy) > 4, session.clock.playing {
+                // Drawing holds the video still, so the slide under the hand stays the one drawn on.
+                session.clock.playing = false
+            }
             drawing = hypot(dx, dy) > 4 ? r : nil
         case .pick:
             break

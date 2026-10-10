@@ -335,6 +335,11 @@ struct ClipView: View {
             }
         }
         .gesture(dragGesture)
+        .onDisappear {
+            // Taken away mid-drag (a take began, the clip went): the drag ends
+            // there, as one undo step, and the timeline fits again.
+            if let d = drag, !d.reorder, d.zone != .body || clip.shotID != nil { session.endTiming(d.name) }
+        }
         .simultaneousGesture(TapGesture().onEnded {
             // A click rests on it; a double-click plays it.
             if (NSApp.currentEvent?.clickCount ?? 1) >= 2 { session.watchClip(index) } else { session.selectClip(index) }

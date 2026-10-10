@@ -369,6 +369,8 @@ public final class VideoWriter {
             }
         }
         if !audioFinished { audioInput?.markAsFinished() }
+        // The last frame lasts a whole frame too, so a silent video isn't a frame short.
+        if frameCount > 0 { writer.endSession(atSourceTime: CMTime(value: frameCount, timescale: CMTimeScale(fps))) }
         await writer.finishWriting()
         if writer.status != .completed {
             throw RenderError.io(writer.error?.localizedDescription ?? "Video did not finish writing.")

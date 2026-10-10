@@ -232,7 +232,11 @@ struct SlideRow: View {
                     .textStyle(.bodyCompact).lineLimit(1).truncationMode(.middle)
                 if k > 0 {
                     Picker("Change", selection: Binding(
-                        get: { session.project.morePages[min(k, session.project.morePages.count) - 1].change },
+                        get: { () -> PageChange in
+                            // Asked once more as the slide goes away, there may be none.
+                            let pages = session.project.morePages
+                            return pages.indices.contains(k - 1) ? pages[k - 1].change : .turn
+                        },
                         set: { session.setChange(k, $0) })) {
                         ForEach(PageChange.allCases) { c in Text(c.title).tag(c) }
                     }

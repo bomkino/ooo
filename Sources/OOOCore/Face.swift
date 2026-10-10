@@ -462,6 +462,16 @@ public final class FaceCompositor {
         return stream.frame(at: t)
     }
 
+    /// Lets the live stage go of the recordings `gone` picks (one a retake
+    /// replaced, or a closed window's): their frames and decoder, until shown again.
+    func release(_ gone: (URL) -> Bool) {
+        lock.lock()
+        let closing = streams.filter { gone($0.url) }
+        streams.removeAll { gone($0.url) }
+        lock.unlock()
+        closing.forEach { $0.close() }
+    }
+
     /// Draws the recording's frame at `t` (seconds into it) over `output`:
     /// in a room `room` of the frame tall, risen `rise` of the way in with
     /// the stage, at `alpha`, with grain like the stage's; with `greenScreen`,

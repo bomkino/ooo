@@ -66,6 +66,8 @@ public struct ValueSlider: View {
     /// What is being typed into the value, while it is.
     @State private var typed: String?
     @FocusState private var typing: Bool
+    /// Whether the typed value holds the keys.
+    @State private var holdsKeys = false
     @State private var nudgeRest: DispatchWorkItem?
     @Environment(PlaybackClock.self) private var clock: PlaybackClock?
 
@@ -147,8 +149,15 @@ public struct ValueSlider: View {
             .frame(width: 40, alignment: .trailing)
         }
         .onChange(of: typing) { _, on in
-            clock?.typing = on
+            if on != holdsKeys {
+                holdsKeys = on
+                if on { clock?.beganTyping() } else { clock?.stoppedTyping() }
+            }
             if !on { applyTyped() }
+        }
+        .onDisappear {
+            // Gone while you typed: the keys work again.
+            if holdsKeys { holdsKeys = false; clock?.stoppedTyping() }
         }
         .onChange(of: focused) { _, on in
             if !on { restNudges() }

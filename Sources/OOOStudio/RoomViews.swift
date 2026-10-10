@@ -174,7 +174,8 @@ struct RoomBar: View {
                 let length = (drag.end ?? d) - drag.start
                 let dt = Double(g.translation.width / scale.pointsPerSecond)
                 session.liveRoom(span.id) { s in
-                    s.start = max(drag.start + dt, 0)
+                    // It stays inside the video, where it can be seen and grabbed.
+                    s.start = min(max(drag.start + dt, 0), max(d - (drag.end != nil ? length : 0.5), 0))
                     if drag.end != nil { s.end = s.start + length }
                 }
             }

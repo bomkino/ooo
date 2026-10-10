@@ -643,6 +643,11 @@ public final class SlideStage: @unchecked Sendable {
         faces = try FaceCompositor()
     }
 
+    /// Lets go of the camera recordings `gone` picks, which the stage no longer shows.
+    public func releaseFaces(where gone: (URL) -> Bool) {
+        faces.release(gone)
+    }
+
     /// Most pixels between neighbouring shutter samples: closer than this,
     /// a blur's steps can't be told from a continuous smear.
     public static let blurStep: Float = 0.75
@@ -772,7 +777,10 @@ public final class InkCache: @unchecked Sendable {
     public static let shared = InkCache()
 
     private let lock = NSLock()
-    private var made: [Int: MTLTexture] = [:]
+    /// Each mark's latest drawing and the one before it (so an undo is
+    /// instant), by the mark: a mark redrawn at every stroke keeps two
+    /// textures, not one for every stroke it ever had.
+    private var made: [UUID: [(key: Int, texture: MTLTexture)]] = [:]
     private var grounds: [Int: Float] = [:]
 
     public init() {}
@@ -843,15 +851,19 @@ public final class InkCache: @unchecked Sendable {
         h.combine(A)
         let key = h.finalize()
         lock.lock()
-        if let hit = made[key] {
+        if let hit = made[mark.id]?.first(where: { $0.key == key }) {
             lock.unlock()
-            return hit
+            return hit.texture
         }
         lock.unlock()
         guard let raster = InkRaster(mark, slideAspect: A), let texture = Self.upload(raster) else { return nil }
         lock.lock()
-        if made.count > 96 { made.removeAll() }
-        made[key] = texture
+        var versions = made[mark.id] ?? []
+        versions.removeAll { $0.key == key }
+        versions.append((key, texture))
+        if versions.count > 2 { versions.removeFirst(versions.count - 2) }
+        if made[mark.id] == nil, made.count >= 64 { made.removeAll() }
+        made[mark.id] = versions
         lock.unlock()
         return texture
     }

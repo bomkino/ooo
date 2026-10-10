@@ -19,7 +19,19 @@ public final class PlaybackClock {
     public var playing = true
     public var duration: Double = 10
     /// True while the person types in a text field; single-key shortcuts stand down.
-    public var typing = false
+    public private(set) var typing = false
+    /// Fields holding the keys: focus can arrive in one before it leaves another.
+    @ObservationIgnored private var fields = 0
+    /// A text field took the keys.
+    public func beganTyping() {
+        fields += 1
+        typing = true
+    }
+    /// A text field let go of the keys (lost focus, or went away while it had it).
+    public func stoppedTyping() {
+        fields = max(fields - 1, 0)
+        typing = fields > 0
+    }
     public init() {
         playing = !Self.reduceMotion
     }
@@ -57,6 +69,10 @@ public enum InspectorTab: String, CaseIterable, Identifiable {
 public enum OOOShared {
     public static let stage: SlideStage? = try? SlideStage()
 }
+
+/// Draws the slides after the first one at a time, so a long deck doesn't
+/// hold every slide's full-size picture in memory at once.
+private let pageDrawing = DispatchQueue(label: "dog.pitch.ooo.pages", qos: .userInitiated)
 
 /// The slide on the GPU, with everything drawn from it.
 final class SlideBase: @unchecked Sendable {
@@ -207,7 +223,8 @@ public final class OOOSession {
     @ObservationIgnored private var pendingDrop: (before: OOOProject, name: String)?
     @ObservationIgnored private var voiceTrack: AudioTrack?
     @ObservationIgnored private var voiceFile: String?
-    @ObservationIgnored private var placedCache: (key: VoiceKey, track: AudioTrack)?
+    /// What the voice player was last asked to play.
+    @ObservationIgnored private var playingKey: VoiceKey?
     @ObservationIgnored private var pendingVoice: (key: VoiceKey, since: Double)?
     @ObservationIgnored private let player = VoicePlayer()
     @ObservationIgnored private var lastSoundTime: Double?
@@ -250,6 +267,8 @@ public final class OOOSession {
                 pendingEditStart = project
                 pendingEditName = openGesture
             }
+            // Landed mid-drag (a direction, a transcript): the rest of the drag builds on it.
+            if timingBase != nil { timingBase = project }
         }
         let before = project
         var after = project
@@ -322,6 +341,11 @@ public final class OOOSession {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: rest)
     }
 
+    /// Another app came to the front while \ was held: its letting go never comes here.
+    public func stopComparing() {
+        comparing = false
+    }
+
     /// Keys no menu can carry. Returns true when the key was used: Esc
     /// cancels a drag, and holding \ shows the Original look.
     public func handleKey(_ event: NSEvent) -> Bool {
@@ -338,14 +362,14 @@ public final class OOOSession {
             }
             return true
         }
-        guard event.charactersIgnoringModifiers == "\\",
-              event.modifierFlags.intersection([.command, .option, .control]).isEmpty else { return false }
+        guard event.charactersIgnoringModifiers == "\\" else { return false }
+        // Let go with ⌘ held, it still lets go.
         if event.type == .keyUp {
             guard comparing else { return false }
             comparing = false
             return true
         }
-        guard !clock.typing else { return false }
+        guard event.modifierFlags.intersection([.command, .option, .control]).isEmpty, !clock.typing else { return false }
         if !event.isARepeat { comparing = true }
         return true
     }
@@ -387,8 +411,16 @@ public final class OOOSession {
         let voiceChanged = p.voice?.file != project.voice?.file
         let pagesChanged = p.morePages.map(\.id) != project.morePages.map(\.id) || p.morePages.map(\.slide) != project.morePages.map(\.slide)
         if slideChanged || pagesChanged || p.format != project.format { thumbs = [:] }
+        if let old = project.face?.file, old != p.face?.file {
+            // A recording a retake replaced no longer holds frames and a decoder.
+            let url = document.media.url(for: old)
+            OOOShared.stage?.releaseFaces { $0 == url }
+        }
         project = p
-        document.project = p
+        // During a take the project is the stage as it plays then (no voice,
+        // no you, no marks yet). The document keeps the project as it was, so
+        // a save mid-take never writes that, or leaves their files behind.
+        if take == nil { document.project = p }
         if take == nil, staged != nil {
             // In the Live room the stage shows the project as the take will play it.
             let room = p.liveStage(filming: roomFilming)
@@ -421,6 +453,7 @@ public final class OOOSession {
                 self.pendingDrop = nil
                 self.set(old)
                 if self.pendingEditStart != nil { self.pendingEditStart = old }
+                if self.timingBase != nil { self.timingBase = old }
                 self.registerUndo(from: current, name: name)
             }
         }
@@ -455,9 +488,11 @@ public final class OOOSession {
     public func exportScene() -> SlideScene? {
         guard let b = slideBase, pagesReady else { return nil }
         let pages = project.morePages.compactMap { pageBases[$0.id] }
+        // In the Live room the stage plays the take to come; the video is the project's own.
         var s = SlideScene(project: project, bases: [b.texture] + pages.map(\.texture),
                            details: ([b] + pages).map { DetailCache(source: $0.source, baseDensity: $0.density) },
-                           inks: InkCache.shared.textures(for: project), choreography: choreography)
+                           inks: InkCache.shared.textures(for: project),
+                           choreography: staged == nil ? choreography : project.choreography())
         s.faceURL = project.face.map { document.media.url(for: $0.file) }
         return s
     }
@@ -466,6 +501,15 @@ public final class OOOSession {
     public var pagesReady: Bool {
         _ = drawn
         return project.morePages.allSatisfy { pageBases[$0.id]?.ref == $0.slide }
+    }
+
+    /// Why there's nothing to export or save yet; nil once every slide is drawn.
+    public var notReady: String? {
+        _ = drawn
+        if slideBase != nil && pagesReady { return nil }
+        return slideBase == nil || !pagesDrawing.isEmpty
+            ? "The slides are still being drawn. Try again in a moment."
+            : "A slide couldn't be drawn. Replace it, then try again."
     }
 
     /// Whether the slide is drawn and on the stage. Observed: the slide is
@@ -527,7 +571,7 @@ public final class OOOSession {
             let id = page.id, ref = page.slide
             pagesDrawing.insert(id)
             let job = begin("Drawing the slides")
-            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            pageDrawing.async { [weak self] in
                 let result = Result { try SlideBase(ref: ref, media: media) }
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
@@ -551,6 +595,7 @@ public final class OOOSession {
                             self.sceneCache = nil
                             self.version += 1
                         case .failure(let error):
+                            self.drawn += 1
                             self.message = "Couldn't draw \(ref.name): \(readable(error))"
                         }
                     }
@@ -596,6 +641,9 @@ public final class OOOSession {
             p.slide = ref
             p.shots = []
             p.reading = nil
+            // What was drawn on the old slide goes with it.
+            p.marks?.removeAll { $0.page == nil }
+            if p.marks?.isEmpty == true { p.marks = nil }
             p.adaptOverview(fromSlideAspect: A, canvasAspect: C)
         }
         selection = .overview
@@ -699,6 +747,9 @@ public final class OOOSession {
             p.slide = ref
             p.shots = []
             p.reading = nil
+            // What was drawn on the old slide goes with it.
+            p.marks?.removeAll { $0.page == nil }
+            if p.marks?.isEmpty == true { p.marks = nil }
             p.adaptOverview(fromSlideAspect: A, canvasAspect: C)
         }
         selection = .overview
@@ -901,7 +952,7 @@ public final class OOOSession {
     public var timelineLength: Double {
         // During a live take the path runs far ahead; the timeline shows what you have done so
         // far, and once you close, the whole take.
-        if let run = take { return run.closing != nil ? clock.duration : takeSpan }
+        if take != nil { return liveClosingAt != nil ? clock.duration : takeSpan }
         let d = clock.duration
         // While a hand is down the scale holds still; a clip may run past the edge until it lets go.
         guard let held = heldTimelineLength, held > 0 else { return d }
@@ -1020,7 +1071,8 @@ public final class OOOSession {
 
     public static let voiceTypes: [UTType] = VoiceLoader.types
 
-    public var voiceRecording: AudioTrack? { voiceTrack }
+    /// The voiceover as decoded, once it is the project's own (nil while it is still being read).
+    public var voiceRecording: AudioTrack? { voiceFile != nil && voiceFile == project.voice?.file ? voiceTrack : nil }
 
     /// A recording as the voiceover, starting `offset` seconds in; its words
     /// are heard and the moves cut to them.
@@ -1117,7 +1169,14 @@ public final class OOOSession {
                     // A live take's words come with the take: one undo takes both back.
                     var p = self.project
                     heard(&p)
-                    if p != self.project { self.set(p) }
+                    if p != self.project {
+                        self.set(p)
+                        // With no undo step of their own, the document must hear it
+                        // has changed, or a save made while listening leaves them out.
+                        if let um = self.undoManager {
+                            NSDocumentController.shared.documents.first { $0.undoManager === um }?.updateChangeCount(.changeDone)
+                        }
+                    }
                 }
                 if cut { self.cutToVoice() }
             } catch {
@@ -1132,6 +1191,10 @@ public final class OOOSession {
         let change: (inout OOOProject) -> Void = { p in
             guard var voice = p.voice else { return }
             let d = offset - voice.offset
+            // A live take's own voice: you move with it, so your lips stay on your words.
+            if let face = p.face, face.offset == voice.offset, abs(face.duration - voice.duration) < 0.25 {
+                p.face?.offset = face.offset + d
+            }
             voice.offset = offset
             voice.words = voice.words?.map {
                 SpokenWord(text: $0.text, start: $0.start + d, end: $0.end + d, confidence: $0.confidence)
@@ -1151,15 +1214,6 @@ public final class OOOSession {
     private var voiceKey: VoiceKey? {
         guard let v = project.voice else { return nil }
         return VoiceKey(file: v.file, offset: v.offset, gain: v.gain, duration: choreography.duration)
-    }
-
-    /// The voice as it sits under the video.
-    private func placedVoice(_ key: VoiceKey) -> AudioTrack? {
-        if let c = placedCache, c.key == key { return c.track }
-        guard let raw = voiceTrack, voiceFile == key.file else { return nil }
-        let track = VoiceLoader.placed(raw, offset: key.offset, gain: key.gain, duration: key.duration)
-        placedCache = (key, track)
-        return track
     }
 
     /// Keeps the voice in step with playback. While it plays, its position is
@@ -1183,22 +1237,26 @@ public final class OOOSession {
             lastSoundTime = nil
             return t
         }
-        guard playing, !showExport, !recorder.isActive, var key = voiceKey, voiceTrack != nil else {
+        // (A voice just changed for another is silent until it has been read.)
+        guard playing, !showExport, !recorder.isActive, var key = voiceKey, let raw = voiceTrack, voiceFile == key.file else {
             if player.isPlaying { player.stop() }
             lastSoundTime = nil
             return nil
         }
-        // While a slider moves, keep playing what is there; re-place the voice
-        // once the change has held still for a moment.
-        if let cached = placedCache, cached.key != key, player.isPlaying {
+        // While a slider moves, keep playing what is there; play the change
+        // once it has held still for a moment.
+        if let current = playingKey, current != key, current.file == key.file, player.isPlaying {
             let now = CACurrentMediaTime()
             if pendingVoice?.key != key { pendingVoice = (key, now) }
-            if now - (pendingVoice?.since ?? now) < 0.25 { key = cached.key }
+            if now - (pendingVoice?.since ?? now) < 0.25 { key = current }
         }
-        guard let track = placedVoice(key) else { return nil }
         let moved = lastSoundTime.map { abs(time - $0) > 0.06 } ?? true
         if !player.isPlaying || player.signature != key.hashValue || moved {
-            player.play(track, signature: key.hashValue, from: time)
+            let rate = Double(AudioTrack.sampleRate)
+            let voice = PlacedVoice(track: raw, shift: Int((key.offset * rate).rounded()), gain: key.gain,
+                                    frames: max(Int((key.duration * rate).rounded()), 0))
+            player.play(voice, signature: key.hashValue, from: time)
+            playingKey = key
         }
         var t = player.position() ?? time
         if t >= clock.duration - 1e-3 {
@@ -1224,10 +1282,11 @@ final class VoicePlayer {
     private let turns = Turns()
     private let copying = DispatchQueue(label: "dog.pitch.ooo.voice-copy", qos: .userInitiated)
 
-    /// Plays `track` (already placed on the video's timeline) from `time`.
-    /// The first two seconds are copied at once, the rest beside the window
-    /// while they play, so starting or jumping never waits on the whole voice.
-    func play(_ track: AudioTrack, signature: Int, from time: Double) {
+    /// Plays `voice` from `time` on the video's timeline. The first two
+    /// seconds are copied at once, the rest beside the window a few seconds
+    /// at a time as they play, so starting or jumping never waits on the
+    /// whole voice, and only a few seconds of it wait in memory.
+    func play(_ voice: PlacedVoice, signature: Int, from time: Double) {
         if engine == nil {
             let engine = AVAudioEngine()
             let node = AVAudioPlayerNode()
@@ -1241,9 +1300,9 @@ final class VoicePlayer {
         guard let engine, let node, let format else { return }
         let turn = turns.next()
         node.stop()
-        let start = max(0, min(track.frames, Int((time * Double(AudioTrack.sampleRate)).rounded())))
-        let first = min(track.frames - start, 2 * AudioTrack.sampleRate)
-        guard first > 0, let buffer = Self.buffer(track, from: start, count: first, format: format) else { return }
+        let start = max(0, min(voice.frames, Int((time * Double(AudioTrack.sampleRate)).rounded())))
+        let first = min(voice.frames - start, 2 * AudioTrack.sampleRate)
+        guard first > 0, let buffer = Self.buffer(voice, from: start, count: first, format: format) else { return }
         if !engine.isRunning {
             do { try engine.start() } catch { return }
         }
@@ -1252,39 +1311,69 @@ final class VoicePlayer {
         self.signature = signature
         startTime = time
         let rest = start + first
-        guard rest < track.frames else { return }
-        copying.async { [turns] in
-            guard let buffer = Self.buffer(track, from: rest, count: track.frames - rest, format: format) else { return }
-            // Stopped or started again meanwhile, this is no longer what plays.
-            turns.ifCurrent(turn) { node.scheduleBuffer(buffer, at: nil, options: []) }
+        guard rest < voice.frames else { return }
+        let queue = copying
+        queue.async { [turns] in
+            Self.hand(voice, piece: 0, after: rest, to: node, format: format, turn: turn, turns: turns, queue: queue)
+            Self.hand(voice, piece: 1, after: rest, to: node, format: format, turn: turn, turns: turns, queue: queue)
         }
     }
 
-    /// `count` frames of `track` from `start`, as the player takes them.
-    nonisolated private static func buffer(_ track: AudioTrack, from start: Int, count: Int, format: AVAudioFormat) -> AVAudioPCMBuffer? {
+    /// Hands piece `k` (four seconds) of the voice after frame `rest` to the
+    /// player, while it is still what plays (no newer play or stop has
+    /// begun). As each piece finishes playing, the one two on follows.
+    nonisolated private static func hand(_ voice: PlacedVoice, piece k: Int, after rest: Int, to node: AVAudioPlayerNode,
+                                         format: AVAudioFormat, turn: Int, turns: Turns, queue: DispatchQueue) {
+        let piece = 4 * AudioTrack.sampleRate
+        let from = rest + k * piece
+        guard from < voice.frames, turns.isCurrent(turn),
+              let buffer = buffer(voice, from: from, count: min(voice.frames - from, piece), format: format) else { return }
+        turns.ifCurrent(turn) {
+            node.scheduleBuffer(buffer, at: nil, options: [], completionCallbackType: .dataConsumed) { _ in
+                queue.async {
+                    Self.hand(voice, piece: k + 2, after: rest, to: node, format: format, turn: turn, turns: turns, queue: queue)
+                }
+            }
+        }
+    }
+
+    /// `count` frames of the voice from `start` on the video's timeline, as the player takes them.
+    nonisolated private static func buffer(_ voice: PlacedVoice, from start: Int, count: Int, format: AVAudioFormat) -> AVAudioPCMBuffer? {
         guard count > 0, let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(count)),
               let channels = buffer.floatChannelData else { return nil }
         buffer.frameLength = AVAudioFrameCount(count)
         let left = channels[0], right = channels[1]
-        track.samples.withUnsafeBufferPointer { s in
+        let frames = voice.track.frames, gain = voice.gain
+        voice.track.samples.withUnsafeBufferPointer { s in
             for i in 0..<count {
-                left[i] = s[2 * (start + i)]
-                right[i] = s[2 * (start + i) + 1]
+                let j = start + i - voice.shift
+                if j >= 0, j < frames {
+                    left[i] = s[2 * j] * gain
+                    right[i] = s[2 * j + 1] * gain
+                } else {
+                    left[i] = 0
+                    right[i] = 0
+                }
             }
         }
         return buffer
     }
 
-    /// Where on the video's timeline the voice now playing is.
+    /// Where on the video's timeline the voice you hear now is: what the
+    /// player has played, less the time it takes to reach your ears (next
+    /// to nothing on the Mac's speakers, much more on Bluetooth headphones).
     func position() -> Double? {
         guard let node, node.isPlaying, let last = node.lastRenderTime,
               let t = node.playerTime(forNodeTime: last), t.sampleRate > 0 else { return nil }
-        return startTime + Double(t.sampleTime) / t.sampleRate
+        let late = engine?.outputNode.presentationLatency ?? 0
+        return max(startTime, startTime + Double(t.sampleTime) / t.sampleRate - late)
     }
 
     func stop() {
         _ = turns.next()
         node?.stop()
+        // Lets the Mac's sound output rest until the voice plays again; `play` starts it.
+        engine?.pause()
         signature = nil
     }
 }
@@ -1306,6 +1395,20 @@ final class Turns: @unchecked Sendable {
     func ifCurrent(_ turn: Int, _ body: () -> Void) {
         lock.withLock { if current == turn { body() } }
     }
+
+    func isCurrent(_ turn: Int) -> Bool {
+        lock.withLock { current == turn }
+    }
+}
+
+/// The voice as it sits under the video, worked out a few seconds at a time
+/// as it plays rather than copied whole: `track` moved `shift` frames along,
+/// at `gain`, `frames` long.
+struct PlacedVoice: Sendable {
+    let track: AudioTrack
+    let shift: Int
+    let gain: Float
+    let frames: Int
 }
 
 /// An error as a sentence for people: the renderer's own message or the

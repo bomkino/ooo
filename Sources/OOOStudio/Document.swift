@@ -13,13 +13,26 @@ extension UTType {
 public final class MediaStore: @unchecked Sendable {
     public let directory: URL
 
+    /// Every window's own folder sits in here.
+    static let sessions = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("OOO", isDirectory: true)
+        .appendingPathComponent("Sessions", isDirectory: true)
+
     public init() {
-        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("OOO", isDirectory: true)
-            .appendingPathComponent("Sessions", isDirectory: true)
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let base = Self.sessions.appendingPathComponent(UUID().uuidString, isDirectory: true)
         directory = base
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+    }
+
+    /// Clears what earlier runs left behind: a window's folder goes when the
+    /// window closes, but not when OOO quits or stops unexpectedly, and a
+    /// camera recording can be big. Call before any document opens.
+    static func sweep() {
+        let old = (try? FileManager.default.contentsOfDirectory(at: sessions, includingPropertiesForKeys: nil)) ?? []
+        guard !old.isEmpty else { return }
+        DispatchQueue.global(qos: .utility).async {
+            for url in old { try? FileManager.default.removeItem(at: url) }
+        }
     }
 
     public func url(for file: String) -> URL { directory.appendingPathComponent(file) }
@@ -41,6 +54,9 @@ public final class MediaStore: @unchecked Sendable {
     }
 
     deinit {
+        // The window is gone: so are its recordings on the stage.
+        let folder = directory.standardizedFileURL.path + "/"
+        OOOShared.stage?.releaseFaces { $0.standardizedFileURL.path.hasPrefix(folder) }
         try? FileManager.default.removeItem(at: directory)
     }
 }

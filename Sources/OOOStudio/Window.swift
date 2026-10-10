@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import OOOCore
 import OOOMotion
 import RenderCore
@@ -58,7 +59,7 @@ extension OOOCommands {
     /// folder, for a carousel post or a deck.
     @MainActor
     public static func saveStills(_ session: OOOSession) {
-        guard let scene = session.exportScene() else { return }
+        guard let scene = session.exportScene() else { session.message = session.notReady; return }
         let format = session.project.format
         session.clock.playing = false
         let panel = NSSavePanel()
@@ -92,7 +93,7 @@ extension OOOCommands {
     /// post's cover or thumbnail.
     @MainActor
     public static func saveCoverFrame(_ session: OOOSession) {
-        guard let scene = session.exportScene() else { return }
+        guard let scene = session.exportScene() else { session.message = session.notReady; return }
         let t = session.clock.time
         let format = session.project.format
         session.clock.playing = false
@@ -152,7 +153,7 @@ public struct OOOMenuCommands: Commands {
                 .disabled(session == nil || session?.hasSlide == false || session?.recorder.isActive == true)
             Button("Discard Take") { session?.discardTake() }
                 .keyboardShortcut(".", modifiers: .command)
-                .disabled(!taking)
+                .disabled(!taking || session?.liveKeeping == true)
             Toggle("Film Me in Live Takes", isOn: Binding(get: { liveCamera }, set: { on in
                 if let session { session.setFilmMe(on) } else { liveCamera = on }
             }))
@@ -242,6 +243,8 @@ public struct OOOMenuCommands: Commands {
                 session?.touch()
             }
             .keyboardShortcut(.leftArrow, modifiers: .command)
+            // In a text field, ⌘← goes to the start of the line.
+            .disabled(session?.clock.typing == true)
             Button("Previous Landing") { session?.jump(-1) }
                 .keyboardShortcut("[", modifiers: .command)
             Button("Next Landing") { session?.jump(1) }
@@ -299,6 +302,7 @@ public struct OOORoot: View {
                     session.clock.autoplay()
                 }
             }
+            .onDisappear { session.windowClosed() }
             .onChange(of: undoManager) { _, um in session.undoManager = um }
             .modifier(EditorKeys(session: session))
             .environment(session.clock)
@@ -418,6 +422,9 @@ struct EditorKeys: ViewModifier {
                 if let monitor { NSEvent.removeMonitor(monitor) }
                 monitor = nil
             }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+                session.stopComparing()
+            }
     }
 }
 
@@ -528,6 +535,11 @@ public enum OOOLaunch {
             "NSShowAppCentricOpenPanelInsteadOfUntitledFile": false,
         ])
         OOOSnapshot.configure()
+        // Another OOO open at the same time is still using its folders.
+        if let me = Bundle.main.bundleIdentifier,
+           NSRunningApplication.runningApplications(withBundleIdentifier: me).count <= 1 {
+            MediaStore.sweep()
+        }
         DispatchQueue.global(qos: .utility).async {
             // Compile every shader before the first frame needs it.
             if let r = try? StageRenderer() { r.warmUp() }

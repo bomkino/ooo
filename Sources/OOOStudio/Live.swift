@@ -68,6 +68,9 @@ public final class LiveCapture {
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var lost: ((String) -> Void)?
     @ObservationIgnored private var deviceWatch: [NSObjectProtocol] = []
+    /// Counts each `prepare`, so one overtaken by a newer one (another camera
+    /// picked while the first was warming up) never installs itself.
+    @ObservationIgnored private var attempts = 0
 
     /// For a screenshot of a take under way, where there is no camera: it says it records.
     func pretendRecording() {
@@ -106,8 +109,11 @@ public final class LiveCapture {
         phase = .preparing
         self.lost = lost
         refreshDevices()
+        attempts += 1
+        let attempt = attempts
         Task {
             guard await Self.allowed(.audio) else {
+                guard attempt == self.attempts else { return }
                 self.phase = .idle
                 failed(Self.micDenied)
                 return
@@ -131,8 +137,8 @@ public final class LiveCapture {
                     notes.append(Self.reactions)
                 }
             }
-            guard self.phase == .preparing else {
-                // Given up while it was starting.
+            guard self.phase == .preparing, attempt == self.attempts else {
+                // Given up while it was starting, or started again since.
                 if case .success(let c) = made { self.queue.async { c.stop() } }
                 return
             }
@@ -342,6 +348,14 @@ public final class LiveCapture {
                 }
             }
         }
+        d.stoppedEarly = { [weak self] in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self, self.phase == .recording else { return }
+                    self.lost?("The recording stopped by itself (the disk may be full, or the camera or microphone went away), so the take ended there.")
+                }
+            }
+        }
         delegate = d
         // The recording starts on the next sample to arrive, and that sample's moment is time 0.
         feed.arm(url, delegate: d)
@@ -368,9 +382,10 @@ public final class LiveCapture {
         phase = .finishing
         meter?.invalidate()
         meter = nil
-        delegate.finished = { [weak self] url, error in
+        let ended = delegate.whenFinished { [weak self] url, error in
             // A recording that stops with an error (a camera unplugged) may still be whole up to there.
             let whole = (error as NSError?)?.userInfo[AVErrorRecordingSuccessfullyFinishedKey] as? Bool ?? (error == nil)
+            if !whole { try? FileManager.default.removeItem(at: url) }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self?.stop()
@@ -378,7 +393,8 @@ public final class LiveCapture {
                 }
             }
         }
-        output.stopRecording()
+        // Stopped by itself already (a full disk, a camera gone): what it recorded is kept as it is.
+        if !ended { output.stopRecording() }
     }
 
     /// Gives up: stops everything and throws away whatever was recorded.
@@ -386,8 +402,7 @@ public final class LiveCapture {
         countIn?.cancel()
         countIn = nil
         if phase == .recording || phase == .finishing, let output, let delegate {
-            delegate.finished = { url, _ in try? FileManager.default.removeItem(at: url) }
-            output.stopRecording()
+            if !delegate.whenFinished({ url, _ in try? FileManager.default.removeItem(at: url) }) { output.stopRecording() }
         } else {
             feed?.disarm()
         }
@@ -477,9 +492,30 @@ final class Feed: NSObject, AVCaptureFileOutputDelegate, @unchecked Sendable {
 }
 
 /// Hears when recording starts and stops, on whatever queue AVFoundation uses.
+/// A recording can stop before it is asked to (the disk fills up, the camera
+/// goes away): that is kept, handed on when it is asked for, and announced
+/// with `stoppedEarly`, so the take ends there instead of waiting on a
+/// recording that will never stop again.
 final class RecordingDelegate: NSObject, AVCaptureFileOutputRecordingDelegate, @unchecked Sendable {
     var started: (() -> Void)?
-    var finished: ((URL, Error?) -> Void)?
+    var stoppedEarly: (() -> Void)?
+    private let lock = NSLock()
+    private var finished: ((URL, Error?) -> Void)?
+    private var ended: (url: URL, error: Error?)?
+
+    /// Hands the recording's end to `body`, at once when it has already
+    /// ended (and then returns true), else as it ends.
+    func whenFinished(_ body: @escaping (URL, Error?) -> Void) -> Bool {
+        lock.lock()
+        guard let ended else {
+            finished = body
+            lock.unlock()
+            return false
+        }
+        lock.unlock()
+        body(ended.url, ended.error)
+        return true
+    }
 
     func fileOutput(_ output: AVCaptureFileOutput, didStartRecordingTo fileURL: URL, from connections: [AVCaptureConnection]) {
         started?()
@@ -487,7 +523,15 @@ final class RecordingDelegate: NSObject, AVCaptureFileOutputRecordingDelegate, @
 
     func fileOutput(_ output: AVCaptureFileOutput, didFinishRecordingTo outputFileURL: URL, from connections: [AVCaptureConnection],
                     error: Error?) {
-        finished?(outputFileURL, error)
+        lock.lock()
+        let asked = finished
+        if asked == nil { ended = (outputFileURL, error) }
+        lock.unlock()
+        if let asked {
+            asked(outputFileURL, error)
+        } else {
+            stoppedEarly?()
+        }
     }
 }
 
@@ -650,11 +694,14 @@ extension OOOSession {
     }
 
     private func captureLost(_ why: String) {
-        guard take != nil else {
+        guard let run = take else {
             liveCapture.cancel()
             liveNote = why
             return
         }
+        // Already ending: a second notice of the same loss (a camera gone
+        // can also stop the session) must not throw away the take being kept.
+        guard run.held == nil, !liveKeeping else { return }
         message = why
         if liveCapture.isRecording { stopTake() } else { discardTake() }
     }
@@ -673,6 +720,15 @@ extension OOOSession {
             roomTake = nil
             set(project)
         }
+        clock.playing = false
+    }
+
+    /// The window closed (or went back to its saved version): the camera and
+    /// microphone stop, and a take under way goes with it. One being kept
+    /// finishes, and its capture stops once it has.
+    func windowClosed() {
+        guard !liveKeeping else { return }
+        liveCapture.cancel()
         clock.playing = false
     }
 
@@ -936,7 +992,8 @@ extension OOOSession {
     /// Gives the take under way up (⌘.): nothing is kept, and you are back
     /// in the room, ready to start again.
     public func discardTake() {
-        guard let run = take else { return }
+        // Once you've stopped, the take is being kept; undo takes it back.
+        guard let run = take, !liveKeeping else { return }
         liveCapture.cancel()
         giveUp(run)
     }
