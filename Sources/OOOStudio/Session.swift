@@ -1080,25 +1080,19 @@ public final class OOOSession {
         let store = document.media
         let job = begin("Reading the recording")
         let name = given ?? url.deletingPathExtension().lastPathComponent
-        let scoped = url.startAccessingSecurityScopedResource()
-        let file: String
-        do {
-            file = try store.importFile(url)
-        } catch {
-            if scoped { url.stopAccessingSecurityScopedResource() }
-            end(job)
-            message = "Couldn't copy the recording: \(error.localizedDescription)"
-            return
-        }
-        if scoped { url.stopAccessingSecurityScopedResource() }
+        // Copied in away from the window's thread: a long recording on a slow
+        // disk takes a while.
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let result = Result { try VoiceLoader.decode(store.url(for: file)) }
+            let copied = Result { try store.importFile(url) }
+            let result = copied.flatMap { file in Result { try (file, VoiceLoader.decode(store.url(for: file))) } }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     self.end(job)
                     switch result {
-                    case .success(let track):
+                    case .failure(let error) where (try? copied.get()) == nil:
+                        self.message = "Couldn't copy the recording: \(error.localizedDescription)"
+                    case .success(let (file, track)):
                         self.voiceTrack = track
                         self.voiceFile = file
                         self.waveform = Waveform(track)

@@ -13,10 +13,17 @@ import RenderCore
 /// exported from the take: in the picture of you in the room, and in the
 /// sound. Each should land on its clap, and the sound on the picture.
 enum SyncCheck {
-    /// Clap times in a recording `length` seconds long: whole frames at 30
-    /// fps, clear of your coming in and going.
+    /// Clap times in a recording `length` seconds long, from start to end:
+    /// whole frames at 30 fps, uneven gaps (so none is mistaken for its
+    /// neighbour), clear of your coming in and going.
     static func claps(within length: Double) -> [Double] {
-        [4, 11, 17.5, 26, 33, 40.5].filter { $0 < length - 1.5 }
+        let gaps = [7, 6.5, 8.5, 7, 7.5]
+        var t = 4.0, times: [Double] = []
+        while t < length - 1.5 {
+            times.append(t)
+            t += gaps[(times.count - 1) % gaps.count]
+        }
+        return times
     }
 
     /// How far off its clap anything may land, beyond a frame of the video.
@@ -69,9 +76,11 @@ enum SyncCheck {
             for d in [k, p, s].compactMap({ $0 }) { worst = max(worst, abs(d)) }
             lines.append(line)
         }
-        let ok = found * 2 >= claps.count && kept.compactMap({ $0 }).count * 2 >= claps.count && worst <= limit && apart <= limit
-        lines.append(String(format: "sync: %@ (%d of %d claps found in the video; sound and picture at most %.1f ms apart, anything at most %.1f ms off its clap; limit %.1f ms)",
-                            ok ? "passed" : "FAILED", found, claps.count, apart * 1000, worst * 1000, limit * 1000))
+        // Every clap must be found, in the kept voice and in the video's picture and sound alike.
+        let heard = kept.compactMap({ $0 }).count
+        let ok = found == claps.count && heard == claps.count && worst <= limit && apart <= limit
+        lines.append(String(format: "sync: %@ (%d of %d claps found in the video, %d in the kept voice; sound and picture at most %.1f ms apart, anything at most %.1f ms off its clap; limit a frame and %.0f ms, %.1f ms)",
+                            ok ? "passed" : "FAILED", found, claps.count, heard, apart * 1000, worst * 1000, slack * 1000, limit * 1000))
         return (ok, lines)
     }
 

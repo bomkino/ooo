@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.2.4 — 10 October 2026
+
+Fixes from an outside review of 1.2.3: three ways work could be lost, and checks that now prove what they say.
+
+**Nothing of yours is lost**
+- Opening a second copy of OOO (a test or review copy, say) no longer clears the first one's slides and recordings that weren't saved yet. Each copy keeps its own working files, and a launch clears only what no open window is using.
+- When a take can't be kept (a full disk, say), its recording is no longer deleted. It is moved to Movies › OOO, and OOO says so.
+- Exporting with you as your own file no longer replaces a "– you" recording already in the folder that belongs to another video. It takes a free name instead ("– you 2"), and when you replace a video, its old recording stays until the new one is copied whole.
+- A document that can't be opened whole (no space left to make a working copy of its slides, voice and recording) now says so, instead of opening without them.
+
+**Calmer**
+- Keeping a take moves its recording into the document instead of copying it on the window's thread, so a long take no longer holds the window up while it is copied. Adding a voiceover copies it in the background too.
+
+**Checks that prove what they say**
+- The update test now waits for the new version to start as a new process and keep running, rather than only seeing its files change on disk. The release notes say exactly that.
+- The voice and picture check in CI now fails if any clap is missing, and claps through the whole take, not only its first 40 seconds.
+
 ## 1.2.3 — 10 October 2026
 
 A polish pass: lighter on memory, and a round of fixes to live takes, export and the editor.

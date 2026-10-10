@@ -122,7 +122,7 @@ jobs:
 
           ### Checked
 
-          Built from this commit by `release.yml` on GitHub's macOS 26 runner (Apple silicon). The unit tests pass: the camera's maths, the director, documents and the renderer. In `scripts/test-update.sh`, a test copy packed and signed by the release scripts updated itself from a local feed and relaunched on the new version, and an update with a single changed byte was refused. The update feed was signed by this workflow, and the signature checked with the public key inside the app.
+          Built from this commit by `release.yml` on GitHub's macOS 26 runner (Apple silicon). The unit tests pass: the camera's maths, the director, documents and the renderer. In `scripts/test-update.sh`, a test copy packed and signed by the release scripts updated itself from a local feed, the new version started as a new process and kept running, and an update with a single changed byte was refused. The update feed was signed by this workflow, and the signature checked with the public key inside the app.
           NOTES
             echo
             echo "Source: \`$GITHUB_SHA\` (main)."

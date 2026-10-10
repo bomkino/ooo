@@ -27,6 +27,17 @@ public final class AppUpdates: NSObject, ObservableObject {
             c.updater.automaticallyDownloadsUpdates = true
             c.updater.checkForUpdatesInBackground()
         }
+        if let ready = UserDefaults.standard.string(forKey: "UpdateTestReadyFile") {
+            // Release testing: once it is up and answering, the running copy
+            // writes its version and process, so a test can tell the new
+            // version actually relaunching from its files merely changing on
+            // disk. (Set in the copy's defaults: a relaunch doesn't keep the
+            // environment.)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+                try? "\(version) \(getpid())\n".write(toFile: ready, atomically: true, encoding: .utf8)
+            }
+        }
     }
 
     public func checkForUpdates() { controller?.checkForUpdates(nil) }
