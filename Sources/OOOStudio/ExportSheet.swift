@@ -180,6 +180,20 @@ struct ExportSheet: View {
 
     // MARK: Run
 
+    /// Where your own recording goes beside `video`: "Name – you", or, when
+    /// that is taken and not being replaced, "Name – you 2" and on.
+    nonisolated static func besideName(for video: URL, ext: String, replacing: Bool) -> URL {
+        let folder = video.deletingLastPathComponent(), stem = video.deletingPathExtension().lastPathComponent + " – you"
+        let first = folder.appendingPathComponent(stem).appendingPathExtension(ext)
+        guard !replacing else { return first }
+        var n = 1, url = first
+        while FileManager.default.fileExists(atPath: url.path) {
+            n += 1
+            url = folder.appendingPathComponent("\(stem) \(n)").appendingPathExtension(ext)
+        }
+        return url
+    }
+
     private func chooseDestination() {
         let panel = NSSavePanel()
         let name = session.project.slide.kind == .sample ? "OOO" : "OOO " + session.project.slide.name
@@ -210,6 +224,10 @@ struct ExportSheet: View {
         model.phase = .running
         let flag = model.cancelFlag
         let model = self.model
+        // Your recording goes beside the video. It replaces one already there
+        // only when you chose to replace the video it came with; otherwise it
+        // takes a free name, so no file you didn't choose is lost.
+        let you = face.map { Self.besideName(for: url, ext: $0.pathExtension, replacing: FileManager.default.fileExists(atPath: url.path)) }
         Task.detached(priority: .userInitiated) {
             do {
                 // Its own renderer, so the export never shares scratch space with the live stage.
@@ -226,11 +244,17 @@ struct ExportSheet: View {
                                           preview: { img in
                                               Task { @MainActor in model.preview = img }
                                           })
-                if let face {
-                    let name = url.deletingPathExtension().lastPathComponent + " – you"
-                    let you = url.deletingLastPathComponent().appendingPathComponent(name).appendingPathExtension(face.pathExtension)
-                    try? FileManager.default.removeItem(at: you)
-                    try FileManager.default.copyItem(at: face, to: you)
+                if let face, let you {
+                    let fm = FileManager.default
+                    if fm.fileExists(atPath: you.path) {
+                        // Copied whole beside it first: if the copy fails, the one there stays.
+                        let staged = you.deletingLastPathComponent().appendingPathComponent(".\(UUID().uuidString).\(you.pathExtension)")
+                        defer { try? fm.removeItem(at: staged) }
+                        try fm.copyItem(at: face, to: staged)
+                        _ = try fm.replaceItemAt(you, withItemAt: staged)
+                    } else {
+                        try fm.copyItem(at: face, to: you)
+                    }
                 }
                 await MainActor.run { model.phase = .done(url) }
             } catch RenderError.cancelled {

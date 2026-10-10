@@ -12,27 +12,57 @@ extension UTType {
 /// own copies are reused when saving, so this only ever holds what was added.
 public final class MediaStore: @unchecked Sendable {
     public let directory: URL
+    /// Held, locked, for as long as the window is open: a folder whose lock
+    /// can be taken belongs to no one any more.
+    private let owner: Int32
 
-    /// Every window's own folder sits in here.
+    /// Every window's own folder sits in here, apart for each copy of OOO:
+    /// a review or test copy under another identifier never touches these.
     static let sessions = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent(Bundle.main.bundleIdentifier ?? "dog.pitch.ooo.unbundled", isDirectory: true)
+        .appendingPathComponent("Sessions", isDirectory: true)
+
+    /// Where 1.2.3 and earlier kept them, shared by every copy and unlocked.
+    static let earlier = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("OOO", isDirectory: true)
         .appendingPathComponent("Sessions", isDirectory: true)
+
+    private static let lockName = ".owner"
 
     public init() {
         let base = Self.sessions.appendingPathComponent(UUID().uuidString, isDirectory: true)
         directory = base
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        owner = open(base.appendingPathComponent(Self.lockName).path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
+        if owner >= 0 { _ = flock(owner, LOCK_EX | LOCK_NB) }
     }
 
     /// Clears what earlier runs left behind: a window's folder goes when the
     /// window closes, but not when OOO quits or stops unexpectedly, and a
-    /// camera recording can be big. Call before any document opens.
-    static func sweep() {
-        let old = (try? FileManager.default.contentsOfDirectory(at: sessions, includingPropertiesForKeys: nil)) ?? []
-        guard !old.isEmpty else { return }
+    /// camera recording can be big. Only folders no open window holds go,
+    /// so another OOO open at the same time keeps its own. `earlierToo`
+    /// clears the old shared place as well, for when no other OOO is open.
+    static func sweep(earlierToo: Bool) {
+        let fm = FileManager.default
+        let mine = (try? fm.contentsOfDirectory(at: sessions, includingPropertiesForKeys: [.creationDateKey])) ?? []
+        var gone = mine.filter(unheld)
+        if earlierToo { gone += (try? fm.contentsOfDirectory(at: earlier, includingPropertiesForKeys: nil)) ?? [] }
+        guard !gone.isEmpty else { return }
         DispatchQueue.global(qos: .utility).async {
-            for url in old { try? FileManager.default.removeItem(at: url) }
+            for url in gone { try? FileManager.default.removeItem(at: url) }
         }
+    }
+
+    /// True when no window holds `folder`. One whose lock isn't there yet may
+    /// be a window opening this instant, so it waits a minute.
+    private static func unheld(_ folder: URL) -> Bool {
+        let fd = open(folder.appendingPathComponent(lockName).path, O_RDWR | O_CLOEXEC)
+        guard fd >= 0 else {
+            let made = (try? folder.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? .distantPast
+            return made.timeIntervalSinceNow < -60
+        }
+        defer { close(fd) }
+        return flock(fd, LOCK_EX | LOCK_NB) == 0
     }
 
     public func url(for file: String) -> URL { directory.appendingPathComponent(file) }
@@ -49,6 +79,21 @@ public final class MediaStore: @unchecked Sendable {
         return name
     }
 
+    /// Takes in a file OOO made itself and no longer needs where it is (a
+    /// recording just kept): moved, not copied, so even a long camera
+    /// recording arrives at once. Returns its stored name.
+    public func adopt(_ source: URL) throws -> String {
+        let ext = source.pathExtension.lowercased()
+        let name = UUID().uuidString + (ext.isEmpty ? "" : ".\(ext)")
+        do {
+            try FileManager.default.moveItem(at: source, to: url(for: name))
+        } catch {
+            // On another disk: copied instead, and the original left to its owner.
+            try FileManager.default.copyItem(at: source, to: url(for: name))
+        }
+        return name
+    }
+
     public func write(_ data: Data, as file: String) throws {
         try data.write(to: url(for: file), options: .atomic)
     }
@@ -58,6 +103,7 @@ public final class MediaStore: @unchecked Sendable {
         let folder = directory.standardizedFileURL.path + "/"
         OOOShared.stage?.releaseFaces { $0.standardizedFileURL.path.hasPrefix(folder) }
         try? FileManager.default.removeItem(at: directory)
+        if owner >= 0 { close(owner) }
     }
 }
 
@@ -94,8 +140,16 @@ public final class OOODocument: ReferenceFileDocument, @unchecked Sendable {
         project = try ProjectPackage.decode(json)
         if let mediaDir = wrappers[ProjectPackage.mediaFolder]?.fileWrappers {
             for (name, wrapper) in mediaDir {
-                if let data = wrapper.regularFileContents {
-                    try? media.write(data, as: name)
+                guard let data = wrapper.regularFileContents else { continue }
+                do {
+                    try media.write(data, as: name)
+                } catch {
+                    // Opened without its slide, voice or recording, it would only look whole.
+                    throw CocoaError(.fileReadUnknown, userInfo: [
+                        NSLocalizedDescriptionKey: "OOO couldn't make a working copy of this document's slides, voiceover or camera recording.",
+                        NSLocalizedRecoverySuggestionErrorKey: "\(error.localizedDescription) The document itself is untouched. Free some space on the Mac, then open it again.",
+                        NSUnderlyingErrorKey: error,
+                    ])
                 }
             }
         }

@@ -535,11 +535,12 @@ public enum OOOLaunch {
             "NSShowAppCentricOpenPanelInsteadOfUntitledFile": false,
         ])
         OOOSnapshot.configure()
-        // Another OOO open at the same time is still using its folders.
-        if let me = Bundle.main.bundleIdentifier,
-           NSRunningApplication.runningApplications(withBundleIdentifier: me).count <= 1 {
-            MediaStore.sweep()
+        // Before 1.2.4 every copy shared one unlocked place: cleared only
+        // when no other copy of OOO (a review or test copy too) is open.
+        let others = NSWorkspace.shared.runningApplications.contains {
+            $0.processIdentifier != getpid() && ($0.bundleIdentifier?.hasPrefix("dog.pitch.ooo") ?? false)
         }
+        MediaStore.sweep(earlierToo: !others)
         DispatchQueue.global(qos: .utility).async {
             // Compile every shader before the first frame needs it.
             if let r = try? StageRenderer() { r.warmUp() }

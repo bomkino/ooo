@@ -948,11 +948,14 @@ extension OOOSession {
                 defer { self.endJob(job) }
                 do {
                     try await self.keep(run, movie: movie, end: end, recorded: recorded)
+                    try? FileManager.default.removeItem(at: movie)
                 } catch {
-                    self.message = "Couldn't keep the take: \(readable(error))"
+                    // The recording itself is whole: it stays where you can find it.
+                    let why = readable(error).trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+                    let safe = Self.rescue(movie).map { " The recording is safe in \($0)." } ?? ""
+                    self.message = "Couldn't keep the take: \(why).\(safe)"
                     self.giveUp(run)
                 }
-                try? FileManager.default.removeItem(at: movie)
             }
         }
     }
@@ -963,11 +966,20 @@ extension OOOSession {
         var picture: (duration: Double, aspect: Float)?
         if run.filming { picture = try await LiveTakeFile.picture(movie) }
         let store = document.media
-        let voiceFile = try store.importFile(sound.url)
+        // Into the document's folder away from the window's thread: the camera's
+        // recording can run to gigabytes. The voice goes first, so a failure
+        // leaves the recording itself where it was.
+        let filming = picture != nil, said = sound.url
+        let (voiceFile, faceFile) = try await Task.detached(priority: .userInitiated) { () throws -> (String, String?) in
+            let voice = try store.adopt(said)
+            var face: String?
+            if filming { face = try store.adopt(movie) }
+            return (voice, face)
+        }.value
         var face: FaceClip?
-        if let picture {
+        if let picture, let faceFile {
             // Mirrored, as you saw yourself while you talked.
-            face = FaceClip(file: try store.importFile(movie), offset: 0, duration: picture.duration, aspect: picture.aspect,
+            face = FaceClip(file: faceFile, offset: 0, duration: picture.duration, aspect: picture.aspect,
                             mirrored: true, greenScreen: Self.liveGreenScreen ? true : nil)
         }
         guard take === run else { return }
@@ -987,6 +999,26 @@ extension OOOSession {
         // Its words, for reading along and for later; the moves stay where you made them.
         // (A headless run has no one to allow speech recognition.)
         if !OOOSnapshot.isRequested { transcribe(cut: false, undoable: false) }
+    }
+
+    /// Moves a recording that couldn't be kept into Movies › OOO, named for
+    /// when it was made, rather than losing it; says where it is.
+    nonisolated static func rescue(_ movie: URL) -> String? {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: movie.path) else { return nil }
+        guard let movies = fm.urls(for: .moviesDirectory, in: .userDomainMask).first else { return movie.path }
+        let folder = movies.appendingPathComponent("OOO", isDirectory: true)
+        let stamp = DateFormatter()
+        stamp.locale = Locale(identifier: "en_US_POSIX")
+        stamp.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
+        let name = "Live take \(stamp.string(from: Date())).\(movie.pathExtension)"
+        do {
+            try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+            try fm.moveItem(at: movie, to: folder.appendingPathComponent(name))
+            return "Movies › OOO › \(name)"
+        } catch {
+            return movie.path
+        }
     }
 
     /// Gives the take under way up (⌘.): nothing is kept, and you are back
