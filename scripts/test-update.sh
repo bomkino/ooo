@@ -83,6 +83,9 @@ run() {
     sleep 1
     [ "$(version)" = 9.0.1 ] && break
   done
+  # Waiting out the time is no failure in itself (a refused update never says
+  # 9.0.1): the checks after each run decide.
+  return 0
 }
 
 stop() {
