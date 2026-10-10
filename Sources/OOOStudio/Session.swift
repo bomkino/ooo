@@ -1221,7 +1221,12 @@ final class VoicePlayer {
 
     var isPlaying: Bool { node?.isPlaying ?? false }
 
+    private let turns = Turns()
+    private let copying = DispatchQueue(label: "dog.pitch.ooo.voice-copy", qos: .userInitiated)
+
     /// Plays `track` (already placed on the video's timeline) from `time`.
+    /// The first two seconds are copied at once, the rest beside the window
+    /// while they play, so starting or jumping never waits on the whole voice.
     func play(_ track: AudioTrack, signature: Int, from time: Double) {
         if engine == nil {
             let engine = AVAudioEngine()
@@ -1234,11 +1239,31 @@ final class VoicePlayer {
             self.format = format
         }
         guard let engine, let node, let format else { return }
+        let turn = turns.next()
         node.stop()
         let start = max(0, min(track.frames, Int((time * Double(AudioTrack.sampleRate)).rounded())))
-        let count = track.frames - start
+        let first = min(track.frames - start, 2 * AudioTrack.sampleRate)
+        guard first > 0, let buffer = Self.buffer(track, from: start, count: first, format: format) else { return }
+        if !engine.isRunning {
+            do { try engine.start() } catch { return }
+        }
+        node.scheduleBuffer(buffer, at: nil, options: [])
+        node.play()
+        self.signature = signature
+        startTime = time
+        let rest = start + first
+        guard rest < track.frames else { return }
+        copying.async { [turns] in
+            guard let buffer = Self.buffer(track, from: rest, count: track.frames - rest, format: format) else { return }
+            // Stopped or started again meanwhile, this is no longer what plays.
+            turns.ifCurrent(turn) { node.scheduleBuffer(buffer, at: nil, options: []) }
+        }
+    }
+
+    /// `count` frames of `track` from `start`, as the player takes them.
+    nonisolated private static func buffer(_ track: AudioTrack, from start: Int, count: Int, format: AVAudioFormat) -> AVAudioPCMBuffer? {
         guard count > 0, let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(count)),
-              let channels = buffer.floatChannelData else { return }
+              let channels = buffer.floatChannelData else { return nil }
         buffer.frameLength = AVAudioFrameCount(count)
         let left = channels[0], right = channels[1]
         track.samples.withUnsafeBufferPointer { s in
@@ -1247,13 +1272,7 @@ final class VoicePlayer {
                 right[i] = s[2 * (start + i) + 1]
             }
         }
-        if !engine.isRunning {
-            do { try engine.start() } catch { return }
-        }
-        node.scheduleBuffer(buffer, at: nil, options: [])
-        node.play()
-        self.signature = signature
-        startTime = time
+        return buffer
     }
 
     /// Where on the video's timeline the voice now playing is.
@@ -1264,8 +1283,28 @@ final class VoicePlayer {
     }
 
     func stop() {
+        _ = turns.next()
         node?.stop()
         signature = nil
+    }
+}
+
+/// Which of the voice player's plays is the current one, for the copy
+/// beside the window: the rest of a voice is handed to the player only while
+/// no newer play (or a stop) has begun, and none begins while it is handed.
+final class Turns: @unchecked Sendable {
+    private let lock = NSLock()
+    private var current = 0
+
+    func next() -> Int {
+        lock.withLock {
+            current += 1
+            return current
+        }
+    }
+
+    func ifCurrent(_ turn: Int, _ body: () -> Void) {
+        lock.withLock { if current == turn { body() } }
     }
 }
 

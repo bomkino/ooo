@@ -13,12 +13,15 @@ import RenderCore
 ///     OOO --snapshot out.png --soak 45 [--slide file]
 ///
 /// No camera here, so a stand-in recording of `--soak` seconds (a picture
-/// like the camera's and a voice) is kept exactly as a take's recording is.
+/// like the camera's and a voice, with a clap now and then) is kept exactly
+/// as a take's recording is.
 /// It then plays in Live, goes back to Frame, sits, plays, scrubs, scrolls
 /// the playhead back and forth as a trackpad over the stage does, and rests,
 /// logging every half second; the main thread is sampled in each stretch
-/// (and whenever it stalls) into files beside the screenshot. Fails when
-/// the window would have frozen or swamped the Mac.
+/// (and whenever it stalls) into files beside the screenshot. Last, the
+/// take is exported, and each clap is found in the voice kept and in the
+/// video's picture and sound (`SyncCheck`). Fails when the window would have
+/// frozen or swamped the Mac, or when your voice and lips would drift apart.
 @MainActor
 enum OOOSoak {
     static var isRequested: Bool { OOOSnapshot.arg("--soak") != nil }
@@ -60,7 +63,7 @@ enum OOOSoak {
             let length = take.recorded + 0.2
             let wrote = await Task.detached(priority: .userInitiated) { () -> String? in
                 do {
-                    try StandInRecording.write(to: movie, seconds: length)
+                    try StandInRecording.write(to: movie, seconds: length, claps: SyncCheck.claps(within: length))
                     return nil
                 } catch {
                     return error.localizedDescription
@@ -145,8 +148,10 @@ enum OOOSoak {
             let verdict = monitor.verdict(memoryLimit: memoryLimit, stallLimit: stallLimit, growthLimit: growthLimit, keptLimit: keptLimit,
                                           busy: busy, busyLimit: busyLimit)
             print(verdict.line)
+            let sync = await SyncCheck.run(session, claps: SyncCheck.claps(within: take.recorded))
+            sync.lines.forEach { print($0) }
             ProcessInfo.processInfo.endActivity(awake)
-            done(verdict.ok ? 0 : 4)
+            done(verdict.ok && sync.ok ? 0 : 4)
         }
     }
 }
@@ -338,9 +343,10 @@ final class SoakCounts: @unchecked Sendable {
 
 /// A recording like a live take's: a picture of someone in a room, HEVC as
 /// the camera writes it (H.264 where this Mac can't), and a voice-like
-/// sound, `seconds` long.
+/// sound, `seconds` long. At each of `claps` the picture flashes white for a
+/// frame and the sound clicks, as a clapperboard does, with quiet around it.
 enum StandInRecording {
-    static func write(to url: URL, seconds: Double, width: Int = 1920, height: Int = 1080) throws {
+    static func write(to url: URL, seconds: Double, claps: [Double] = [], width: Int = 1920, height: Int = 1080) throws {
         try? FileManager.default.removeItem(at: url)
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
         var settings: [String: Any] = [AVVideoCodecKey: AVVideoCodecType.hevc, AVVideoWidthKey: width, AVVideoHeightKey: height]
@@ -383,7 +389,13 @@ enum StandInRecording {
                 if let ctx = CGContext(data: CVPixelBufferGetBaseAddress(pb), width: width, height: height, bitsPerComponent: 8,
                                        bytesPerRow: CVPixelBufferGetBytesPerRow(pb), space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                        bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) {
-                    draw(ctx, width: CGFloat(width), height: CGFloat(height), t: Double(n) / Double(fps))
+                    let t = Double(n) / Double(fps)
+                    if claps.contains(where: { t > $0 - 1e-6 && t < $0 + 1 / Double(fps) - 1e-6 }) {
+                        ctx.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
+                        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+                    } else {
+                        draw(ctx, width: CGFloat(width), height: CGFloat(height), t: t)
+                    }
                 }
                 CVPixelBufferUnlockBaseAddress(pb, [])
                 adaptor.append(pb, withPresentationTime: CMTime(value: CMTimeValue(n), timescale: CMTimeScale(fps)))
@@ -398,7 +410,7 @@ enum StandInRecording {
                     }
                     return
                 }
-                if let sb = voice(from: start, count: min(1024, sampleCount - start), rate: rate) { audio.append(sb) }
+                if let sb = voice(from: start, count: min(1024, sampleCount - start), rate: rate, claps: claps) { audio.append(sb) }
             }
         }
         group.wait()
@@ -454,8 +466,9 @@ enum StandInRecording {
         ctx.fillEllipse(in: CGRect(x: cx - w * 0.095, y: h * 0.3, width: w * 0.19, height: h * 0.44))
     }
 
-    /// A voice-like hum: a low tone in syllables, for `count` samples from `start`.
-    private static func voice(from start: Int, count: Int, rate: Double) -> CMSampleBuffer? {
+    /// A voice-like hum: a low tone in syllables, for `count` samples from
+    /// `start`; at each clap, quiet but for a sharp click of 30 ms.
+    private static func voice(from start: Int, count: Int, rate: Double, claps: [Double]) -> CMSampleBuffer? {
         var asbd = AudioStreamBasicDescription(mSampleRate: rate, mFormatID: kAudioFormatLinearPCM,
                                                mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
                                                mBytesPerPacket: 2, mFramesPerPacket: 1, mBytesPerFrame: 2, mChannelsPerFrame: 1,
@@ -474,6 +487,11 @@ enum StandInRecording {
         var pcm = [Int16](repeating: 0, count: count)
         for i in 0..<count {
             let t = Double(start + i) / rate
+            if let clap = claps.first(where: { abs(t - $0) < 0.4 }) {
+                let u = t - clap
+                pcm[i] = u >= 0 && u < 0.03 ? Int16(sin(u * 2 * .pi * 1000) * 0.9 * 32767) : 0
+                continue
+            }
             let syllables = max(0, sin(t * 2 * .pi * 3.1)) * (0.6 + 0.4 * sin(t * 0.7))
             let tone = sin(t * 2 * .pi * 180) * 0.6 + sin(t * 2 * .pi * 360) * 0.25
             pcm[i] = Int16(max(-1, min(1, tone * syllables * 0.5)) * 32767)
