@@ -109,12 +109,12 @@ struct ExportSheet: View {
                     }
                 }
             }
-            Text("\(codec.detail). \(quality.detail)").textStyle(.caption).foregroundStyle(.tertiary)
+            Text(session.notReady ?? "\(codec.detail). \(quality.detail)").textStyle(.caption).foregroundStyle(.tertiary)
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.buttonStyle(QuietButtonStyle()).keyboardShortcut(.cancelAction)
                 Button("Export…") { chooseDestination() }.buttonStyle(PrimaryButtonStyle()).keyboardShortcut(.defaultAction)
-                    .disabled(!session.hasSlide)
+                    .disabled(session.notReady != nil)
             }
         }
         .padding(20)
@@ -193,12 +193,14 @@ struct ExportSheet: View {
     }
 
     private func run(to url: URL) {
-        guard var shown = session.exportScene() else { return }
+        guard var shown = session.exportScene() else { session.message = session.notReady; return }
         // As your own file: the room stays empty, and the recording goes beside the video.
         let face = !faceInRoom ? session.project.face.map { session.document.media.url(for: $0.file) } : nil
         if face != nil { shown.faceURL = nil }
         let scene = shown
         let voice = includeVoice ? session.voiceRecording : nil
+        // A voiceover still being read (just opened, just kept) is read for the export itself.
+        let unread = includeVoice && voice == nil ? session.project.voice.map { session.document.media.url(for: $0.file) } : nil
         let options = ExportOptions(codec: codec, quality: quality, scale: scale, includeVoice: includeVoice)
         model.cancelFlag = ExportModel.CancelFlag()
         model.progress = 0
@@ -212,7 +214,8 @@ struct ExportSheet: View {
             do {
                 // Its own renderer, so the export never shares scratch space with the live stage.
                 let exporter = try OOOExporter()
-                try await exporter.export(scene, voice: voice, options: options, to: url, isCancelled: { flag.isSet },
+                let heard = try voice ?? unread.map { try VoiceLoader.decode($0) }
+                try await exporter.export(scene, voice: heard, options: options, to: url, isCancelled: { flag.isSet },
                                           progress: { p in
                                               Task { @MainActor in
                                                   model.frame = p.frame

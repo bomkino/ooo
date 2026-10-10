@@ -1,5 +1,47 @@
 # Changelog
 
+## 1.2.3 — 10 October 2026
+
+A polish pass: lighter on memory, and a round of fixes to live takes, export and the editor.
+
+**Your voice and your face stay together**
+- Moving a live take's voice (dragging it on the timeline, or its Starts at dial) now moves you with it, so your lips stay on your words. Before, only the voice moved.
+- With AirPods or other Bluetooth headphones, the editor now shows the picture in time with what you hear, allowing for the headphones' delay. Exported videos were already in time.
+- CI now checks it: its stand-in take claps now and then, and each clap must land within a frame in the voice OOO keeps and in an exported video's picture and sound.
+
+**Lighter and calmer**
+- The voice plays from the recording a few seconds at a time, instead of from a second and third full copy of it. A ten-minute take used to hold about 700 MB of sound; now about 230 MB. Starting or jumping playback no longer copies the whole voice first, which held the window up while you scrubbed.
+- A long deck's slides are drawn one after another as it opens, not all at once.
+- A take a retake replaced, or one in a closed window, lets go of its picture and decoder.
+- OOO clears the copies of slides, voices and recordings that earlier runs left in its cache, which a quit or a crash used to leave there for good.
+- With another app in front, the video stops when it gets to the end instead of playing round and round for nobody, a hidden window that is paused stops drawing altogether, and the Mac's sound output rests when the voice stops. Drawing lots of strokes no longer keeps a copy of every one.
+
+**Live takes**
+- Saving while a take records no longer saves the half-made take over your project.
+- A recording that stops by itself (a full disk, a camera unplugged) ends the take and keeps what was recorded, instead of staying on "Keeping your take" with the camera light on.
+- Discard (⌘.) after you've stopped no longer throws the take away and leaves OOO stuck on "Keeping the take".
+- Choosing another camera or microphone while the camera warms up now uses the one you chose last.
+- Closing the window during Live turns the camera and microphone off.
+- A take's words are kept even if you saved while OOO was still listening to them.
+
+**Export**
+- Exporting from the Live room exports your video, not the room's preview of the next take.
+- Exporting just after keeping a take or opening a document includes the voice, instead of coming out silent or with the voice before.
+- Export, Save Stills and Save Cover Frame say when the slides are still being drawn, instead of doing nothing.
+- A video without sound is no longer a frame short.
+
+**The editor**
+- Space, Esc and the other single keys no longer stop working after you type a name or cue and pick something else.
+- ⌘← in a text field goes to the start of the line, instead of moving the playhead.
+- A direction, transcript or undo that lands while you drag a clip's edge is no longer lost.
+- Replacing the slide clears what was drawn on the old one.
+- Holding `\` to compare no longer gets stuck on the original when you press ⌘ or switch apps.
+- Undo Last Mark works after ⌘Z.
+- The timeline fits the whole take once you press Close.
+- Marks and Space for You stay inside a video of a set length when dragged.
+- Drawing a new framing on the map pauses playback, so it lands on the slide you drew it on.
+- The stage stays sharp when the window moves between a Retina and a non-Retina display.
+
 ## 1.2.2 — 9 October 2026
 
 - Draw as you talk, in plain sight. While a live take records, a Draw button sits beside Close, and Draw at the top of the window (⌘2) takes the pen out too, instead of sitting greyed out. D still does it. With the pen out, the pen's choices (what it draws, the colour, the width, how long marks stay) take the place of the positions under the video, and → and ← still lead the camera. The line above the video says so, and before you start, it tells you D draws.

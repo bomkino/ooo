@@ -189,7 +189,9 @@ extension OOOSession {
 
     /// The mark drawn last, gone.
     public func deleteLastMark() {
-        guard let id = penMarks.last ?? project.marks?.last?.id else { return }
+        // One already taken back with Undo is passed over.
+        let there = Set(project.marks?.map(\.id) ?? [])
+        guard let id = penMarks.last(where: { there.contains($0) }) ?? project.marks?.last?.id else { return }
         penMarks.removeAll { $0 == id }
         if penLast?.id == id { penLast = nil }
         deleteMark(id)
@@ -323,7 +325,8 @@ extension OOOSession {
     public func liveMark(_ id: UUID, to t: Double) {
         live { p in
             guard let i = p.marks?.firstIndex(where: { $0.id == id }) else { return }
-            p.marks?[i].time = max(t, 0)
+            // A video of a set length keeps its marks inside it, where they play.
+            p.marks?[i].time = min(max(t, 0), p.length.map { max($0 - 0.1, 0) } ?? .greatestFiniteMagnitude)
         }
     }
 

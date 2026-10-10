@@ -111,6 +111,8 @@ struct LiveField: View {
     let text: Binding<String>
     let undo: String
     @FocusState private var focused: Bool
+    /// Whether this field holds the keys and an open undo step.
+    @State private var editing = false
 
     var body: some View {
         TextField(placeholder, text: text)
@@ -121,8 +123,23 @@ struct LiveField: View {
             .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.well.opacity(0.7)))
             .focused($focused)
             .onChange(of: focused) { _, on in
-                session.clock.typing = on
-                if on { session.beginEdit(undo) } else { session.commitEdit(undo) }
+                guard on != editing else { return }
+                editing = on
+                if on {
+                    session.clock.beganTyping()
+                    session.beginEdit(undo)
+                } else {
+                    session.clock.stoppedTyping()
+                    session.commitEdit(undo)
+                }
+            }
+            // Taken away while you type (another shot picked, another mode):
+            // what you typed is one undo step, and the keys work again.
+            .onDisappear {
+                guard editing else { return }
+                editing = false
+                session.clock.stoppedTyping()
+                session.commitEdit(undo)
             }
             .onSubmit { focused = false }
     }

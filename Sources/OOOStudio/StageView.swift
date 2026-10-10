@@ -35,6 +35,18 @@ final class StageCoordinator: NSObject, MTKViewDelegate {
         super.init()
         NotificationCenter.default.addObserver(self, selector: #selector(faceFrameArrived),
                                                name: FaceCompositor.frameArrived, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(occlusionChanged),
+                                               name: NSWindow.didChangeOcclusionStateNotification, object: nil)
+    }
+
+    /// A stage that rested while nobody could see it draws again as its window comes back into view.
+    @objc private func occlusionChanged(_ note: Notification) {
+        MainActor.assumeIsolated {
+            guard let view, let window = note.object as? NSWindow, window === view.window,
+                  window.occlusionState.contains(.visible), view.isPaused else { return }
+            lastTime = CACurrentMediaTime()
+            view.isPaused = false
+        }
     }
 
     /// Your recording decodes beside the stage, never holding it up; a frame
@@ -66,16 +78,29 @@ final class StageCoordinator: NSObject, MTKViewDelegate {
         let dt = min(now - lastTime, 0.1)
         lastTime = now
         // While the voice plays it keeps the time; otherwise the display does.
+        let before = clock.time
         if let heard = session.soundClock(playing: clock.playing, time: clock.time) {
             clock.time = heard
         } else if clock.playing {
             let t = clock.time + dt
             clock.time = t >= clock.duration ? 0 : t
         }
+        // The video plays round and round while you're in OOO; with another
+        // app in front, it rests at its start once it gets to the end,
+        // instead of drawing on for nobody.
+        if clock.playing, clock.time < before - 0.5, !NSApp.isActive, !session.isLive, !OOOSnapshot.isRequested {
+            clock.playing = false
+        }
         // A stage nobody can see (minimised, behind other windows, on another
-        // Space) keeps time but draws nothing.
+        // Space) keeps time but draws nothing, and paused, rests until it is seen.
         if let window = view.window, !window.occlusionState.contains(.visible) {
             lastVersion = -1
+            if clock.playing {
+                idle = 0
+            } else {
+                idle += 1
+                if idle > 30 { sleep(view, session: session) }
+            }
             return
         }
         let version = session.version
@@ -283,6 +308,8 @@ struct StageArea: View {
     /// The map's share of the width once its edge is dragged; 0 lets the video's shape decide.
     @AppStorage("slideMapShare") private var mapShare = 0.0
     @Environment(\.colorScheme) private var scheme
+    /// The pixels per point of the display the window is on, kept current as it moves between displays.
+    @Environment(\.displayScale) private var displayScale
     @State private var dropTargeted = false
     @Environment(\.snapshotStill) private var snapshotStill
 
@@ -330,7 +357,7 @@ struct StageArea: View {
         let fitted = avail.width / avail.height > aspect
             ? CGSize(width: avail.height * aspect, height: avail.height)
             : CGSize(width: avail.width, height: avail.width / aspect)
-        let scale = NSScreen.main?.backingScaleFactor ?? 2
+        let scale = max(displayScale, 1)
         let longSide = max(fitted.width, fitted.height) * scale
         let cap: CGFloat = 2400
         let k = longSide > cap ? cap / longSide : 1
