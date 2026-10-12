@@ -152,7 +152,7 @@ public enum Transcriber {
             case .unavailable: return "Speech recognition isn't available for this language on this Mac."
             case .notOnDevice(let language):
                 return "This Mac can't recognise \(language) speech by itself, and OOO never sends your recording away. "
-                    + "Add the language for dictation in System Settings › Keyboard › Dictation, then choose Transcribe again."
+                    + "Add the language for dictation in System Settings › Keyboard › Dictation, then click Listen Again in the Voice tab."
             case .nothingHeard: return "No words were heard in the recording."
             }
         }

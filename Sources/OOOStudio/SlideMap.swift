@@ -258,8 +258,9 @@ struct SlideMap: View {
             let label = ctx.resolve(Text("\(b.number)").font(.system(size: 9 * k, weight: .bold)).foregroundColor(.white))
             ctx.fill(Path(roundedRect: b.tab, cornerRadius: 3), with: .color(tabFill))
             ctx.draw(label, at: CGPoint(x: b.tab.midX, y: b.tab.midY), anchor: .center)
-            // A turned camera, said on a tag rather than drawn askew.
-            if let r = b.tag {
+            // A turned camera, said on a tag rather than drawn askew: for the one
+            // picked or under the pointer, so the map stays calm.
+            if let r = b.tag, selected || hot {
                 let tag = ctx.resolve(Text("\(Image(systemName: "rotate.3d")) \(Int(Box.turn(b.shot).rounded()))°")
                     .font(.system(size: 8.5 * k, weight: .semibold)).foregroundColor(.white))
                 ctx.fill(Path(roundedRect: r, cornerRadius: 3), with: .color(selected ? Theme.camera.opacity(0.85) : Color.black.opacity(0.72)))
@@ -663,7 +664,7 @@ struct MapHint: View {
                 }
             } else {
                 Text(session.mapHint ?? defaultHint)
-                    .textStyle(.caption).foregroundStyle(session.mapHint == nil ? .tertiary : .secondary)
+                    .textStyle(.caption).foregroundStyle(.secondary)
             }
         }
         .multilineTextAlignment(.center)

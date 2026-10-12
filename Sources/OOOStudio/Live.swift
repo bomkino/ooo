@@ -1365,7 +1365,7 @@ struct LiveBar: View {
             }
         case .counting:
             Text("Get ready").textStyle(.label)
-            Button("Discard") { session.discardTake() }
+            Button("Discard Take") { session.discardTake() }
                 .buttonStyle(QuietButtonStyle())
                 .help("Give this take up (⌘.)")
         case .recording:
@@ -1375,8 +1375,8 @@ struct LiveBar: View {
             Button("Close") { session.closeTake() }
                 .buttonStyle(RecordButtonStyle())
                 .help("Plays the closing, still recording your sign-off; it stops by itself (Return)")
-            if width >= 330 {
-                Button("Discard") { session.discardTake() }
+            if width >= 370 {
+                Button("Discard Take") { session.discardTake() }
                     .buttonStyle(QuietButtonStyle())
                     .help("Give this take up and start again (⌘.)")
             }
@@ -1600,7 +1600,7 @@ struct LiveInspector: View {
         let open = !session.isTaking
         VStack(alignment: .leading, spacing: 0) {
             InspectorSection("Opening", accessory: {
-                Button("Preview") { session.previewOpening() }
+                Button("Watch") { session.previewOpening() }
                     .buttonStyle(QuietButtonStyle())
                     .disabled(!open || session.liveKept)
             }) {
@@ -1620,7 +1620,7 @@ struct LiveInspector: View {
             InspectorSection("Your positions") {
                 PositionList(session: session)
                 Text("During the take, press a position's number or click it to fly there, → for the next and ← for the one before, 0 for the whole slide. Draw more framings on the slide map in Frame.")
-                    .textStyle(.caption).foregroundStyle(.tertiary)
+                    .textStyle(.caption).foregroundStyle(.secondary)
             }
             Hairline()
             InspectorSection(p.slideCount > 1 ? "Notes for slide \(session.mapPage + 1)" : "Notes", accessory: {
@@ -1637,7 +1637,7 @@ struct LiveInspector: View {
             }
             Hairline()
             InspectorSection("Closing", accessory: {
-                Button("Preview") { session.previewClosing() }
+                Button("Watch") { session.previewClosing() }
                     .buttonStyle(QuietButtonStyle())
                     .disabled(!open || session.liveKept)
             }) {
@@ -1666,7 +1666,7 @@ struct LiveInspector: View {
                     Text(note).textStyle(.caption).foregroundStyle(.secondary)
                 }
                 Text("Your Mac records your voice and your face together, so they never drift apart. Nothing leaves your computer.")
-                    .textStyle(.caption).foregroundStyle(.tertiary)
+                    .textStyle(.caption).foregroundStyle(.secondary)
             }
             Hairline()
             InspectorSection("Keys") {
@@ -1767,7 +1767,7 @@ struct PositionList: View {
                         .textStyle(.bodyCompact).lineLimit(1)
                     Spacer(minLength: 0)
                     if p.slideCount > 1 {
-                        Text("Slide \(k + 1)").textStyle(.caption).foregroundStyle(.tertiary)
+                        Text("Slide \(k + 1)").textStyle(.caption).foregroundStyle(.secondary)
                     }
                 }
                 .padding(.vertical, 2)

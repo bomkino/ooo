@@ -1307,6 +1307,9 @@ public final class OOOSession {
                     self.cutToVoice()
                     self.justTimed = true
                 }
+            } catch Transcriber.Failure.nothingHeard {
+                // The line above the video says so, with Listen Again: no alert to dismiss.
+                self?.end(job)
             } catch {
                 self?.end(job)
                 self?.message = readable(error)

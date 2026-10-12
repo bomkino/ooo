@@ -64,6 +64,7 @@ struct RoomSection: View {
 struct RoomLane: View {
     @Bindable var session: OOOSession
     let scale: TimeScale
+    @State private var hover = false
 
     var body: some View {
         let spans = session.project.lift?.spans ?? []
@@ -73,12 +74,16 @@ struct RoomLane: View {
                 .gesture(SpatialTapGesture(count: 2).onEnded { v in
                     session.addRoom(at: scale.t(v.location.x))
                 })
+                .onHover { hover = $0 }
             if spans.isEmpty {
+                // Said while the pointer is over the lane, so the timeline stays quiet otherwise.
                 HStack(spacing: 6) {
                     Image(systemName: "person.crop.rectangle").font(.system(size: 10))
-                    Text("Space for you: double-click to lift the stage here").textStyle(.caption).lineLimit(1)
+                    Text("Double-click to leave room for your face here").textStyle(.caption).lineLimit(1)
                 }
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
+                .opacity(hover ? 1 : 0)
+                .animation(Theme.quick, value: hover)
                 .padding(.horizontal, TimeScale.pad + 6)
                 .frame(height: TimelineView.room)
                 .allowsHitTesting(false)

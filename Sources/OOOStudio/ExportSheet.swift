@@ -320,9 +320,13 @@ struct ExportSheet: View {
         return min(first.land + 0.2, max(first.leave - 0.05, first.land))
     }
 
-    /// The name a file starts from: the slide's, or the sample's.
+    /// The name a file starts from: the title's words, else the slide's name, else the sample's.
     private var baseName: String {
-        let name = project.slide.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let clean: (String) -> String = { s in
+            String(s.map { "/:\\".contains($0) ? "-" : $0 }.prefix(80)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let title = project.title.map({ clean($0.text) }), !title.isEmpty { return title }
+        let name = clean(project.slide.name)
         return project.slide.kind == .sample || name.isEmpty ? "Obsess Over One" : name
     }
 

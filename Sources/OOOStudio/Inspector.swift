@@ -170,7 +170,7 @@ struct ShotInspector: View {
                 Text(p.voice?.words == nil
                      ? "With a voiceover, the camera lands just before you say these words."
                      : "Time Moves to My Voice lands the camera just before you say these words.")
-                    .textStyle(.caption).foregroundStyle(.tertiary)
+                    .textStyle(.caption).foregroundStyle(.secondary)
             }
             Hairline()
             if let k = session.clipIndex(of: id), let clip = session.clip(of: id) {
@@ -193,7 +193,7 @@ struct ShotInspector: View {
                         .toggleStyle(.checkbox)
                         .textStyle(.bodyCompact)
                     Text("Everything after it slides along and keeps its own length. You can drag its edges on the timeline too.")
-                        .textStyle(.caption).foregroundStyle(.tertiary)
+                        .textStyle(.caption).foregroundStyle(.secondary)
                 }
                 Hairline()
             }
@@ -208,7 +208,7 @@ struct ShotInspector: View {
             InspectorSection("Framing") {
                 Dial(session: session, label: "Zoom", value: zoom(id), range: 0...4.5, defaultValue: 1,
                      format: { String(format: "%.1f×", powf(2, $0)) }, undo: "Reframe")
-                Dial(session: session, label: "Turn", value: session.bindShot(id, \.yaw, fallback: 0), range: -25...25,
+                Dial(session: session, label: "Angle", value: session.bindShot(id, \.yaw, fallback: 0), range: -25...25,
                      defaultValue: 0, format: degreesLabel)
                 Dial(session: session, label: "Tilt", value: session.bindShot(id, \.pitch, fallback: 0), range: -20...20,
                      defaultValue: 0, format: degreesLabel)
@@ -238,7 +238,7 @@ struct ShotInspector: View {
                     Dial(session: session, label: "Glide", value: glide(id), range: -4...4, defaultValue: 1,
                          format: { String(format: "%.1f frames", $0) }, undo: "Read Along")
                     Text("For a line too long to show at a size that reads: the camera lands on its start and glides to its end.")
-                        .textStyle(.caption).foregroundStyle(.tertiary)
+                        .textStyle(.caption).foregroundStyle(.secondary)
                 }
             }
             Hairline()
@@ -373,7 +373,7 @@ struct OverviewInspector: View {
             InspectorSection("Opening framing") {
                 // Defaults follow the slide's shape in the canvas: a wide slide in a tall frame turns further.
                 let d = Shot.overview(slideAspect: p.slideAspect, canvasAspect: p.canvasAspect)
-                Dial(session: session, label: "Turn", value: session.bind(\.overview.yaw), range: -45...45, defaultValue: d.yaw, format: degreesLabel)
+                Dial(session: session, label: "Angle", value: session.bind(\.overview.yaw), range: -45...45, defaultValue: d.yaw, format: degreesLabel)
                 Dial(session: session, label: "Tilt", value: session.bind(\.overview.pitch), range: -20...20, defaultValue: d.pitch, format: degreesLabel)
                 Dial(session: session, label: "Margin", value: overviewRoom, range: 0...0.6, defaultValue: d.frame.size.y - 1, format: percent)
                 Dial(session: session, label: "Drift in", value: session.bind(\.overview.breathe), defaultValue: 0.45)
@@ -384,12 +384,12 @@ struct OverviewInspector: View {
             }
             Hairline()
             InspectorSection("The camera's temperament") {
-                Dial(session: session, label: "Rise", value: session.bind(\.style.flight), defaultValue: 0.5)
+                Dial(session: session, label: "Lift", value: session.bind(\.style.flight), defaultValue: 0.5)
                 Dial(session: session, label: "Lean", value: session.bind(\.style.swing), defaultValue: 0.5)
                 Dial(session: session, label: "Handheld", value: session.bind(\.style.drift), defaultValue: 0.35)
                 Dial(session: session, label: "Pace", value: session.bind(\.style.pace), defaultValue: 0.5)
-                Text("Rise is how far the camera lifts to fly between distant details; Lean, how much it leans into its own momentum; Handheld, a slow breath in the camera.")
-                    .textStyle(.caption).foregroundStyle(.tertiary)
+                Text("Lift is how far the camera rises to fly between distant details; Lean, how much it leans into its own momentum; Handheld, a slow breath in the camera.")
+                    .textStyle(.caption).foregroundStyle(.secondary)
             }
             Hairline()
             InspectorSection("Length", accessory: {
@@ -495,7 +495,7 @@ struct LookInspector: View {
                 Dial(session: session, label: "Motion blur", value: session.bind(\.look.shutter), defaultValue: 0.5,
                      format: { String(format: "%.0f°", $0 * 360) })
                 Text("Motion blur is a film camera's shutter: 180° is how films are shot.")
-                    .textStyle(.caption).foregroundStyle(.tertiary)
+                    .textStyle(.caption).foregroundStyle(.secondary)
             }
             Hairline()
             InspectorSection("Finish") {
@@ -791,7 +791,7 @@ struct RecordButton: View {
         if again && !recording {
             Button("Record Again") { session.startRecording() }
                 .buttonStyle(QuietButtonStyle())
-                .help("Record a new scratch take in place of this one")
+                .help("Record a new quick take in place of this one")
         } else {
             Button {
                 session.toggleRecording()

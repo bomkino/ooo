@@ -860,7 +860,7 @@ struct VoiceLane: View {
                         session.clock.time = max(voice.offset - 0.3, 0)
                         session.clock.playing = true
                     }
-                    Button("Cut the Moves to the Voice") { session.cutToVoice() }
+                    Button("Time the Moves to the Voice") { session.cutToVoice() }
                         .disabled(voice.words?.isEmpty ?? true)
                     Divider()
                     Button("Record Again…") { session.toggleRecording() }
@@ -870,6 +870,16 @@ struct VoiceLane: View {
                     Button("Remove Voiceover", role: .destructive) { session.removeVoice() }
                 }
                 .help("\(voice.name), \(secondsLabel(voice.duration)). Drag to slide the voice under the picture; right-click for more.")
+            } else if session.mode == .live {
+                // In Live your voice comes with the take; there is nothing to press here.
+                HStack(spacing: 8) {
+                    Image(systemName: "mic").foregroundStyle(.secondary)
+                    Text("Your voice records with the take.").textStyle(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 10)
+                .frame(height: TimelineView.voice)
+                .padding(.horizontal, TimeScale.pad)
             } else {
                 HStack(spacing: 8) {
                     Image(systemName: "waveform").foregroundStyle(.secondary)
@@ -896,9 +906,9 @@ struct VoiceLane: View {
             }
         }
         .onDrop(of: [.fileURL], isTargeted: $targeted) { providers in
-            loadDropped(providers) { urls in
-                if let url = urls.first { session.importVoice(url) }
-            }
+            // A recording becomes the voice; a slide dropped here still goes where slides go.
+            guard !session.isTaking else { return false }
+            loadDropped(providers) { urls in session.importDropped(urls) }
             return true
         }
     }

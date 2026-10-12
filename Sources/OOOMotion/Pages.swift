@@ -11,7 +11,7 @@ public enum PageChange: String, Codable, CaseIterable, Sendable, Identifiable {
     public var id: String { rawValue }
     public var title: String {
         switch self {
-        case .turn: return "Turn"
+        case .turn: return "Turn Over"
         case .melt: return "Melt"
         }
     }

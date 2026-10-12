@@ -1,5 +1,57 @@
 # Changelog
 
+## 2.0.0 — 12 October 2026
+
+OOO 2.0 leads you from a slide to a posted video, step by step, and adds captions, every size at once and notes under the camera.
+
+**From a slide to a post**
+- The first time OOO opens, a short welcome over the sample says what it does and offers Use Your Slide, Paste Slide or Watch the Sample First. It doesn't come back.
+- The line above the video now says what OOO is doing or what to do next, with that step as a button: use your slide, add your voice, export, then share what you exported. It fits any window, giving up its hint before its button.
+- Add Your Voice puts the three ways side by side: record over the video, go live, or use a recording. The Voice tab offers the same three.
+- Export is always in the toolbar, beside Direct for Me, and lights up once the video is ready to post.
+- Drop a slide or a recording anywhere in the window. While OOO reads a new slide, the stage says so.
+- When OOO finds nothing to read on a slide, the line above the video says how to frame it yourself, instead of an alert.
+- Plan Again asks first when it would replace framings you set yourself.
+- The words are the same everywhere: the boxes on the slide map are framings, in the inspector, the menus and Undo too, and Cut to Voice is now Time Moves to My Voice.
+- Esc with a framing picked goes back to the whole video.
+- About Obsess Over One says what the name means: every slide, every detail.
+
+**Captions**
+- Your words come up as captions as you say them, in short phrases broken where a person would break them, each word lit as it is spoken. Three looks: Clean (white words with a soft shadow), Card (white on a dark card) and Ink (ink on a paper card, like the slide's own type).
+- They turn on by themselves when OOO first hears your words, and every framing keeps clear of them. With the stage up for you, they sit just above your head.
+- The Voice tab has a Captions section: on or off, the look, and every phrase, to put a misheard word right. Its moment stays.
+- The cover frame and stills stay clean.
+
+**Every size at once**
+- Export can write the video in 9:16, 4:5, 1:1 and 16:9 together, each framed again for its shape, one file for each.
+- The export sheet shows a small poster of the video, sizes in pixels, MP4, Smaller MP4 or ProRes, captions on or off, and how long it should take on this Mac once it has exported once. It starts in the folder you used last, or Movies, and names the file after the slide.
+- When it's done, Share sends it on with AirDrop, Mail or Messages, and the line above the video keeps Share there until you change something.
+- While OOO is still listening to your voice, Export waits, so the timing and captions come with it.
+
+**Live**
+- Before macOS asks for the camera and microphone, the room says why and waits for Continue. If they were refused, it offers Open Privacy Settings.
+- Notes: write what you want to say over each slide in the Live inspector, and it shows at the top of the stage, right under the Mac's camera, while you talk (and while you record over the video). Never in the video. Prompter turns it off.
+- Once a take is kept, Export… is the button to press (Return), with Retake and Done beside it.
+- Closing the window while a take is being kept keeps the recording in Movies › OOO.
+- Going on to a slide after the last stop keeps the take's length near where you closed it.
+
+**Faster and lighter**
+- Playing a voice no longer asks the Mac's sound system for its delay every frame, which took a seventh of the main thread while playing and a quarter in Live.
+- Ink dries three times faster after each stroke, with exactly the same pixels.
+- The slide map and the time under the video update when they change, not every frame.
+- The stage is built and its shaders compiled off the main thread at launch, what the first frame needs first.
+- Drawn marks keep to a memory budget sized to the Mac, letting go of the least recently used first, instead of clearing every mark at once.
+- The voice's waveform is drawn in the background.
+
+**Fixes**
+- A slide too big for the GPU is drawn at the largest size it allows instead of failing, and very wide slides are read in tiles no larger than the reader takes.
+- Turning back to the first slide waits for a melt to finish.
+- Changes made during a take (the pen clearing a mark) are part of the take, never a stray Undo step; nudging a framing and Save Cover Frame and Save Stills wait until the take is over.
+- Undoing a dropped slide works at once, before its tour has landed, and takes the tour back with it.
+- A quick take no longer leaves its recording behind in a temporary folder.
+- Export never writes a video from a slide that has just been replaced and isn't drawn yet.
+- A new framing added after the last one on a later slide lands after that slide's own framings.
+
 ## 1.2.4 — 10 October 2026
 
 Fixes from an outside review of 1.2.3: three ways work could be lost, and checks that now prove what they say.

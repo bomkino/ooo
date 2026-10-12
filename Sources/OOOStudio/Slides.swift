@@ -327,7 +327,7 @@ struct ChangeMarker: View {
     }
 
     private var label: String {
-        change.kind == .melt ? "Melt" : (change.back ? "Back" : "Turn")
+        change.kind == .melt ? "Melt" : (change.back ? "Back" : "Turn Over")
     }
 
     private var help: String {

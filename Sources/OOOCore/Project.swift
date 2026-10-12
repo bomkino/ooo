@@ -353,7 +353,7 @@ public struct OOOProject: Codable, Hashable, Sendable {
 
     /// Sets what you want to say about the `k`th slide (0 is the first).
     public mutating func setNotes(_ text: String?, page k: Int) {
-        if k == 0 { notes = text } else if k > 0 && k <= morePages.count { morePages[k - 1].notes = text }
+        if k == 0 { notes = text } else if k > 0 && k <= morePages.count { pages?[k - 1].notes = text }
     }
 
     /// Whether any slide has something written to say over it.
