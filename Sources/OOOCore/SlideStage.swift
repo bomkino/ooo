@@ -32,6 +32,8 @@ public struct SlideScene: @unchecked Sendable {
 
     /// The words over the opening, when there are some.
     public private(set) var title: TitleOverlay?
+    /// The voiceover's words as captions, phrase by phrase; none when they are off.
+    public let captions: [CaptionPhrase]
     /// Whether the words were set for the stage risen above a Lift's room.
     let titleLifted: Bool
 
@@ -52,11 +54,12 @@ public struct SlideScene: @unchecked Sendable {
         }
         let c = choreography ?? project.choreography()
         self.choreography = c
+        captions = project.captionPhrases
         title = nil
         titleLifted = Self.liftedWhileTitled(c)
         if let words = project.title, !words.isEmpty, let first = c.beats.first {
             let opening = titleLifted ? c.lifted?.first?.pose ?? first.pose : first.pose
-            let A = project.slideAspect, safe = project.format.safeArea, C = project.canvasAspect
+            let A = project.slideAspect, safe = project.framingSafe, C = project.canvasAspect
             // The ink that stands out most from the backdrop behind the words,
             // as it shows while they are read.
             let shown = first.land + 0.6
@@ -636,11 +639,13 @@ public final class SlideStage: @unchecked Sendable {
     public let renderer: StageRenderer
     private let titles: TitleCompositor
     private let faces: FaceCompositor
+    private let captions: CaptionCompositor
 
     public init(renderer: StageRenderer? = nil) throws {
         self.renderer = try renderer ?? StageRenderer()
         titles = try TitleCompositor()
         faces = try FaceCompositor()
+        captions = try CaptionCompositor()
     }
 
     /// Lets go of the camera recordings `gone` picks, which the stage no longer shows.
@@ -659,11 +664,12 @@ public final class SlideStage: @unchecked Sendable {
     ///
     /// `samples` is the most the frame may take. With `adaptive`, it takes
     /// only as many as the motion across its shutter needs: one while the
-    /// camera holds, the most in a fast move.
+    /// camera holds, the most in a fast move. Without `withCaptions` the
+    /// frame is the picture alone, as stills and the cover frame want it.
     @discardableResult
     public func encode(_ cb: MTLCommandBuffer, scene: SlideScene, at t: Double, output: MTLTexture, samples: Int,
                        frameIndex: UInt32, waitForDetail: Bool, backdropScale: Float = 1, transparent: Bool = false,
-                       adaptive: Bool = true) throws -> Int {
+                       adaptive: Bool = true, withCaptions: Bool = true) throws -> Int {
         let C = Float(output.width) / Float(max(output.height, 1))
         var patch: DetailCache.Patch?, oldPatch: DetailCache.Patch?
         if let details = scene.details[scene.page(at: t)], let fp = footprint(scene, at: t, width: output.width, height: output.height) {
@@ -716,6 +722,13 @@ public final class SlideStage: @unchecked Sendable {
                              alpha: shown.alpha, grain: 0.035 * look.finish.grain / 0.14, frameIndex: frameIndex, output: output,
                              wait: waitForDetail)
         }
+        if withCaptions, let style = scene.project.captions, let m = Captions.moment(scene.captions, at: t) {
+            let safe = scene.project.format.safeArea
+            let rise = Captions.rise(scene.choreography.liftAmount(at: t), room: scene.faceRoom,
+                                     canvasAspect: Float(output.width) / Float(max(output.height, 1)), safe: safe)
+            try captions.encode(cb, phrase: scene.captions[m.phrase], moment: m, style: style, face: scene.project.title?.face ?? .modern,
+                                safe: safe, rise: rise, output: output)
+        }
         return request.samples
     }
 
@@ -736,15 +749,16 @@ public final class SlideStage: @unchecked Sendable {
     }
 
     /// One frame as a picture: the video's frame nearest `t`, exactly as the
-    /// export draws it.
-    public func still(_ scene: SlideScene, at t: Double, width: Int, height: Int, samples: Int = 8, adaptive: Bool = true) throws -> CGImage {
+    /// export draws it (without its captions, unless `withCaptions`).
+    public func still(_ scene: SlideScene, at t: Double, width: Int, height: Int, samples: Int = 8, adaptive: Bool = true,
+                      withCaptions: Bool = false) throws -> CGImage {
         let gpu = GPU.shared
         let out = gpu.makeTexture(width: width, height: height, format: .bgra8Unorm, usage: [.renderTarget, .shaderRead])
         guard let cb = gpu.queue.makeCommandBuffer() else { throw RenderError.io("GPU unavailable.") }
         let fps = Double(max(scene.project.fps, 1))
         let index = max(0, (t * fps).rounded())
         try encode(cb, scene: scene, at: index / fps, output: out, samples: samples, frameIndex: UInt32(index),
-                   waitForDetail: true, adaptive: adaptive)
+                   waitForDetail: true, adaptive: adaptive, withCaptions: withCaptions)
         cb.commit()
         cb.waitUntilCompleted()
         if let e = cb.error { throw RenderError.io("GPU error: \(e.localizedDescription)") }

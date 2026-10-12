@@ -45,14 +45,15 @@ cp -R "$ROOT/Resources/Licenses" "$APPDIR/Contents/Resources/Licenses"
 mkdir -p "$APPDIR/Contents/Frameworks"
 ditto "$(dirname "$BIN")/Sparkle.framework" "$APPDIR/Contents/Frameworks/Sparkle.framework"
 
-# The icon, drawn from code.
+# The icon: the brand's loop in ember light (scripts/make-icon.py draws it).
 ICONS="$ROOT/.build/icon"
-if [ ! -f "$ICONS/OOO.icns" ]; then
+ICON_SOURCE="$ROOT/Resources/Icons/OOO.png"
+if [ ! -f "$ICONS/OOO.icns" ] || [ "$ICON_SOURCE" -nt "$ICONS/OOO.icns" ]; then
+  rm -rf "$ICONS/OOO.iconset"
   mkdir -p "$ICONS/OOO.iconset"
-  swift "$ROOT/scripts/make-icon.swift" "$ICONS/OOO.png"
   for s in 16 32 128 256 512; do
-    sips -z $s $s "$ICONS/OOO.png" --out "$ICONS/OOO.iconset/icon_${s}x${s}.png" >/dev/null
-    sips -z $((s * 2)) $((s * 2)) "$ICONS/OOO.png" --out "$ICONS/OOO.iconset/icon_${s}x${s}@2x.png" >/dev/null
+    sips -z $s $s "$ICON_SOURCE" --out "$ICONS/OOO.iconset/icon_${s}x${s}.png" >/dev/null
+    sips -z $((s * 2)) $((s * 2)) "$ICON_SOURCE" --out "$ICONS/OOO.iconset/icon_${s}x${s}@2x.png" >/dev/null
   done
   iconutil -c icns "$ICONS/OOO.iconset" -o "$ICONS/OOO.icns"
 fi
