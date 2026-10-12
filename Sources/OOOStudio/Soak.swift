@@ -283,8 +283,9 @@ final class SoakMonitor: @unchecked Sendable {
             let gpu = Double(GPU.shared.device.currentAllocatedSize) / 1_048_576
             let face = FaceCounts.shared.now
             let named = phase.padding(toLength: 17, withPad: " ", startingAt: 0)
-            print(String(format: "soak %6.1f s  %@ t %6.2f/%6.2f  memory %5.0f MB  gpu %5.0f MB  main late %5.2f s  stage frames %6d  face frames %6d  restarts %5d  sessions %d",
-                         now - began, named, time, duration, memory, gpu, late, SoakCounts.shared.stageFrames,
+            let details = Double(DetailCache.bytesHeld) / 1_048_576
+            print(String(format: "soak %6.1f s  %@ t %6.2f/%6.2f  memory %5.0f MB  gpu %5.0f MB  details %4.0f MB  main late %5.2f s  stage frames %6d  face frames %6d  restarts %5d  sessions %d",
+                         now - began, named, time, duration, memory, gpu, details, late, SoakCounts.shared.stageFrames,
                          face.frames, face.restarts, SoakCounts.shared.sessions))
             fflush(stdout)
             lock.withLock {

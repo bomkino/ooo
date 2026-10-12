@@ -463,51 +463,12 @@ struct ArriveTile: View {
 
 struct LookInspector: View {
     let session: OOOSession
+    /// Light, lens and finish, for when the look is nearly right.
+    @AppStorage("look.fineTune") private var fineTune = false
 
     var body: some View {
         let p = session.project
         VStack(alignment: .leading, spacing: 0) {
-            InspectorSection("Floor") {
-                ChoiceRow(FloorKind.allCases.map { ($0, $0.title) },
-                          selection: Binding(get: { session.project.floorKind }, set: { v in session.update("Floor") { $0.floor = v } }))
-                Text("What the slide stands on. In a tall frame its reflection fills the space below it.")
-                    .textStyle(.caption).foregroundStyle(.secondary)
-            }
-            Hairline()
-            InspectorSection("Surface") {
-                ChoiceRow(SurfaceKind.allCases.map { ($0, $0.title) }, selection: session.choice(\.look.surface, "Surface"))
-                Text(p.look.surface.summary).textStyle(.caption).foregroundStyle(.secondary)
-                Dial(session: session, label: "Corners", value: session.bind(\.look.corners), defaultValue: 0.25)
-                Dial(session: session, label: "Thickness", value: session.bind(\.look.edge), defaultValue: 1)
-            }
-            Hairline()
-            InspectorSection("Light") {
-                Dial(session: session, label: "Direction", value: session.bind(\.look.lightAzimuth), range: 0...360,
-                     defaultValue: 118, format: degreesLabel)
-                Dial(session: session, label: "Height", value: session.bind(\.look.lightElevation), range: 10...85,
-                     defaultValue: 52, format: degreesLabel)
-                Dial(session: session, label: "Shadow", value: session.bind(\.look.shadow), defaultValue: 0.6)
-                Dial(session: session, label: "Softness", value: session.bind(\.look.shadowSoftness), defaultValue: 0.6)
-            }
-            Hairline()
-            InspectorSection("Lens") {
-                Dial(session: session, label: "Depth of field", value: session.bind(\.look.depthOfField), defaultValue: 0.5)
-                Dial(session: session, label: "Motion blur", value: session.bind(\.look.shutter), defaultValue: 0.5,
-                     format: { String(format: "%.0f°", $0 * 360) })
-                Text("Motion blur is a film camera's shutter: 180° is how films are shot.")
-                    .textStyle(.caption).foregroundStyle(.secondary)
-            }
-            Hairline()
-            InspectorSection("Finish") {
-                Dial(session: session, label: "Glow", value: session.bind(\.look.finish.bloom), defaultValue: 0.16)
-                Dial(session: session, label: "Vignette", value: session.bind(\.look.finish.vignette), defaultValue: 0.3)
-                Dial(session: session, label: "Grain", value: session.bind(\.look.finish.grain), defaultValue: 0.14)
-                Dial(session: session, label: "Warmth", value: session.bind(\.look.finish.warmth), range: -1...1, defaultValue: 0,
-                     format: signedPercent)
-                Dial(session: session, label: "Contrast", value: session.bind(\.look.finish.contrast), range: -1...1, defaultValue: 0,
-                     format: signedPercent)
-            }
-            Hairline()
             InspectorSection("Backdrop", accessory: {
                 Menu {
                     ForEach(BackdropFamily.allCases) { family in
@@ -558,6 +519,67 @@ struct LookInspector: View {
                 }
                 .buttonStyle(QuietButtonStyle())
                 .help("A new arrangement of the same look. Every export of it comes out the same.")
+            }
+            Hairline()
+            InspectorSection("Surface") {
+                ChoiceRow(SurfaceKind.allCases.map { ($0, $0.title) }, selection: session.choice(\.look.surface, "Surface"))
+                Text(p.look.surface.summary).textStyle(.caption).foregroundStyle(.secondary)
+                Dial(session: session, label: "Corners", value: session.bind(\.look.corners), defaultValue: 0.25)
+                Dial(session: session, label: "Thickness", value: session.bind(\.look.edge), defaultValue: 1)
+            }
+            Hairline()
+            InspectorSection("Floor") {
+                ChoiceRow(FloorKind.allCases.map { ($0, $0.title) },
+                          selection: Binding(get: { session.project.floorKind }, set: { v in session.update("Floor") { $0.floor = v } }))
+                Text("What the slide stands on. In a tall frame its reflection fills the space below it.")
+                    .textStyle(.caption).foregroundStyle(.secondary)
+            }
+            Hairline()
+            Button {
+                withAnimation(Theme.settle) { fineTune.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .bold))
+                        .rotationEffect(.degrees(fineTune ? 90 : 0))
+                    Text("Fine-tune").textStyle(.label)
+                    Text("Light, lens and finish").textStyle(.caption).foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, Theme.Space.l)
+                .frame(height: 40)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(fineTune ? "Fold the light, lens and finish away" : "The light, the lens and the finish")
+            if fineTune {
+                Hairline()
+                InspectorSection("Light") {
+                    Dial(session: session, label: "Direction", value: session.bind(\.look.lightAzimuth), range: 0...360,
+                         defaultValue: 118, format: degreesLabel)
+                    Dial(session: session, label: "Height", value: session.bind(\.look.lightElevation), range: 10...85,
+                         defaultValue: 52, format: degreesLabel)
+                    Dial(session: session, label: "Shadow", value: session.bind(\.look.shadow), defaultValue: 0.6)
+                    Dial(session: session, label: "Softness", value: session.bind(\.look.shadowSoftness), defaultValue: 0.6)
+                }
+                Hairline()
+                InspectorSection("Lens") {
+                    Dial(session: session, label: "Depth of field", value: session.bind(\.look.depthOfField), defaultValue: 0.5)
+                    Dial(session: session, label: "Motion blur", value: session.bind(\.look.shutter), defaultValue: 0.5,
+                         format: { String(format: "%.0f°", $0 * 360) })
+                    Text("Motion blur is a film camera's shutter: 180° is how films are shot.")
+                        .textStyle(.caption).foregroundStyle(.secondary)
+                }
+                Hairline()
+                InspectorSection("Finish") {
+                    Dial(session: session, label: "Glow", value: session.bind(\.look.finish.bloom), defaultValue: 0.16)
+                    Dial(session: session, label: "Vignette", value: session.bind(\.look.finish.vignette), defaultValue: 0.3)
+                    Dial(session: session, label: "Grain", value: session.bind(\.look.finish.grain), defaultValue: 0.14)
+                    Dial(session: session, label: "Warmth", value: session.bind(\.look.finish.warmth), range: -1...1, defaultValue: 0,
+                         format: signedPercent)
+                    Dial(session: session, label: "Contrast", value: session.bind(\.look.finish.contrast), range: -1...1, defaultValue: 0,
+                         format: signedPercent)
+                }
             }
         }
     }
