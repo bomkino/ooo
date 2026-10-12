@@ -17,6 +17,7 @@ OOO 2.0 leads you from a slide to a posted video, step by step, and adds caption
 - The Video tab follows the journey: opening, slides, title, ending, then space for you. The Look tab opens on the backdrop. Settings you reach for once the rest is right (the opening framing, the camera's temperament, the length, light, lens and finish) fold under Fine-tune.
 - With no voice yet, the voice row keeps its buttons in view however far the timeline is zoomed. The pen's Stays or Fades reads as a word in a narrow window, and a slide's Turn Over or Melt is easier to hit.
 - About Obsess Over One says what the name means: every slide, every detail.
+- The sample's tour in a tall or square frame goes in close on its last number, care in every last pixel, instead of showing the headline's view twice. On the sample the wand says Direct for Me, not Plan Again.
 
 **Captions**
 - Your words come up as captions as you say them, in short phrases broken where a person would break them, each word lit as it is spoken. Three looks: Clean (white words with a soft shadow), Card (white on a dark card) and Ink (ink on a paper card, like the slide's own type).

@@ -325,7 +325,7 @@ public struct OOOProject: Codable, Hashable, Sendable {
     /// The sample project every new window opens on, already moving.
     public static var sample: OOOProject {
         var p = OOOProject(slide: .sample)
-        p.shots = SampleSlide.shots
+        p.shots = SampleSlide.shots(canvasAspect: p.canvasAspect)
         return p
     }
 
@@ -631,7 +631,14 @@ public struct OOOProject: Codable, Hashable, Sendable {
         p.format = f
         p.adaptOverview(fromSlideAspect: A, canvasAspect: C)
         p.reframePlanned()
+        p.followSample(fromCanvasAspect: C)
         return p
+    }
+
+    /// The sample, untouched, takes its own framings for the new canvas shape.
+    public mutating func followSample(fromCanvasAspect C: Float) {
+        guard slide.kind == .sample, slideCount == 1, SampleSlide.isOwn(shots, canvasAspect: C) else { return }
+        shots = SampleSlide.shots(canvasAspect: canvasAspect)
     }
 
     /// Follows a new slide or canvas shape with the opening, unless someone

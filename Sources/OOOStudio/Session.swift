@@ -1192,6 +1192,7 @@ public final class OOOSession {
             p.format = f
             p.adaptOverview(fromSlideAspect: A, canvasAspect: C)
             p.reframePlanned()
+            p.followSample(fromCanvasAspect: C)
         }
     }
 

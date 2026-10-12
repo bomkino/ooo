@@ -550,8 +550,10 @@ struct DirectButton: View {
     @State private var asking = false
 
     private var glow: Bool { session.project.shots.isEmpty && session.hasSlide && session.busy == nil }
-    /// Shots you set by hand, which a new plan would replace.
-    private var yours: Int { session.project.shots.filter { !$0.isPlanned }.count }
+    /// Framings you set by hand, which a new plan would replace (the sample's are nobody's).
+    private var yours: Int {
+        session.project.slide.kind == .sample ? 0 : session.project.shots.filter { !$0.isPlanned }.count
+    }
 
     var body: some View {
         Button { if yours > 0 { asking = true } else { session.autoDirect() } } label: {
