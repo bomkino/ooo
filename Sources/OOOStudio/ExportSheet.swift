@@ -270,6 +270,15 @@ struct ExportSheet: View {
                     }
                 }
                 Text("AirDrop it to your phone and post it, or send it on.").textStyle(.caption).foregroundStyle(.secondary)
+                Button {
+                    let t = Self.restingOpening(session.choreography)
+                    dismiss()
+                    OOOCommands.saveCoverFrame(session, at: t)
+                } label: {
+                    Label("Save a Cover Picture…", systemImage: "photo")
+                }
+                .buttonStyle(QuietButtonStyle())
+                .help("The opening at rest, full size, for the post's cover")
                 Spacer(minLength: 0)
                 HStack {
                     ShareLink(items: urls) { Label("Share…", systemImage: "square.and.arrow.up") }

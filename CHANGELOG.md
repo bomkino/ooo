@@ -27,7 +27,7 @@ OOO 2.0 leads you from a slide to a posted video, step by step, and adds caption
 **Every size at once**
 - Export can write the video in 9:16, 4:5, 1:1 and 16:9 together, each framed again for its shape, one file for each.
 - The export sheet shows a small poster of the video, sizes in pixels, MP4, Smaller MP4 or ProRes, captions on or off, and how long it should take on this Mac once it has exported once. It starts in the folder you used last, or Movies, and names the file after the slide.
-- When it's done, Share sends it on with AirDrop, Mail or Messages, and the line above the video keeps Share there until you change something.
+- When it's done, Share sends it on with AirDrop, Mail or Messages, and the line above the video keeps Share there until you change something. Save a Cover Picture saves the opening at rest, full size, for the post's cover.
 - While OOO is still listening to your voice, Export waits, so the timing and captions come with it.
 
 **Live**

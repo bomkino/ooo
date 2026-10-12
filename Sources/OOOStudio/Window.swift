@@ -89,12 +89,12 @@ extension OOOCommands {
         }
     }
 
-    /// Saves the frame at the playhead as a full-size picture, for the
-    /// post's cover or thumbnail.
+    /// Saves the frame at the playhead (or at `time`) as a full-size picture,
+    /// for the post's cover or thumbnail.
     @MainActor
-    public static func saveCoverFrame(_ session: OOOSession) {
+    public static func saveCoverFrame(_ session: OOOSession, at time: Double? = nil) {
         guard let scene = session.exportScene() else { session.message = session.notReady; return }
-        let t = session.clock.time
+        let t = time ?? session.clock.time
         let format = session.project.format
         session.clock.playing = false
         let panel = NSSavePanel()
