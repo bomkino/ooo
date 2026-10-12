@@ -20,9 +20,40 @@ public enum SampleSlide {
     static let accent = CGColor(srgbRed: 1.0, green: 0.36, blue: 0.22, alpha: 1)
     static let accentSoft = CGColor(srgbRed: 1.0, green: 0.36, blue: 0.22, alpha: 0.16)
 
-    /// The moves the sample opens with: the headline, the moment in the chart,
-    /// the numbers, then the note in the corner.
-    public static var shots: [Shot] {
+    /// The moves the sample opens with, for a canvas of `canvasAspect`: the
+    /// headline, the moment in the chart, the numbers, then the note in the
+    /// corner. In a tall or square frame a wide framing shows most of the slide,
+    /// so there the third goes in close on one number: care in every last pixel.
+    public static func shots(canvasAspect: Float) -> [Shot] {
+        canvasAspect <= 1.01 ? tall : wide
+    }
+
+    /// Whether `shots` are the sample's own for a canvas of `canvasAspect`, untouched.
+    public static func isOwn(_ shots: [Shot], canvasAspect: Float) -> Bool {
+        let own = Self.shots(canvasAspect: canvasAspect)
+        return shots.count == own.count && zip(shots, own).allSatisfy { a, b in
+            a.frame == b.frame && a.time == b.time && a.label == b.label && a.yaw == b.yaw && a.pitch == b.pitch
+        }
+    }
+
+    static var tall: [Shot] {
+        [
+            Shot(time: 4.4, frame: ShotFrame(center: Vec2(0.225, 0.33), size: Vec2(0.34, 0.36)),
+                 yaw: -7, pitch: 4, lens: 28, aperture: 0.45, move: .glide, ease: .glide, breathe: 0.55,
+                 label: "The headline"),
+            Shot(time: 7.4, frame: ShotFrame(center: Vec2(0.755, 0.33), size: Vec2(0.17, 0.2)),
+                 yaw: 11, pitch: -3, lens: 26, aperture: 0.6, move: .arc, ease: .breathe, breathe: 0.6,
+                 emphasis: .spotlight, label: "The moment it turned"),
+            Shot(time: 10.4, frame: ShotFrame(center: Vec2(0.435, 0.79), size: Vec2(0.12, 0.14)),
+                 yaw: -5, pitch: 7, lens: 28, aperture: 0.5, move: .push, ease: .glide, breathe: 0.5,
+                 emphasis: .lift, label: "Care in every last pixel"),
+            Shot(time: 14.6, frame: ShotFrame(center: Vec2(0.912, 0.934), size: Vec2(0.07, 0.045)),
+                 yaw: 15, pitch: 9, lens: 24, aperture: 0.75, move: .glide, ease: .linger, breathe: 0.7,
+                 label: "A note for whoever looks closely"),
+        ]
+    }
+
+    static var wide: [Shot] {
         [
             Shot(time: 4.4, frame: ShotFrame(center: Vec2(0.285, 0.33), size: Vec2(0.5, 0.36)),
                  yaw: -7, pitch: 4, lens: 28, aperture: 0.45, move: .glide, ease: .glide, breathe: 0.55,

@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 import Metal
+import QuartzCore
 import OOOMotion
 import RenderCore
 import StageKit
@@ -47,11 +48,18 @@ public final class DetailCache: @unchecked Sendable {
     private let queue = DispatchQueue(label: "dog.pitch.ooo.detail", qos: .userInitiated)
     private let capacity = 6
     private static let maxSide = 4096
+    /// Its place in the budget every slide's details share.
+    private let serial = DetailLedger.shared.serial()
 
     public init(source: SlideSource, baseDensity: Float) {
         self.source = source
         self.baseDensity = baseDensity
     }
+
+    deinit { DetailLedger.shared.forget(serial) }
+
+    /// What every slide's details hold on the GPU together, in bytes.
+    public static var bytesHeld: Int { DetailLedger.shared.bytesHeld }
 
     /// The detail for a frame that sees `footprint`, if the whole-slide texture
     /// is not sharp enough. With `wait`, draws it now (export); otherwise
@@ -63,6 +71,7 @@ public final class DetailCache: @unchecked Sendable {
         if let hit = patches[plan.key] {
             touch(plan.key)
             lock.unlock()
+            DetailLedger.shared.touch(serial, plan.key)
             return hit
         }
         let drawing = pending.contains(plan.key)
@@ -128,6 +137,15 @@ public final class DetailCache: @unchecked Sendable {
         patches.removeAll()
         order.removeAll()
         lock.unlock()
+        DetailLedger.shared.forget(serial)
+    }
+
+    /// Lets one detail go, for the shared budget.
+    fileprivate func evict(_ key: Key) {
+        lock.lock()
+        patches[key] = nil
+        order.removeAll { $0 == key }
+        lock.unlock()
     }
 
     // MARK: Planning
@@ -181,16 +199,125 @@ public final class DetailCache: @unchecked Sendable {
         lock.lock()
         patches[plan.key] = patch
         touch(plan.key)
+        var dropped: [Key] = []
         while order.count > capacity {
             let old = order.removeFirst()
             patches[old] = nil
+            dropped.append(old)
         }
         lock.unlock()
+        // Outside this cache's lock: the budget may ask any cache, this one too, to let go.
+        let ledger = DetailLedger.shared
+        for old in dropped { ledger.drop(serial, old) }
+        ledger.hold(serial, plan.key, bytes: media.texture.allocatedSize, owner: self)
         return patch
     }
 
     private func touch(_ key: Key) {
         order.removeAll { $0 == key }
         order.append(key)
+    }
+}
+
+/// One memory budget for every slide's close-ups, in every window and every
+/// export: about 256 MB on an 8 GB Mac. Over it, the detail seen longest ago
+/// goes first, anywhere, but never one a frame has used in the last moment.
+/// Under memory pressure the budget halves, then empties to what is on screen.
+final class DetailLedger: @unchecked Sendable {
+    static let shared = DetailLedger()
+
+    private struct Held {
+        let bytes: Int
+        var used: CFTimeInterval
+        weak var owner: DetailCache?
+    }
+    private struct ID: Hashable {
+        let cache: UInt64
+        let key: DetailCache.Key
+    }
+
+    let limit: Int
+    private var target: Int
+    private let lock = NSLock()
+    private var held: [ID: Held] = [:]
+    private var total = 0
+    private var serials: UInt64 = 0
+    private var pressure: DispatchSourceMemoryPressure?
+    /// What a frame used just now stays, whatever the budget.
+    private static let inUse: CFTimeInterval = 0.25
+
+    init(physicalMemory: UInt64 = ProcessInfo.processInfo.physicalMemory) {
+        let mb = 1 << 20
+        limit = min(max(Int(physicalMemory / 32), 160 * mb), 768 * mb)
+        target = limit
+        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.normal, .warning, .critical], queue: .global(qos: .utility))
+        source.setEventHandler { [weak self, weak source] in
+            guard let self, let event = source?.data else { return }
+            self.lock.lock()
+            self.target = event.contains(.critical) ? 0 : event.contains(.warning) ? self.limit / 2 : self.limit
+            self.lock.unlock()
+            self.trim(keeping: nil)
+        }
+        source.activate()
+        pressure = source
+    }
+
+    /// The bytes held now, for the soak's line.
+    var bytesHeld: Int { lock.lock(); defer { lock.unlock() }; return total }
+
+    func serial() -> UInt64 {
+        lock.lock(); defer { lock.unlock() }
+        serials += 1
+        return serials
+    }
+
+    func hold(_ cache: UInt64, _ key: DetailCache.Key, bytes: Int, owner: DetailCache) {
+        let id = ID(cache: cache, key: key)
+        lock.lock()
+        if let old = held[id] { total -= old.bytes }
+        held[id] = Held(bytes: bytes, used: CACurrentMediaTime(), owner: owner)
+        total += bytes
+        lock.unlock()
+        trim(keeping: id)
+    }
+
+    func touch(_ cache: UInt64, _ key: DetailCache.Key) {
+        let now = CACurrentMediaTime()
+        lock.lock()
+        held[ID(cache: cache, key: key)]?.used = now
+        lock.unlock()
+    }
+
+    func drop(_ cache: UInt64, _ key: DetailCache.Key) {
+        lock.lock()
+        if let old = held.removeValue(forKey: ID(cache: cache, key: key)) { total -= old.bytes }
+        lock.unlock()
+    }
+
+    func forget(_ cache: UInt64) {
+        lock.lock()
+        for id in held.keys where id.cache == cache {
+            if let old = held.removeValue(forKey: id) { total -= old.bytes }
+        }
+        lock.unlock()
+    }
+
+    /// Lets the details seen longest ago go until the budget holds. Each cache
+    /// is asked once the ledger's lock is let go, so no two locks are ever held.
+    private func trim(keeping: ID?) {
+        let now = CACurrentMediaTime()
+        var victims: [(DetailCache, DetailCache.Key)] = []
+        lock.lock()
+        if total > target {
+            let oldest = held.filter { $0.key != keeping && now - $0.value.used > Self.inUse }
+                .sorted { $0.value.used < $1.value.used }
+            for (id, h) in oldest where total > target {
+                held[id] = nil
+                total -= h.bytes
+                if let owner = h.owner { victims.append((owner, id.key)) }
+            }
+        }
+        lock.unlock()
+        for (cache, key) in victims { cache.evict(key) }
     }
 }

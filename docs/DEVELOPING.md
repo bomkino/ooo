@@ -31,6 +31,8 @@ swift run -c release ooo-lab openings --out grid.png       # the opening at five
 swift run -c release ooo-lab titles --title "…" --out t.png # the opening title in four faces, and in time
 swift run -c release ooo-lab backdrops --out grid.png      # every look behind the opening, as itself and From Slide
 swift run -c release ooo-lab arrivals --out grid.png       # each arrival at five moments of its entrance
+swift run -c release ooo-lab captions --say "…" --out c.png # captions in each look, checked against the safe area and every framing
+swift run -c release ooo-lab sizes --out grid.png          # every size Export writes at once, each framed again for its shape
 swift run -c release ooo-lab motioncheck                   # each move's speed and turn, each emphasis, any jump
 swift run -c release ooo-lab blurcheck --quality good      # adaptive motion blur against full sampling
 swift run -c release ooo-lab inkcheck                      # how dark the type lands at every hold, against the slide
@@ -42,16 +44,16 @@ swift run -c release ooo-lab fixture --kind wide --out wide.png # a 2576 × 1080
 swift run -c release ooo-lab live --live "4,8,12.5b" --out dir # a live take: each press, the end, and a stand-in for you in the room
 ```
 
-Every command takes `--project file.ooo` (the sample by default) or `--slide file.pdf|png` (read and directed as the app does on a drop) with `--replace file` (then Replace Slide with it), `--format reel|portrait|square|landscape|uhd`, `--floor none|soft|mirror`, `--ending hold|pullBack|fade|leave`, `--arrive rise|unfold|drop|develop|turn|glide|weave|none` and `--title "…"` (with `--kicker "…"`, `--kicker-as-typed` and `--face`). `--live "4,8,12.5b,15w,17@0.7:0.55"` (with `--live-end` and `--voice-only`) plays a live take on any of them first: each time a press to the next stop, `b` back, `w` the whole slide, `@u:v` a click on the slide, filmed by a stand-in recording, since CI's Mac has no camera.
+Every command takes `--project file.ooo` (the sample by default) or `--slide file.pdf|png` (read and directed as the app does on a drop) with `--replace file` (then Replace Slide with it), `--format reel|portrait|square|landscape|uhd`, `--floor none|soft|mirror`, `--ending hold|pullBack|fade|leave`, `--arrive rise|unfold|drop|develop|turn|glide|weave|none` and `--title "…"` (with `--kicker "…"`, `--kicker-as-typed` and `--face`). `--live "4,8,12.5b,15w,17@0.7:0.55"` (with `--live-end` and `--voice-only`) plays a live take on any of them first, and `--say "words…"` (with `--captions clean|card|ink`) sets words as if heard, with captions: each time a press to the next stop, `b` back, `w` the whole slide, `@u:v` a click on the slide, filmed by a stand-in recording, since CI's Mac has no camera.
 
-The app has a headless mode too, for screenshots of the real window: `OOO --snapshot out.png [--scheme light] [--slide file] [--tab look] [--shot 2] [--show-export]` (all the flags are in `Sources/OOOStudio/Snapshot.swift`).
+The app has a headless mode too, for screenshots of the real window: `OOO --snapshot out.png [--scheme light] [--slide file] [--tab look] [--shot 2] [--show-export] [--welcome] [--say "…"] [--notes "…"]` (all the flags are in `Sources/OOOStudio/Snapshot.swift`).
 
 ## CI
 
 `.github/workflows/build.yml` runs on every push and pull request, on GitHub's macOS 26 runner:
 
 1. builds, runs the tests and compiles every shader;
-2. `scripts/ci-renders.sh`: the review set, which is pitch.dog's real case (wide slides as pictures and PDFs in a 1080 × 1920 reel) taken through the app's journey: the director's plan, the read against close-ups, a contact sheet, every landing, the openings, the ink check, the motion check (which fails the build on a problem), draft videos, every look and arrival, Replace Slide on a corrected slide, Save Stills, export timings and `summary.txt`;
+2. `scripts/ci-renders.sh`: the review set, which is pitch.dog's real case (wide slides as pictures and PDFs in a 1080 × 1920 reel) taken through the app's journey: the director's plan, the read against close-ups, a contact sheet, every landing, the openings, the ink check, the motion check (which fails the build on a problem), draft videos, every look and arrival, captions in each look, every size at once, Replace Slide on a corrected slide, Save Stills, export timings and `summary.txt`;
 3. packages the app, screenshots the editor with `scripts/ci-screens.sh`, and runs `scripts/test-update.sh`.
 
 `scripts/ci-screens.sh` also runs the soak test (`OOO --snapshot … --soak 45`, in `Sources/OOOStudio/Soak.swift`): it films a stand-in take, keeps it, then plays, scrubs and scrolls it in Live and Frame, and fails if the window stops answering or its memory runs away. The stand-in take claps every seven seconds or so from start to end (a white frame and a click at the same moment), and once it is kept, `Sources/OOOStudio/SyncCheck.swift` looks for every clap in the voice OOO kept and in an exported video's picture and sound. A clap not found, or found more than a frame and 5 ms off (38.3 ms at 30 fps), fails it. It checks everything after the recording, not the camera's own start: CI has no camera. The screenshot step doesn't fail the build, so read the `soak:` and `sync:` lines in its log.

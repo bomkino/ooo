@@ -1,8 +1,8 @@
 # OOO · Obsess Over One
 
-One slide. One camera. All the love.
+Every slide. Every detail.
 
-OOO turns a single slide into a short film about it. The slide arrives, beautifully. Then a camera flies over it in 3D, landing on one detail after another, timed to your voice. You export a video, 1080 × 1920 by default, and post it.
+OOO turns a slide into a short film about it. The slide arrives, beautifully. Then a camera flies over it in 3D, landing on one detail after another, timed to your voice. You export a video, 1080 × 1920 by default, and post it.
 
 It is for the slide you spent a week on: the chart whose curve you redrew eleven times, the footnote in 4-point type, the kerning nobody will notice. OOO is how you show them you noticed.
 
@@ -15,9 +15,11 @@ It is for the slide you spent a week on: the chart whose curve you redrew eleven
 1. **Drop a slide, or paste one.** A PDF page or a picture, or a slide copied straight from Keynote, Figma or Preview (⇧⌘V). PDFs stay vector, so the camera can go as close as it likes and text stays razor sharp. Pictures are drawn at up to twice their size, resampled and sharpened, and the camera never goes closer than they hold.
 2. **It arrives.** Rise, Unfold, Drop, Develop, Turn, Glide or Weave: an entrance with weight, light and focus. Develop comes up like a print in the tray, darks first; Weave knits the slide together from threads, the same way in every export. In a tall frame a wide slide stands turned towards you, over a soft reflection, with a title above it if you give it one.
 3. **The camera tours it.** *Direct for Me* reads the slide on your Mac (the headline, the numbers, the figure, the small print) and plans a tour: the headline first, the details worth stopping on in reading order, the smallest print saved for last. Each hold lasts as long as its words take to read, and the slide's point holds longest. Text is framed at a size that reads on a phone; a line too long for the frame is read along, the camera landing on its start and gliding to its end. Every framing sits in the part of a Reel that the profile and caption leave clear.
-4. **Talk about it.** Record a scratch take right in OOO (⌥⌘R), talking along as the video plays, or record your voiceover in any app and drop it in. OOO listens on your Mac for the words and when you say them, and lands each move just before you name what it shows. When your words come faster than a move can fly, the camera cuts on the word rather than rushing.
+4. **Talk about it.** Record a scratch take right in OOO (⌥⌘R), talking along as the video plays, or record your voiceover in any app and drop it in. OOO listens on your Mac for the words and when you say them, and lands each move just before you name what it shows. When your words come faster than a move can fly, the camera cuts on the word rather than rushing. Your words come up as captions as you say them, each word lit as it's spoken, in Clean, Card or Ink, kept clear of every framing; put a misheard word right in the Voice tab.
 5. **Set the room.** 35 looks from Backdrop, each with its own dials and a Shuffle, or the room in the slide's own colours (From Slide), kept at the room's lightness so the slide still stands out. The slide's surface can be Original, Print, Gloss, Satin or Foil; hold `\` to compare with the slide exactly as supplied.
-6. **Export.** MP4, HEVC or ProRes, at 24, 30 or 60 fps, with real motion blur and your voice under it. Save Cover Frame (⌥⌘E) gives you the post's thumbnail, and Save Stills (⇧⌘E) the opening and every landing as pictures, for a carousel.
+6. **Export.** Export is always in the toolbar, and it lights up once the video is ready to post. MP4, a smaller MP4 (HEVC) or ProRes, at 24, 30 or 60 fps, with real motion blur and your voice under it. Tick more sizes (9:16, 4:5, 1:1, 16:9) and you get every one in one go, each framed again for its shape. Then Share sends it to your phone with AirDrop. Save Cover Frame (⌥⌘E) gives you the post's thumbnail, and Save Stills (⇧⌘E) the opening and every landing as pictures, for a carousel.
+
+The line above the video always says what OOO is doing or what to do next, with that step as a button: use your slide, add your voice, export, share.
 
 **More than one slide?** Add Slide (⌃⌘I), or drop several at once, and the same card in your hand goes through them: it turns over to the next slide, or the next melts in where you're looking while whatever the two share holds still. Open on your deck's cover, follow a number from one slide to the next, and turn back to the first at the end.
 
@@ -25,9 +27,9 @@ It is for the slide you spent a week on: the chart whose curve you redrew eleven
 
 **Leave room for you.** Space for You lifts the stage into the top of the frame for as long as you choose, leaving the bottom clear for your talking head in Edits or Premiere.
 
-**Go live.** Switch to Live in the toolbar (⌘3). You step into a room: the slide as the take will open, you in the space under it, and every position the camera can go to in a strip under the video. Press Start, then talk it through while you lead the camera yourself: → or Space to the next stop, ← back, ↑ out to the whole slide, ↓ to the next slide, a number or a click to go straight to a position. Press D, or Draw beside Close, to draw on the slide as you talk; the camera still follows your keys. Close, and the ending plays as you finish. Your camera and microphone record you as you go (choose which in the room's camera menu: the Mac's own, an iPhone, a USB camera or mic), and you stand in the room under the slide, mirrored the way you saw yourself. Tick Green Screen Behind Me in that menu and the green goes, in the room and in the video, so you stand in front of the backdrop itself. Keep it, and the take is the video: every move sets off when you pressed, your voice is the voiceover, and you're in it, all of it editable and one undo away. Export can leave the room empty and save you as your own file instead. Switch the camera off in the File menu for a take that's just your voice.
+**Go live.** Switch to Live in the toolbar (⌘3). You step into a room: the slide as the take will open, you in the space under it, and every position the camera can go to in a strip under the video. Press Start, then talk it through while you lead the camera yourself: → or Space to the next stop, ← back, ↑ out to the whole slide, ↓ to the next slide, a number or a click to go straight to a position. Press D, or Draw beside Close, to draw on the slide as you talk; the camera still follows your keys. Close, and the ending plays as you finish. Your camera and microphone record you as you go (choose which in the room's camera menu: the Mac's own, an iPhone, a USB camera or mic), and you stand in the room under the slide, mirrored the way you saw yourself. Tick Green Screen Behind Me in that menu and the green goes, in the room and in the video, so you stand in front of the backdrop itself. Keep it, and the take is the video: every move sets off when you pressed, your voice is the voiceover, and you're in it, all of it editable and one undo away. Export can leave the room empty and save you as your own file instead. Switch the camera off in the File menu for a take that's just your voice. Write notes for each slide in the Live inspector and they show at the top of the stage, right under the Mac's camera, while you talk, so your eyes stay near it. They're never in the video.
 
-**Fixed a typo after the tour was made?** Replace Slide (⇧⌘I) swaps in the corrected slide and keeps the camera work: each framing follows its words to where they are now, and a shot named after its words takes the new ones. Change the canvas and the framings Direct for Me planned are framed again for it; the ones you set stay where you put them.
+**Fixed a typo after the tour was made?** Replace Slide (⇧⌘I) swaps in the corrected slide and keeps the camera work: each framing follows its words to where they are now, and a framing named after its words takes the new ones. Change the canvas and the framings Direct for Me planned are framed again for it; the ones you set stay where you put them.
 
 ## Every move is yours
 
@@ -42,8 +44,8 @@ The slide map shows every framing as a box the shape of your video. Drag anywher
 | ⌃⌘I | Add slides after the last |
 | ⇧⌘P, Return | Draw on the slide, and put the pen away |
 | ⇧⌘D | Direct for Me |
-| ⌥⌘V | Cut moves to the voice |
-| ⇧⌘N, ⌘D, Delete | New shot at the playhead, duplicate it, delete it |
+| ⌥⌘V | Time the moves to your voice |
+| ⇧⌘N, ⌘D, Delete | New framing at the playhead, duplicate it, delete it |
 | ⌥⌘ arrows | Move the selected framing |
 | ⌥⌘= and ⌥⌘− | Closer and wider |
 | ⌥⌘[ and ⌥⌘] | Land a tenth of a second earlier or later |
@@ -70,7 +72,7 @@ The motion is the point, so it is built carefully.
 - **A real lens.** Depth of field focuses on a plane through the framed point, as a lens does, and deepens as the camera goes in, so a close-up becomes a macro shot. Motion blur is a 180° film shutter, averaged from many moments a frame, and never smears across a cut. Each frame measures how far anything on screen moves while its shutter is open and takes only the moments that motion needs: one while the camera holds, the most in a fast move. On the review renders that saves a third or more of the GPU's work at Good and over half at Best, and no frame falls below 48 dB PSNR against full sampling.
 - **Made to loop.** A Reel plays on repeat, so the backdrop runs whole cycles over the video's length and, with the Leave ending, drifts back to where it began: the last frame leads into the first.
 - **Time to look.** Every move gets the time its distance needs, and a turn counts towards its speed as much as a pan does. Without a voice, the holds follow how much there is to read; with one, a move that can't make it in time becomes a cut on the word. Each emphasis fits its hold, and only one detail gets the strongest.
-- **A director that reads.** Vision reads the slide in one pass, drawn tall enough that the 4-point footnote is found too; the ink that is not text shows where the figures are. The director groups lines into blocks, gives each a role and plans the tour. With a voiceover, each shot lands 150 ms before the words that name it. The reading is kept in the document, so it is never repeated.
+- **A director that reads.** Vision reads the slide in one pass, drawn tall enough that the 4-point footnote is found too; the ink that is not text shows where the figures are. The director groups lines into blocks, gives each a role and plans the tour. With a voiceover, each framing lands 150 ms before the words that name it. The reading is kept in the document, so it is never repeated.
 
 ## Private
 

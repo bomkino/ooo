@@ -230,7 +230,9 @@ struct StageMenu: View {
             Button("Go Live") { session.enter(.live) }
                 .disabled(!session.canEnter(.live))
             Divider()
-            Button("Save This Frame…") { OOOCommands.saveCoverFrame(session) }
+            Button("Export Video…") { session.showExport = true }
+                .disabled(session.notReady != nil)
+            Button("Save Cover Frame…") { OOOCommands.saveCoverFrame(session) }
             Toggle("Show Safe Areas", isOn: $showSafeAreas)
         case .draw:
             PenMenu(session: session)

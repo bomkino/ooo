@@ -146,7 +146,7 @@ extension OOOSession {
         clock.playing = false
         guard let take else { return }
         let when = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .short)
-        importVoice(take, name: "Scratch take, \(when)", offset: 0)
+        importVoice(take, name: "Quick take, \(when)", offset: 0, discardingOriginal: true)
     }
 
     public func toggleRecording() {

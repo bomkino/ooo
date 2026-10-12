@@ -25,6 +25,8 @@ import StageKit
 //                                           melting, at six moments (across)
 //   ooo-lab marks --out grid.png            each mark drawn on the card, drawing on and after;
 //                                           --close c.png: each up close; --ink flat: 1.0.1's ink
+//   ooo-lab sizes --out grid.png            the video in every size Export writes at once, each
+//                                           framed again for its shape: the opening, then landings
 //   ooo-lab lifts --out grid.png            the stage rising to leave room for you, and a
 //                                           close-up while it is up, the room marked
 //   ooo-lab stills --out dir                the stills Save Stills writes: the opening, then
@@ -32,6 +34,9 @@ import StageKit
 //   ooo-lab openings --out grid.png         the opening at five turns, 28° to 52° (across), and
 //                                           three floors (down: none, soft, mirror)
 //   ooo-lab titles --out grid.png           the opening title in four faces, and in time
+//   ooo-lab captions --out grid.png         captions in each look at four moments, and a check
+//                                           that they keep to the safe area, stay below every
+//                                           framing and light each word as it is said
 //   ooo-lab backdrops --out grid.png        every look behind the opening, as itself and From Slide
 //   ooo-lab arrivals --out grid.png         each arrival at five moments of its entrance
 //   ooo-lab blurcheck [--quality good]      adaptive motion blur against full samples:
@@ -61,7 +66,8 @@ import StageKit
 // whole|4-10,14- [--room 0.42] (room for you: when the stage is up, and how much of the frame it leaves clear), and
 // --live "4,8,12.5b,15w,17@0.7:0.55" [--live-end 20] [--voice-only] [--green-screen] (a live take: each press a step
 // to the next stop, b back, w the whole slide, @u:v a click there; filmed by a stand-in recording of someone talking,
-// in front of a green screen that the video takes out with --green-screen).
+// in front of a green screen that the video takes out with --green-screen), and --say "words…" [--captions
+// clean|card|ink] (words said over the video, set as captions).
 
 let args = CommandLine.arguments
 func value(_ name: String) -> String? {
@@ -260,6 +266,25 @@ if let spec = value("--live") {
     liveEnd = end
 }
 
+// Words said over the video (--say "words…"), as if heard in a voiceover, at a
+// speaking pace from when the tour sets off, and --captions clean|card|ink to
+// set them on the video. No sound: the words are what the captions need.
+if let said = value("--say") {
+    var t = project.tourStart + 0.3
+    var words: [SpokenWord] = []
+    for w in said.split(whereSeparator: \.isWhitespace).map(String.init) {
+        let length = 0.16 + 0.035 * Double(w.count)
+        words.append(SpokenWord(text: w, start: t, end: t + length))
+        t += length + 0.08
+        if w.hasSuffix(".") || w.hasSuffix("?") || w.hasSuffix("!") { t += 0.45 } else if w.hasSuffix(",") { t += 0.15 }
+    }
+    project.voice = Voiceover(file: "said.m4a", name: "Said", offset: 0, duration: t, words: words)
+}
+if let look = value("--captions") {
+    guard let l = CaptionStyle.Look(rawValue: look) else { fail("--captions takes clean, card or ink") }
+    project.captions = CaptionStyle(on: true, look: l)
+}
+
 func loadScene() -> SlideScene {
     do {
         return try SlideLoader.scene(for: project, media: media)
@@ -288,7 +313,8 @@ case "still":
     let samples = Int(value("--samples") ?? "") ?? 12
     do {
         let stage = try SlideStage()
-        let img = try stage.still(scene, at: t, width: project.format.width, height: project.format.height, samples: samples)
+        let img = try stage.still(scene, at: t, width: project.format.width, height: project.format.height, samples: samples,
+                                  withCaptions: true)
         try ImageOutput.writePNG(img, to: out)
         print("still \(out.path) t \(t)")
     } catch {
@@ -308,7 +334,7 @@ case "sheet":
                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { fail("no context") }
         for k in 0..<(cols * rows) {
             let t = scene.duration * (Double(k) + 0.5) / Double(cols * rows)
-            let img = try stage.still(scene, at: t, width: cw, height: ch, samples: 6)
+            let img = try stage.still(scene, at: t, width: cw, height: ch, samples: 6, withCaptions: project.showsCaptions)
             let x = (k % cols) * cw, y = (rows - 1 - k / cols) * ch
             ctx.draw(img, in: CGRect(x: x, y: y, width: cw, height: ch))
         }
@@ -382,7 +408,8 @@ case "landings":
     do {
         let stage = try SlideStage()
         for (name, t) in moments {
-            let img = try stage.still(scene, at: t, width: project.format.width, height: project.format.height, samples: samples)
+            let img = try stage.still(scene, at: t, width: project.format.width, height: project.format.height, samples: samples,
+                                      withCaptions: project.showsCaptions)
             try ImageOutput.writeJPEG(img, to: dir.appendingPathComponent(name + ".jpg"), quality: 0.9)
             print(String(format: "landing %@ t %.2f", name, t))
         }
@@ -540,6 +567,116 @@ case "titles":
         fail("titles failed: \(error)")
     }
 
+case "captions":
+    // Captions in each look (down: clean, card, ink), at four moments
+    // (across), with a word lit in each; and a check that every phrase sits
+    // inside the frame's safe area, below every framing, and lights each word
+    // within a frame of when it is said. Exit 2 on a problem.
+    let base = loadScene()
+    let out = URL(fileURLWithPath: value("--out") ?? "captions.png")
+    var p = project
+    if p.voice?.words?.isEmpty ?? true {
+        var t = p.tourStart + 0.3
+        var words: [SpokenWord] = []
+        let said = "So this is the slide we spent a week on. Revenue grew three point one times this year, and most of it came from teams that started small. Look at the curve here, it turns right after one slide changed."
+        for w in said.split(separator: " ").map(String.init) {
+            let length = 0.16 + 0.035 * Double(w.count)
+            words.append(SpokenWord(text: w, start: t, end: t + length))
+            t += length + 0.08
+            if w.hasSuffix(".") { t += 0.45 } else if w.hasSuffix(",") { t += 0.15 }
+        }
+        p.voice = Voiceover(file: "said.m4a", name: "Said", offset: 0, duration: t, words: words)
+    }
+    let cw = p.format.width / 2, ch = p.format.height / 2
+    var problems: [String] = []
+    do {
+        let stage = try SlideStage()
+        guard let ctx = CGContext(data: nil, width: cw * 4, height: ch * 3, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { fail("no context") }
+        for (row, look) in CaptionStyle.Look.allCases.enumerated() {
+            var q = p
+            q.captions = CaptionStyle(on: true, look: look)
+            let scene = SlideScene(project: q, bases: base.bases, details: base.details)
+            let phrases = scene.captions
+            guard !phrases.isEmpty else { fail("no captions to show") }
+            let picks = [0, phrases.count / 3, (2 * phrases.count) / 3, phrases.count - 1]
+            for (col, k) in picks.enumerated() {
+                let ph = phrases[k]
+                let i = ph.words.count / 2
+                let t = (ph.starts[i] + ph.ends[i]) / 2
+                let img = try stage.still(scene, at: t, width: cw, height: ch, samples: 4, withCaptions: true)
+                ctx.draw(img, in: CGRect(x: col * cw, y: (2 - row) * ch, width: cw, height: ch))
+            }
+            // Where each phrase sits, and whether it keeps out of the platform's
+            // interface and out from under every framing.
+            let safe = q.format.safeArea, framing = q.framingSafe
+            for (k, ph) in phrases.enumerated() {
+                guard let set = CaptionArt.set(ph, style: q.captions!, face: q.title?.face ?? .modern,
+                                               width: q.format.width, height: q.format.height, safe: safe) else {
+                    problems.append("\(look.rawValue) phrase \(k) could not be set")
+                    continue
+                }
+                let ink = set.words.reduce(SIMD4<Float>(1, 1, 0, 0)) { SIMD4(min($0.x, $1.x), min($0.y, $1.y), max($0.z, $1.z), max($0.w, $1.w)) }
+                let w = set.rect.z - set.rect.x, h = set.rect.w - set.rect.y
+                let left = set.rect.x + ink.x * w, right = set.rect.x + ink.z * w
+                let top = set.rect.y + ink.y * h, bottom = set.rect.y + ink.w * h
+                if left < safe.left - 0.001 || right > 1 - safe.right + 0.001 {
+                    problems.append(String(format: "%@ \"%@\" runs into the side margins (%.3f…%.3f)", look.rawValue, ph.text, left, right))
+                }
+                if bottom > 1 - safe.bottom + 0.001 {
+                    problems.append(String(format: "%@ \"%@\" reaches into the platform's caption band (%.3f)", look.rawValue, ph.text, bottom))
+                }
+                if top < 1 - framing.bottom - 0.001 {
+                    problems.append(String(format: "%@ \"%@\" rises into where framings are composed (%.3f above %.3f)", look.rawValue, ph.text, top, 1 - framing.bottom))
+                }
+                if let lift = q.lift {
+                    // With the stage up: above the room, below the framings composed above it.
+                    let room = scene.faceRoom
+                    let rise = Captions.rise(1, room: room, canvasAspect: q.canvasAspect, safe: safe)
+                    let upTop = top - rise, upBottom = bottom - rise
+                    let upFraming = max(lift.safe(framing).bottom, room + Captions.roomAbove(canvasAspect: q.canvasAspect))
+                    if upBottom > 1 - room + 0.001 {
+                        problems.append(String(format: "%@ \"%@\" reaches into the room for you (%.3f below %.3f)", look.rawValue, ph.text, upBottom, 1 - room))
+                    }
+                    if upTop < 1 - upFraming - 0.001 {
+                        problems.append(String(format: "%@ \"%@\" rises into the framings above the room (%.3f above %.3f)", look.rawValue, ph.text, upTop, 1 - upFraming))
+                    }
+                }
+                if look == .card {
+                    print(String(format: "caption %2d  %6.2f–%6.2f s  %@", k, ph.shown, ph.gone, ph.text))
+                }
+                // Each word is lit by its middle, and not before it is said.
+                for i in ph.words.indices {
+                    let fps = Double(max(q.fps, 1))
+                    let mid = (ph.starts[i] + ph.ends[i]) / 2
+                    guard let m = Captions.moment(phrases, at: mid), m.phrase == k, m.lit[i] > 0.99 else {
+                        problems.append(String(format: "%@ \"%@\" isn't lit as it is said (%.2f s)", look.rawValue, ph.words[i], mid))
+                        continue
+                    }
+                    if let early = Captions.moment(phrases, at: ph.starts[i] - 1 / fps - 0.04), early.phrase == k, early.lit[i] > 0.01 {
+                        problems.append(String(format: "%@ \"%@\" lights before it is said", look.rawValue, ph.words[i]))
+                    }
+                }
+            }
+            for k in 1..<max(phrases.count, 1) where phrases[k].shown < phrases[k - 1].gone - 1e-6 {
+                problems.append("\(look.rawValue) phrases \(k - 1) and \(k) overlap")
+            }
+        }
+        try ImageOutput.writePNG(ctx.makeImage()!, to: out)
+        print("captions \(out.path): \(CaptionStyle.Look.allCases.map(\.rawValue)) down, four phrases across, a word lit in each")
+        let reel = p.format.safeArea, kept = Captions.reserving(reel, canvasAspect: p.canvasAspect)
+        print(String(format: "framings are composed above %.1f%% of the frame with captions on (%.1f%% without)", 100 * kept.bottom, 100 * reel.bottom))
+    } catch {
+        fail("captions failed: \(error)")
+    }
+    if problems.isEmpty {
+        print("captions: every phrase inside the safe area and below every framing, every word lit as it is said")
+    } else {
+        problems.forEach { print("problem: \($0)") }
+        exit(2)
+    }
+
 case "blurcheck":
     // Adaptive motion blur against every frame at full samples: how many
     // samples each frame took, how long the GPU spent, and how far apart the
@@ -634,7 +771,7 @@ case "inkcheck":
         return out
     }
     func median(_ v: [UInt8]) -> Int { v.isEmpty ? 0 : Int(v.sorted()[v.count / 2]) }
-    let safe = project.format.safeArea
+    let safe = project.framingSafe
     let x0 = Int(Float(w) * safe.left), x1 = Int(Float(w) * (1 - safe.right))
     let y0 = Int(Float(h) * safe.top), y1 = Int(Float(h) * (1 - safe.bottom))
     do {
@@ -811,7 +948,7 @@ case "lifts":
                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { fail("no context") }
         let room = CGFloat(lift.room)
         for (c, t) in moments.enumerated() {
-            let img = try stage.still(scene, at: t, width: cw, height: ch, samples: 8)
+            let img = try stage.still(scene, at: t, width: cw, height: ch, samples: 8, withCaptions: project.showsCaptions)
             ctx.draw(img, in: CGRect(x: c * cw, y: 0, width: cw, height: ch))
             // The room, as the stage shows it: a quiet line where it starts, shaded as the stage is up.
             let up = CGFloat(scene.choreography.liftAmount(at: t))
@@ -830,6 +967,47 @@ case "lifts":
             .joined(separator: ", "))
     } catch {
         fail("lifts failed: \(error)")
+    }
+
+case "sizes":
+    // Every size Export can write at once, each framed again for its shape:
+    // one size a row; across, the opening at rest, then the first landings.
+    let formats: [CanvasFormat] = [.reel, .portrait, .square, .landscape]
+    let out = URL(fileURLWithPath: value("--out") ?? "sizes.png")
+    let ch = 480
+    do {
+        let stage = try SlideStage()
+        var rows: [(images: [CGImage], width: Int)] = []
+        for f in formats {
+            let p = project.refitted(to: f)
+            let scene = try SlideLoader.scene(for: p, media: media)
+            let beats = scene.choreography.beats
+            var moments = [beats.first.map { min($0.land + 0.2, max($0.leave - 0.05, $0.land)) } ?? 0]
+            moments += beats.filter { !$0.isOverview }.prefix(3).map { min($0.land + min(0.7, $0.hold * 0.45), scene.duration - 0.05) }
+            let cw = max(2, Int((Double(ch) * Double(f.aspect)).rounded()))
+            let images = try moments.map { try stage.still(scene, at: $0, width: cw, height: ch, samples: 6, withCaptions: p.showsCaptions) }
+            rows.append((images, cw))
+            print("sizes \(f.ratioLabel) \(f.name): \(p.shots.count) framings, \(String(format: "%.1f", scene.duration)) s, "
+                + moments.map { String(format: "%.2f", $0) }.joined(separator: " "))
+        }
+        let gap = 8
+        let width = rows.map { $0.images.count * ($0.width + gap) }.max() ?? 1
+        let height = rows.count * (ch + gap)
+        guard let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { fail("no context") }
+        ctx.setFillColor(CGColor(srgbRed: 0.08, green: 0.08, blue: 0.09, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        for (r, row) in rows.enumerated() {
+            let y = height - (r + 1) * (ch + gap)
+            for (c, img) in row.images.enumerated() {
+                ctx.draw(img, in: CGRect(x: c * (row.width + gap), y: y, width: row.width, height: ch))
+            }
+        }
+        try ImageOutput.writePNG(ctx.makeImage()!, to: out)
+        print("sizes \(out.path)")
+    } catch {
+        fail("sizes failed: \(error)")
     }
 
 case "live":
@@ -861,8 +1039,8 @@ case "live":
                                       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { fail("no context") }
             var shown: [String] = []
             for (c, t) in moments.enumerated() {
-                let with = try stage.still(scene, at: t, width: cw, height: ch, samples: 6)
-                let without = try stage.still(empty, at: t, width: cw, height: ch, samples: 6)
+                let with = try stage.still(scene, at: t, width: cw, height: ch, samples: 6, withCaptions: project.showsCaptions)
+                let without = try stage.still(empty, at: t, width: cw, height: ch, samples: 6, withCaptions: project.showsCaptions)
                 ctx.draw(with, in: CGRect(x: c * cw, y: ch, width: cw, height: ch))
                 ctx.draw(without, in: CGRect(x: c * cw, y: 0, width: cw, height: ch))
                 let you = scene.faceShown(at: t)?.alpha ?? 0
@@ -879,7 +1057,8 @@ case "live":
             }
             try ImageOutput.writePNG(ctx.makeImage()!, to: dir.appendingPathComponent("room.png"))
             for t in [end * 0.4, end * 0.75] {
-                let img = try stage.still(scene, at: t, width: project.format.width, height: project.format.height, samples: 12)
+                let img = try stage.still(scene, at: t, width: project.format.width, height: project.format.height, samples: 12,
+                                          withCaptions: project.showsCaptions)
                 try ImageOutput.writePNG(img, to: dir.appendingPathComponent(String(format: "you-%05.2f.png", t)))
             }
             print("room \(dir.appendingPathComponent("room.png").path) (top: you in the room, bottom: left empty)")
@@ -998,7 +1177,7 @@ default:
 /// than the opening, and how tall the slide's text stands on the canvas),
 /// how it moves.
 func printPlan(_ shots: [Shot]) {
-    let A = project.slideAspect, C = project.canvasAspect, safe = project.format.safeArea
+    let A = project.slideAspect, C = project.canvasAspect, safe = project.framingSafe
     let opening = CameraPose(shot: project.overview, slideAspect: A, canvasAspect: C, safe: safe)
     print(String(format: "opening: the slide stands %.0f%% of the frame's height", 100 / opening.height))
     if let h = project.slide.pixelHeight, let zoom = project.sharpZoom {

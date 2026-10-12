@@ -156,21 +156,21 @@ struct ShotInspector: View {
         let p = session.project
         let number = (session.index(of: id) ?? 0) + 1
         VStack(alignment: .leading, spacing: 0) {
-            InspectorSection("Shot \(number)", accessory: {
+            InspectorSection("Framing \(number)", accessory: {
                 Text("lands at \(secondsLabel(shot.time))").textStyle(.data).foregroundStyle(.secondary)
             }) {
                 LiveField(session: session, placeholder: "Name",
                           text: Binding(get: { session.project.shots.first { $0.id == id }?.label ?? "" },
                                         set: { v in session.liveShot(id) { $0.label = v.isEmpty ? nil : v } }),
-                          undo: "Rename Shot")
+                          undo: "Rename Framing")
                 LiveField(session: session, placeholder: "Lands on the words…",
                           text: Binding(get: { session.project.shots.first { $0.id == id }?.cue ?? "" },
                                         set: { v in session.liveShot(id) { $0.cue = v.isEmpty ? nil : v } }),
                           undo: "Cue")
                 Text(p.voice?.words == nil
                      ? "With a voiceover, the camera lands just before you say these words."
-                     : "Cut to Voice lands the camera just before you say these words.")
-                    .textStyle(.caption).foregroundStyle(.tertiary)
+                     : "Time Moves to My Voice lands the camera just before you say these words.")
+                    .textStyle(.caption).foregroundStyle(.secondary)
             }
             Hairline()
             if let k = session.clipIndex(of: id), let clip = session.clip(of: id) {
@@ -193,7 +193,7 @@ struct ShotInspector: View {
                         .toggleStyle(.checkbox)
                         .textStyle(.bodyCompact)
                     Text("Everything after it slides along and keeps its own length. You can drag its edges on the timeline too.")
-                        .textStyle(.caption).foregroundStyle(.tertiary)
+                        .textStyle(.caption).foregroundStyle(.secondary)
                 }
                 Hairline()
             }
@@ -207,8 +207,8 @@ struct ShotInspector: View {
             Hairline()
             InspectorSection("Framing") {
                 Dial(session: session, label: "Zoom", value: zoom(id), range: 0...4.5, defaultValue: 1,
-                     format: { String(format: "%.1f×", powf(2, $0)) }, undo: "Frame Shot")
-                Dial(session: session, label: "Turn", value: session.bindShot(id, \.yaw, fallback: 0), range: -25...25,
+                     format: { String(format: "%.1f×", powf(2, $0)) }, undo: "Reframe")
+                Dial(session: session, label: "Angle", value: session.bindShot(id, \.yaw, fallback: 0), range: -25...25,
                      defaultValue: 0, format: degreesLabel)
                 Dial(session: session, label: "Tilt", value: session.bindShot(id, \.pitch, fallback: 0), range: -20...20,
                      defaultValue: 0, format: degreesLabel)
@@ -238,7 +238,7 @@ struct ShotInspector: View {
                     Dial(session: session, label: "Glide", value: glide(id), range: -4...4, defaultValue: 1,
                          format: { String(format: "%.1f frames", $0) }, undo: "Read Along")
                     Text("For a line too long to show at a size that reads: the camera lands on its start and glides to its end.")
-                        .textStyle(.caption).foregroundStyle(.tertiary)
+                        .textStyle(.caption).foregroundStyle(.secondary)
                 }
             }
             Hairline()
@@ -246,7 +246,7 @@ struct ShotInspector: View {
                 Button("Duplicate") { session.duplicateSelectedShot() }
                     .buttonStyle(QuietButtonStyle())
                 Spacer()
-                Button(role: .destructive) { session.deleteSelectedShot() } label: { Text("Delete Shot") }
+                Button(role: .destructive) { session.deleteSelectedShot() } label: { Text("Delete Framing") }
                     .buttonStyle(QuietButtonStyle())
             }
             .padding(.horizontal, 10)
@@ -318,6 +318,8 @@ extension ArriveKind {
 
 struct OverviewInspector: View {
     let session: OOOSession
+    /// The opening framing, the camera's temperament and the length, for when the tour is nearly right.
+    @AppStorage("video.fineTune") private var fineTune = false
 
     var body: some View {
         let p = session.project
@@ -368,43 +370,47 @@ struct OverviewInspector: View {
                     .textStyle(.caption).foregroundStyle(.secondary)
             }
             Hairline()
-            RoomSection(session: session)
-            Hairline()
-            InspectorSection("Opening framing") {
-                // Defaults follow the slide's shape in the canvas: a wide slide in a tall frame turns further.
-                let d = Shot.overview(slideAspect: p.slideAspect, canvasAspect: p.canvasAspect)
-                Dial(session: session, label: "Turn", value: session.bind(\.overview.yaw), range: -45...45, defaultValue: d.yaw, format: degreesLabel)
-                Dial(session: session, label: "Tilt", value: session.bind(\.overview.pitch), range: -20...20, defaultValue: d.pitch, format: degreesLabel)
-                Dial(session: session, label: "Margin", value: overviewRoom, range: 0...0.6, defaultValue: d.frame.size.y - 1, format: percent)
-                Dial(session: session, label: "Drift in", value: session.bind(\.overview.breathe), defaultValue: 0.45)
-            }
-            Hairline()
             InspectorSection("Ending") {
                 ChoiceRow(Ending.allCases.map { ($0, $0.title) }, selection: session.choice(\.ending, "Ending"))
             }
             Hairline()
-            InspectorSection("The camera's temperament") {
-                Dial(session: session, label: "Rise", value: session.bind(\.style.flight), defaultValue: 0.5)
-                Dial(session: session, label: "Lean", value: session.bind(\.style.swing), defaultValue: 0.5)
-                Dial(session: session, label: "Handheld", value: session.bind(\.style.drift), defaultValue: 0.35)
-                Dial(session: session, label: "Pace", value: session.bind(\.style.pace), defaultValue: 0.5)
-                Text("Rise is how far the camera lifts to fly between distant details; Lean, how much it leans into its own momentum; Handheld, a slow breath in the camera.")
-                    .textStyle(.caption).foregroundStyle(.tertiary)
-            }
+            RoomSection(session: session)
             Hairline()
-            InspectorSection("Length", accessory: {
-                Text(secondsLabel(session.choreography.duration)).textStyle(.data).foregroundStyle(.secondary)
-            }) {
-                Toggle("Fit the moves and the voice", isOn: Binding(
-                    get: { session.project.length == nil },
-                    set: { fit in session.update("Length") { $0.length = fit ? nil : $0.duration } }))
-                    .toggleStyle(.checkbox)
-                    .textStyle(.bodyCompact)
-                if p.length != nil {
-                    Dial(session: session, label: "Seconds", value: Binding(
-                        get: { Float(session.project.length ?? 10) },
-                        set: { v in session.live { $0.length = Double(v) } }),
-                         range: 3...120, format: secondsValue, undo: "Length")
+            FineTune(open: $fineTune, detail: "Opening framing, temperament, length")
+            if fineTune {
+                Hairline()
+                InspectorSection("Opening framing") {
+                    // Defaults follow the slide's shape in the canvas: a wide slide in a tall frame turns further.
+                    let d = Shot.overview(slideAspect: p.slideAspect, canvasAspect: p.canvasAspect)
+                    Dial(session: session, label: "Angle", value: session.bind(\.overview.yaw), range: -45...45, defaultValue: d.yaw, format: degreesLabel)
+                    Dial(session: session, label: "Tilt", value: session.bind(\.overview.pitch), range: -20...20, defaultValue: d.pitch, format: degreesLabel)
+                    Dial(session: session, label: "Margin", value: overviewRoom, range: 0...0.6, defaultValue: d.frame.size.y - 1, format: percent)
+                    Dial(session: session, label: "Drift in", value: session.bind(\.overview.breathe), defaultValue: 0.45)
+                }
+                Hairline()
+                InspectorSection("The camera's temperament") {
+                    Dial(session: session, label: "Lift", value: session.bind(\.style.flight), defaultValue: 0.5)
+                    Dial(session: session, label: "Lean", value: session.bind(\.style.swing), defaultValue: 0.5)
+                    Dial(session: session, label: "Handheld", value: session.bind(\.style.drift), defaultValue: 0.35)
+                    Dial(session: session, label: "Pace", value: session.bind(\.style.pace), defaultValue: 0.5)
+                    Text("Lift is how far the camera rises to fly between distant details; Lean, how much it leans into its own momentum; Handheld, a slow breath in the camera.")
+                        .textStyle(.caption).foregroundStyle(.secondary)
+                }
+                Hairline()
+                InspectorSection("Length", accessory: {
+                    Text(secondsLabel(session.choreography.duration)).textStyle(.data).foregroundStyle(.secondary)
+                }) {
+                    Toggle("Fit the moves and the voice", isOn: Binding(
+                        get: { session.project.length == nil },
+                        set: { fit in session.update("Length") { $0.length = fit ? nil : $0.duration } }))
+                        .toggleStyle(.checkbox)
+                        .textStyle(.bodyCompact)
+                    if p.length != nil {
+                        Dial(session: session, label: "Seconds", value: Binding(
+                            get: { Float(session.project.length ?? 10) },
+                            set: { v in session.live { $0.length = Double(v) } }),
+                             range: 3...120, format: secondsValue, undo: "Length")
+                    }
                 }
             }
         }
@@ -463,51 +469,12 @@ struct ArriveTile: View {
 
 struct LookInspector: View {
     let session: OOOSession
+    /// Light, lens and finish, for when the look is nearly right.
+    @AppStorage("look.fineTune") private var fineTune = false
 
     var body: some View {
         let p = session.project
         VStack(alignment: .leading, spacing: 0) {
-            InspectorSection("Floor") {
-                ChoiceRow(FloorKind.allCases.map { ($0, $0.title) },
-                          selection: Binding(get: { session.project.floorKind }, set: { v in session.update("Floor") { $0.floor = v } }))
-                Text("What the slide stands on. In a tall frame its reflection fills the space below it.")
-                    .textStyle(.caption).foregroundStyle(.secondary)
-            }
-            Hairline()
-            InspectorSection("Surface") {
-                ChoiceRow(SurfaceKind.allCases.map { ($0, $0.title) }, selection: session.choice(\.look.surface, "Surface"))
-                Text(p.look.surface.summary).textStyle(.caption).foregroundStyle(.secondary)
-                Dial(session: session, label: "Corners", value: session.bind(\.look.corners), defaultValue: 0.25)
-                Dial(session: session, label: "Thickness", value: session.bind(\.look.edge), defaultValue: 1)
-            }
-            Hairline()
-            InspectorSection("Light") {
-                Dial(session: session, label: "Direction", value: session.bind(\.look.lightAzimuth), range: 0...360,
-                     defaultValue: 118, format: degreesLabel)
-                Dial(session: session, label: "Height", value: session.bind(\.look.lightElevation), range: 10...85,
-                     defaultValue: 52, format: degreesLabel)
-                Dial(session: session, label: "Shadow", value: session.bind(\.look.shadow), defaultValue: 0.6)
-                Dial(session: session, label: "Softness", value: session.bind(\.look.shadowSoftness), defaultValue: 0.6)
-            }
-            Hairline()
-            InspectorSection("Lens") {
-                Dial(session: session, label: "Depth of field", value: session.bind(\.look.depthOfField), defaultValue: 0.5)
-                Dial(session: session, label: "Motion blur", value: session.bind(\.look.shutter), defaultValue: 0.5,
-                     format: { String(format: "%.0f°", $0 * 360) })
-                Text("Motion blur is a film camera's shutter: 180° is how films are shot.")
-                    .textStyle(.caption).foregroundStyle(.tertiary)
-            }
-            Hairline()
-            InspectorSection("Finish") {
-                Dial(session: session, label: "Glow", value: session.bind(\.look.finish.bloom), defaultValue: 0.16)
-                Dial(session: session, label: "Vignette", value: session.bind(\.look.finish.vignette), defaultValue: 0.3)
-                Dial(session: session, label: "Grain", value: session.bind(\.look.finish.grain), defaultValue: 0.14)
-                Dial(session: session, label: "Warmth", value: session.bind(\.look.finish.warmth), range: -1...1, defaultValue: 0,
-                     format: signedPercent)
-                Dial(session: session, label: "Contrast", value: session.bind(\.look.finish.contrast), range: -1...1, defaultValue: 0,
-                     format: signedPercent)
-            }
-            Hairline()
             InspectorSection("Backdrop", accessory: {
                 Menu {
                     ForEach(BackdropFamily.allCases) { family in
@@ -559,7 +526,79 @@ struct LookInspector: View {
                 .buttonStyle(QuietButtonStyle())
                 .help("A new arrangement of the same look. Every export of it comes out the same.")
             }
+            Hairline()
+            InspectorSection("Surface") {
+                ChoiceRow(SurfaceKind.allCases.map { ($0, $0.title) }, selection: session.choice(\.look.surface, "Surface"))
+                Text(p.look.surface.summary).textStyle(.caption).foregroundStyle(.secondary)
+                Dial(session: session, label: "Corners", value: session.bind(\.look.corners), defaultValue: 0.25)
+                Dial(session: session, label: "Thickness", value: session.bind(\.look.edge), defaultValue: 1)
+            }
+            Hairline()
+            InspectorSection("Floor") {
+                ChoiceRow(FloorKind.allCases.map { ($0, $0.title) },
+                          selection: Binding(get: { session.project.floorKind }, set: { v in session.update("Floor") { $0.floor = v } }))
+                Text("What the slide stands on. In a tall frame its reflection fills the space below it.")
+                    .textStyle(.caption).foregroundStyle(.secondary)
+            }
+            Hairline()
+            FineTune(open: $fineTune, detail: "Light, lens and finish")
+            if fineTune {
+                Hairline()
+                InspectorSection("Light") {
+                    Dial(session: session, label: "Direction", value: session.bind(\.look.lightAzimuth), range: 0...360,
+                         defaultValue: 118, format: degreesLabel)
+                    Dial(session: session, label: "Height", value: session.bind(\.look.lightElevation), range: 10...85,
+                         defaultValue: 52, format: degreesLabel)
+                    Dial(session: session, label: "Shadow", value: session.bind(\.look.shadow), defaultValue: 0.6)
+                    Dial(session: session, label: "Softness", value: session.bind(\.look.shadowSoftness), defaultValue: 0.6)
+                }
+                Hairline()
+                InspectorSection("Lens") {
+                    Dial(session: session, label: "Depth of field", value: session.bind(\.look.depthOfField), defaultValue: 0.5)
+                    Dial(session: session, label: "Motion blur", value: session.bind(\.look.shutter), defaultValue: 0.5,
+                         format: { String(format: "%.0f°", $0 * 360) })
+                    Text("Motion blur is a film camera's shutter: 180° is how films are shot.")
+                        .textStyle(.caption).foregroundStyle(.secondary)
+                }
+                Hairline()
+                InspectorSection("Finish") {
+                    Dial(session: session, label: "Glow", value: session.bind(\.look.finish.bloom), defaultValue: 0.16)
+                    Dial(session: session, label: "Vignette", value: session.bind(\.look.finish.vignette), defaultValue: 0.3)
+                    Dial(session: session, label: "Grain", value: session.bind(\.look.finish.grain), defaultValue: 0.14)
+                    Dial(session: session, label: "Warmth", value: session.bind(\.look.finish.warmth), range: -1...1, defaultValue: 0,
+                         format: signedPercent)
+                    Dial(session: session, label: "Contrast", value: session.bind(\.look.finish.contrast), range: -1...1, defaultValue: 0,
+                         format: signedPercent)
+                }
+            }
         }
+    }
+}
+
+/// A fold for the settings you reach for once the rest is right.
+struct FineTune: View {
+    @Binding var open: Bool
+    let detail: String
+
+    var body: some View {
+        Button {
+            withAnimation(Theme.settle) { open.toggle() }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .bold))
+                    .rotationEffect(.degrees(open ? 90 : 0))
+                Text("Fine-tune").textStyle(.label)
+                Text(detail).textStyle(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, Theme.Space.l)
+            .frame(height: 40)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(open ? "Fold these away" : "\(detail), for when the rest is right")
+        .accessibilityAddTraits(open ? .isSelected : [])
     }
 }
 
@@ -586,19 +625,25 @@ struct VoiceInspector: View {
                 }
                 Hairline()
                 InspectorSection("Words", accessory: {
-                    if let words = voice.words { Badge("\(words.count) heard") }
+                    if session.listening {
+                        ProgressView().controlSize(.mini)
+                    } else if let words = voice.words {
+                        Badge("\(words.count) heard")
+                    }
                 }) {
                     if let words = voice.words, !words.isEmpty {
                         Transcript(words: words, landings: session.choreography.landings)
                         Button {
                             session.cutToVoice()
                         } label: {
-                            Label("Cut Moves to Voice", systemImage: "waveform.path")
+                            Label("Time Moves to My Voice", systemImage: "waveform.path")
                         }
                         .buttonStyle(PrimaryButtonStyle())
-                        .help("Keeps every framing and lands each one just before you say its words")
-                        Text("Each shot lands just before its cue words, or its name, are said. Shots the voice never names are fitted in between.")
-                            .textStyle(.caption).foregroundStyle(.tertiary)
+                        .help("Keeps every framing and lands each one just before you say its words (⌥⌘V)")
+                        Text("Each framing lands just before you say its cue words, or its name. Framings you never name are fitted in between.")
+                            .textStyle(.caption).foregroundStyle(.secondary)
+                    } else if session.listening {
+                        Text("Listening for your words, on this Mac…").textStyle(.caption).foregroundStyle(.secondary)
                     } else {
                         Text("OOO listens on this Mac for the words and when you say them. Nothing leaves your computer.")
                             .textStyle(.caption).foregroundStyle(.secondary)
@@ -607,45 +652,148 @@ struct VoiceInspector: View {
                         .buttonStyle(QuietButtonStyle())
                         .disabled(session.busy != nil)
                 }
+                if let words = voice.words, !words.isEmpty {
+                    Hairline()
+                    CaptionsSection(session: session)
+                }
                 Hairline()
                 HStack {
                     Button("Replace…") { OOOCommands.chooseVoice(session) }
                         .buttonStyle(QuietButtonStyle())
                     RecordButton(session: session, again: true)
                     Spacer()
-                    Button("Remove Voiceover", role: .destructive) { session.removeVoice() }
+                    Button("Remove", role: .destructive) { session.removeVoice() }
                         .buttonStyle(QuietButtonStyle())
+                        .help("Take the voiceover out of the video (⌘Z brings it back)")
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 10)
+                Hairline()
+                ChoiceCard(symbol: "person.crop.square", title: "Go Live",
+                           detail: "Film yourself too, and lead the camera with the keys as you talk.", keys: "⌥⌘L") {
+                    session.enter(.live)
+                }
+                .disabled(!session.canEnter(.live))
+                .padding(8)
             } else {
-                VStack(spacing: 14) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
-                            .foregroundStyle(targeted ? Theme.camera : Color.secondary.opacity(0.5))
-                        Image(systemName: "waveform")
-                            .font(.system(size: 26, weight: .light))
-                            .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Talk about your slide").textStyle(.title)
+                        Text("OOO hears your words on this Mac and lands each move just before you say them.")
+                            .textStyle(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    .frame(height: 96)
-                    Text("Talk about your slide").textStyle(.title)
-                    Text("Record a scratch take here, talking along as the video plays, or drop in a recording from any app. OOO hears the words on this Mac and lands each move just before you say them.")
-                        .textStyle(.caption).foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                    HStack(spacing: 8) {
-                        RecordButton(session: session, again: false)
-                        Button("Choose Voiceover…") { OOOCommands.chooseVoice(session) }
-                            .buttonStyle(QuietButtonStyle())
+                    .padding(.horizontal, 10)
+                    VStack(alignment: .leading, spacing: 2) {
+                        ChoiceCard(symbol: "record.circle", title: "Record over it",
+                                   detail: "Talk as the video plays. Each move lands on your words.", keys: "⌥⌘R") {
+                            session.startRecording()
+                        }
+                        ChoiceCard(symbol: "person.crop.square", title: "Go Live",
+                                   detail: "It films you too, and you lead the camera as you talk.", keys: "⌥⌘L") {
+                            session.enter(.live)
+                        }
+                        .disabled(!session.canEnter(.live))
+                        ChoiceCard(symbol: "waveform.badge.plus", title: "Use a recording…",
+                                   detail: "A voiceover from any app: M4A, MP3, WAV or AIFF. Or drop it here.", keys: "⌥⌘I") {
+                            OOOCommands.chooseVoice(session)
+                        }
                     }
                 }
-                .padding(Theme.Space.l)
+                .padding(.vertical, 14)
+                .padding(.horizontal, 4)
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
+                    .foregroundStyle(targeted ? Theme.camera : .clear))
+                .padding(10)
                 .onDrop(of: [.fileURL], isTargeted: $targeted) { providers in
                     loadDropped(providers) { urls in if let url = urls.first { session.importVoice(url) } }
                     return true
                 }
             }
         }
+    }
+}
+
+/// Your words on screen as you say them: on or off, their look, and each
+/// phrase as it reads, to put a misheard word right.
+struct CaptionsSection: View {
+    @Bindable var session: OOOSession
+
+    var body: some View {
+        let on = session.project.showsCaptions
+        InspectorSection("Captions", accessory: {
+            Toggle("", isOn: Binding(get: { session.project.showsCaptions }, set: { session.setCaptions($0) }))
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .labelsHidden()
+                .help(on ? "Hide the captions" : "Show your words on screen as you say them")
+        }) {
+            if on {
+                ChoiceRow(CaptionStyle.Look.allCases.map { ($0, $0.title) },
+                          selection: Binding(get: { session.project.captions?.look ?? .card }, set: { session.setCaptionLook($0) }))
+                Text(session.project.captions?.look.summary ?? "").textStyle(.caption).foregroundStyle(.secondary)
+                let phrases = session.project.captionPhrases
+                if !phrases.isEmpty {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(Array(phrases.enumerated()), id: \.offset) { k, phrase in
+                                PhraseRow(session: session, k: k, phrase: phrase)
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 220)
+                    Text("Click a phrase to put a word right. Its moment stays.").textStyle(.caption).foregroundStyle(.secondary)
+                }
+            } else {
+                Text("Your words on screen as you say them, for everyone watching with the sound off. They keep clear of every framing.")
+                    .textStyle(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+/// One phrase of the captions: when it shows, and its words, to edit.
+struct PhraseRow: View {
+    let session: OOOSession
+    let k: Int
+    let phrase: CaptionPhrase
+    @State private var text = ""
+    @FocusState private var focused: Bool
+    @State private var holdsKeys = false
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Button {
+                session.clock.playing = false
+                session.clock.time = phrase.shown
+                session.touch()
+            } label: {
+                Text(TransportBar.clockLabel(phrase.shown)).textStyle(.data).foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Show this moment")
+            TextField("", text: $text, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .lineLimit(1...3)
+                .focused($focused)
+                .onSubmit { focused = false }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.well.opacity(focused ? 0.9 : 0.4)))
+        .onAppear { text = phrase.text }
+        .onChange(of: phrase.text) { _, now in if !focused { text = now } }
+        .onChange(of: focused) { _, on in
+            if on != holdsKeys {
+                holdsKeys = on
+                if on { session.clock.beganTyping() } else { session.clock.stoppedTyping() }
+            }
+            if !on { session.editCaption(k, to: text) }
+        }
+        .onDisappear { if holdsKeys { holdsKeys = false; session.clock.stoppedTyping() } }
     }
 }
 
@@ -682,7 +830,7 @@ struct RecordButton: View {
         if again && !recording {
             Button("Record Again") { session.startRecording() }
                 .buttonStyle(QuietButtonStyle())
-                .help("Record a new scratch take in place of this one")
+                .help("Record a new quick take in place of this one")
         } else {
             Button {
                 session.toggleRecording()

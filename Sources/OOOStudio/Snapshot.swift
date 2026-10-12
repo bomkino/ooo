@@ -135,6 +135,24 @@ public enum OOOSnapshot {
                 }
             }
         }
+        if let said = arg("--say") {
+            // Words said over the video, as if heard: the captions and the Voice tab show them.
+            session.update("Voice") { p in
+                var t = p.tourStart + 0.3
+                var words: [SpokenWord] = []
+                for w in said.split(whereSeparator: \.isWhitespace).map(String.init) {
+                    let length = 0.16 + 0.035 * Double(w.count)
+                    words.append(SpokenWord(text: w, start: t, end: t + length))
+                    t += length + 0.08
+                    if w.hasSuffix(".") || w.hasSuffix("?") || w.hasSuffix("!") { t += 0.45 } else if w.hasSuffix(",") { t += 0.15 }
+                }
+                p.voice = Voiceover(file: "said.m4a", name: "Said", offset: 0, duration: t, words: words)
+                p.captions = CaptionStyle(on: true, look: arg("--captions").flatMap(CaptionStyle.Look.init(rawValue:)) ?? .card)
+            }
+        }
+        if let notes = arg("--notes") {
+            session.update("Notes") { $0.setNotes(notes, page: 0) }
+        }
         if flag("--draw") || arg("--mode") == "draw" {
             session.enter(.draw)
             session.previewUntil = nil
@@ -167,11 +185,12 @@ public enum OOOSnapshot {
         let h = 1400.0
         let w = (h * Double(format.aspect)).rounded()
         let scene = session.exportScene()
+        let captions = session.project.showsCaptions
         Task.detached(priority: .userInitiated) {
-            var image: CGImage?
-            if let scene, let stage = try? SlideStage() {
-                image = try? stage.still(scene, at: t, width: Int(w), height: Int(h), samples: 8)
-            }
+            let image: CGImage? = {
+                guard let scene, let stage = try? SlideStage() else { return nil }
+                return try? stage.still(scene, at: t, width: Int(w), height: Int(h), samples: 8, withCaptions: captions)
+            }()
             await MainActor.run {
                 still(image)
                 if flag("--show-export") { session.showExport = true }

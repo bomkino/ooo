@@ -195,13 +195,18 @@ public struct Page: Codable, Hashable, Sendable, Identifiable {
     /// Seconds from the start when the card starts to change to it, if set
     /// by hand; nil finds its own moment.
     public var at: Double?
+    /// What you want to say about it, shown under the camera in a live take
+    /// and never in the video.
+    public var notes: String?
 
-    public init(id: UUID = UUID(), slide: SlideRef, reading: [SlideDetail]? = nil, change: PageChange = .turn, at: Double? = nil) {
+    public init(id: UUID = UUID(), slide: SlideRef, reading: [SlideDetail]? = nil, change: PageChange = .turn, at: Double? = nil,
+                notes: String? = nil) {
         self.id = id
         self.slide = slide
         self.reading = reading
         self.change = change
         self.at = at
+        self.notes = notes
     }
 }
 
@@ -218,12 +223,14 @@ public struct OOOProject: Codable, Hashable, Sendable {
     /// (several slides, room for you, marks drawn on the card). 4: OOO 1.1
     /// (you on camera in the room). 5: OOO 1.2.1 (a green screen taken out from
     /// behind you; marks in any colour and width, staying as long as you say).
-    public static let readerVersion = 5
+    /// 6: OOO 2.0 (captions).
+    public static let readerVersion = 6
 
     /// The oldest reader that draws everything this project uses, written as
     /// `minimumReaderVersion`: a file 0.2 can draw still opens there.
     public var neededReader: Int {
         let typedKicker = title.map { !$0.kickerCaps && !$0.kicker.trimmingCharacters(in: .whitespaces).isEmpty } ?? false
+        if captions?.on == true { return 6 }
         if face?.isGreenScreen == true || marks?.contains(where: \.needsOOO121) == true { return 5 }
         if face != nil { return 4 }
         if !(pages?.isEmpty ?? true) || !(lift?.isEmpty ?? true) || !(marks?.isEmpty ?? true) { return 3 }
@@ -266,6 +273,11 @@ public struct OOOProject: Codable, Hashable, Sendable {
     /// You on camera, recorded in a live take, shown in the room while the
     /// stage is up; nil for none.
     public var face: FaceClip?
+    /// The voiceover's words set on the video; nil for none.
+    public var captions: CaptionStyle?
+    /// What you want to say about the first slide, shown under the camera in
+    /// a live take and never in the video (the others keep theirs on their page).
+    public var notes: String?
 
     public init(slide: SlideRef, overview: Shot? = nil, shots: [Shot] = [], arrive: Arrive = Arrive(kind: .rise),
                 ending: Ending = .pullBack, style: MotionStyle = MotionStyle(), look: StageLook = OOOProject.defaultLook,
@@ -313,12 +325,41 @@ public struct OOOProject: Codable, Hashable, Sendable {
     /// The sample project every new window opens on, already moving.
     public static var sample: OOOProject {
         var p = OOOProject(slide: .sample)
-        p.shots = SampleSlide.shots
+        p.shots = SampleSlide.shots(canvasAspect: p.canvasAspect)
         return p
     }
 
     public var slideAspect: Float { slide.aspect }
     public var canvasAspect: Float { format.aspect }
+
+    /// Whether the video shows captions: they are on and there are words to show.
+    public var showsCaptions: Bool { captions?.on == true && !(voice?.words?.isEmpty ?? true) }
+
+    /// The part of the frame framings are composed in: the platform's safe
+    /// area, less the band captions sit in when they show, so nothing the
+    /// camera frames is ever under them.
+    public var framingSafe: SafeArea {
+        showsCaptions ? Captions.reserving(format.safeArea, canvasAspect: canvasAspect) : format.safeArea
+    }
+
+    /// The captions, phrase by phrase; none when they are off.
+    public var captionPhrases: [CaptionPhrase] {
+        guard showsCaptions, let words = voice?.words else { return [] }
+        return Captions.phrases(words)
+    }
+
+    /// What you want to say about the `k`th slide (0 is the first).
+    public func notes(_ k: Int) -> String? { k > 0 && k <= morePages.count ? morePages[k - 1].notes : notes }
+
+    /// Sets what you want to say about the `k`th slide (0 is the first).
+    public mutating func setNotes(_ text: String?, page k: Int) {
+        if k == 0 { notes = text } else if k > 0 && k <= morePages.count { pages?[k - 1].notes = text }
+    }
+
+    /// Whether any slide has something written to say over it.
+    public var hasNotes: Bool {
+        (0...morePages.count).contains { !(notes($0)?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) }
+    }
 
     public static let defaultFloor: FloorKind = .soft
     public var floorKind: FloorKind { floor ?? Self.defaultFloor }
@@ -331,14 +372,14 @@ public struct OOOProject: Codable, Hashable, Sendable {
     /// slide and canvas and stay sharp; nil when it always can.
     public var sharpZoom: Float? {
         guard let h = sharpViewHeight else { return nil }
-        let opening = CameraPose(shot: overview, slideAspect: slideAspect, canvasAspect: canvasAspect, safe: format.safeArea)
+        let opening = CameraPose(shot: overview, slideAspect: slideAspect, canvasAspect: canvasAspect, safe: framingSafe)
         return opening.height / h
     }
 
     /// What Direct for Me plans from: the slide's reading, the voice, the canvas.
     public func directorInput(_ details: [SlideDetail]) -> DirectorInput {
         DirectorInput(details: details, words: voice?.words, slideAspect: slideAspect, canvasAspect: canvasAspect,
-                      start: tourStart, safe: format.safeArea, minViewHeight: sharpViewHeight, overview: overview, style: style)
+                      start: tourStart, safe: framingSafe, minViewHeight: sharpViewHeight, overview: overview, style: style)
     }
 
     // MARK: Slides
@@ -580,6 +621,26 @@ public struct OOOProject: Codable, Hashable, Sendable {
         shots = out
     }
 
+    /// The same video on another canvas: the opening follows its shape, and
+    /// the framings Direct for Me planned are framed again for it (the ones
+    /// you set stay as they are).
+    public func refitted(to f: CanvasFormat) -> OOOProject {
+        guard f != format else { return self }
+        var p = self
+        let (A, C) = (p.slideAspect, p.canvasAspect)
+        p.format = f
+        p.adaptOverview(fromSlideAspect: A, canvasAspect: C)
+        p.reframePlanned()
+        p.followSample(fromCanvasAspect: C)
+        return p
+    }
+
+    /// The sample, untouched, takes its own framings for the new canvas shape.
+    public mutating func followSample(fromCanvasAspect C: Float) {
+        guard slide.kind == .sample, slideCount == 1, SampleSlide.isOwn(shots, canvasAspect: C) else { return }
+        shots = SampleSlide.shots(canvasAspect: canvasAspect)
+    }
+
     /// Follows a new slide or canvas shape with the opening, unless someone
     /// has set the opening themselves.
     public mutating func adaptOverview(fromSlideAspect A: Float, canvasAspect C: Float) {
@@ -610,10 +671,12 @@ public struct OOOProject: Codable, Hashable, Sendable {
     public var choreographyInput: ChoreographyInput { choreographyInput(duration: duration) }
 
     func choreographyInput(duration: Double) -> ChoreographyInput {
-        ChoreographyInput(overview: overview, shots: shots, arrive: arrive, ending: ending, duration: duration,
-                          slideAspect: slideAspect, canvasAspect: canvasAspect, style: style, seed: seed, safe: format.safeArea,
-                          pages: pageTimings, home: turnsHome ? home : nil, lift: lift,
-                          titleRoom: (title?.isEmpty ?? true) ? 0 : Self.titleRoom)
+        var input = ChoreographyInput(overview: overview, shots: shots, arrive: arrive, ending: ending, duration: duration,
+                                      slideAspect: slideAspect, canvasAspect: canvasAspect, style: style, seed: seed, safe: framingSafe,
+                                      pages: pageTimings, home: turnsHome ? home : nil, lift: lift,
+                                      titleRoom: (title?.isEmpty ?? true) ? 0 : Self.titleRoom)
+        if showsCaptions { input.captionRoom = Captions.roomAbove(canvasAspect: canvasAspect) }
+        return input
     }
 
     public func choreography() -> Choreography { Choreography(choreographyInput) }

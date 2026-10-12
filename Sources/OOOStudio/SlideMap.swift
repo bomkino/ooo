@@ -44,7 +44,7 @@ struct MapHost: View {
     @Bindable var clock: PlaybackClock
 
     var body: some View {
-        SlideMap(session: session, page: session.mapPage(at: clock.time))
+        SlideMap(session: session, page: session.mapPage)
     }
 }
 
@@ -258,8 +258,9 @@ struct SlideMap: View {
             let label = ctx.resolve(Text("\(b.number)").font(.system(size: 9 * k, weight: .bold)).foregroundColor(.white))
             ctx.fill(Path(roundedRect: b.tab, cornerRadius: 3), with: .color(tabFill))
             ctx.draw(label, at: CGPoint(x: b.tab.midX, y: b.tab.midY), anchor: .center)
-            // A turned camera, said on a tag rather than drawn askew.
-            if let r = b.tag {
+            // A turned camera, said on a tag rather than drawn askew: for the one
+            // picked or under the pointer, so the map stays calm.
+            if let r = b.tag, selected || hot {
                 let tag = ctx.resolve(Text("\(Image(systemName: "rotate.3d")) \(Int(Box.turn(b.shot).rounded()))°")
                     .font(.system(size: 8.5 * k, weight: .semibold)).foregroundColor(.white))
                 ctx.fill(Path(roundedRect: r, cornerRadius: 3), with: .color(selected ? Theme.camera.opacity(0.85) : Color.black.opacity(0.72)))
@@ -365,7 +366,7 @@ struct SlideMap: View {
         }
         let shots = session.project.shots
         if let hit = handle(at: p, layout: layout), let shot = shots.first(where: { $0.id == hit.id }) {
-            session.beginEdit("Frame Shot")
+            session.beginEdit("Reframe")
             gesture = .resize(hit.id, shot.frame, hit.handle, hit.rect)
         } else if let id = tab(at: p, layout: layout) ?? insideSelected(p, layout: layout), let shot = shots.first(where: { $0.id == id }) {
             if session.selection != .shot(id) { session.select(.shot(id), show: false) }
@@ -453,7 +454,7 @@ struct SlideMap: View {
             NSCursor.openHand.set()
             if !moved { click(id, twice: twice) }
         case .resize:
-            session.commitEdit("Frame Shot")
+            session.commitEdit("Reframe")
         case .tilt(let id, _, _):
             session.commitEdit("Turn Camera")
             if !moved { click(id, twice: twice) }
@@ -608,7 +609,7 @@ struct MapPane: View {
     let foot: CGFloat
 
     var body: some View {
-        let page = session.mapPage(at: clock.time)
+        let page = session.mapPage
         let a = MapLayout.aspect(slideAspect: CGFloat(session.project.slide(page).aspect))
         VStack(spacing: 0) {
             MapHeading(session: session, page: page)
@@ -663,7 +664,7 @@ struct MapHint: View {
                 }
             } else {
                 Text(session.mapHint ?? defaultHint)
-                    .textStyle(.caption).foregroundStyle(session.mapHint == nil ? .tertiary : .secondary)
+                    .textStyle(.caption).foregroundStyle(.secondary)
             }
         }
         .multilineTextAlignment(.center)

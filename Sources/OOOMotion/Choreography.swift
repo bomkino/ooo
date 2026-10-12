@@ -24,6 +24,9 @@ public struct ChoreographyInput: Sendable {
     /// The share of the frame an opening title needs above the slide while
     /// the stage is up (0 without one).
     public var titleRoom: Float
+    /// The share of the frame captions need above a Lift's room while the
+    /// stage is up (0 without them; see `Captions.roomAbove`).
+    public var captionRoom: Float = 0
     /// A path drawn during a live take, whose holds last until someone asks
     /// for the next move: nothing in a hold depends on how long it lasts
     /// (see `LiveTake`).
@@ -243,7 +246,10 @@ public struct Choreography: Sendable {
 
         if let lift = input.lift, !lift.isEmpty {
             // The same tour, framed above the room.
-            let up = lift.safe(input.safe)
+            var up = lift.safe(input.safe)
+            if input.captionRoom > 0 {
+                up.bottom = max(up.bottom, min(max(lift.room, Lift.roomRange.lowerBound), Lift.roomRange.upperBound) + input.captionRoom)
+            }
             var opening = up
             opening.top = min(up.top + input.titleRoom, 1 - up.bottom - 0.25)
             let safe = { (i: Int) -> SafeArea in plan[i].overview ? opening : up }
@@ -405,6 +411,8 @@ public struct Choreography: Sendable {
         let onShot = !current.overview
         if let home = input.home, n > 1 {
             // Back to the whole slide, settled, before it turns back to the first.
+            // After a melt, not before the melt has finished.
+            let last = max(last, settled)
             let auto = duration - (backLead + PageChange.turn.length + coverRest + endingTail(input.ending))
             var land = max(last + (onShot ? 1.6 : 0.25), home.at.map { $0 - backLead } ?? auto)
             land = max(min(land, duration - backLead - PageChange.turn.length - 0.2), last + 0.25)

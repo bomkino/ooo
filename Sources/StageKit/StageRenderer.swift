@@ -71,8 +71,9 @@ public final class StageRenderer {
     }
 
     public func warmUp() {
-        backdrop.warmUp()
+        // The stage's own first, which every frame needs; then every look's.
         _ = try? pipelines()
+        backdrop.warmUp()
     }
 
     struct Pipelines {

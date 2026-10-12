@@ -114,7 +114,9 @@ public final class OOODocument: ReferenceFileDocument, @unchecked Sendable {
     public static var readableContentTypes: [UTType] { [.oooProject] }
     public static var writableContentTypes: [UTType] { [.oooProject] }
 
-    @Published public var project: OOOProject
+    /// Not published: the window's session holds the project it edits, and
+    /// a change here must not rebuild the window (and a session) every step.
+    public var project: OOOProject
     public let media = MediaStore()
     /// True for a document made with File › New, until its window first opens.
     public var isNew = false

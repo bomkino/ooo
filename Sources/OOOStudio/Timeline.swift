@@ -59,7 +59,7 @@ struct TimelineView: View {
                             RoomLane(session: session, scale: scale)
                                 .frame(height: Self.room)
                                 .padding(.top, 4)
-                            VoiceLane(session: session, scale: scale)
+                            VoiceLane(session: session, scale: scale, visible: visible)
                                 .frame(height: Self.voice)
                                 .padding(.top, 6)
                             Spacer(minLength: 0)
@@ -406,7 +406,7 @@ struct ClipView: View {
     private var title: String {
         switch clip.kind {
         case .opening: return several ? "Slide 1" : "Whole slide"
-        case .shot: return beat.flatMap { Director.spokenLabel($0.shot.label) } ?? "Shot \(number ?? 0)"
+        case .shot: return beat.flatMap { Director.spokenLabel($0.shot.label) } ?? "Framing \(number ?? 0)"
         case .change(let to): return "Slide \(to + 1)"
         case .home: return "Slide 1"
         case .ending: return "Ending"
@@ -549,7 +549,7 @@ struct ClipView: View {
         switch z {
         case .end: name = clip.kind == .ending ? "Video Length" : "Hold"
         case .seam: name = clip.kind == .opening ? "Opening Length" : "Move Length"
-        case .body: name = "Move Shot"
+        case .body: name = "Move Framing"
         }
         // A landing stays between its neighbours' landings.
         let lo = (index > 0 ? clips[index - 1].land : 0) + 0.4
@@ -621,7 +621,7 @@ struct ClipView: View {
     private func clipTitle(_ c: TimelineClip) -> String {
         guard let id = c.shotID else { return "it" }
         let shot = session.project.shots.first { $0.id == id }
-        return Director.spokenLabel(shot?.label) ?? "shot \((session.index(of: id) ?? 0) + 1)"
+        return Director.spokenLabel(shot?.label) ?? "framing \((session.index(of: id) ?? 0) + 1)"
     }
 }
 
@@ -828,6 +828,8 @@ struct TravelRamp: View {
 struct VoiceLane: View {
     @Bindable var session: OOOSession
     let scale: TimeScale
+    /// The width on screen: with no voice yet, the row keeps to it, so zooming never moves its buttons.
+    var visible: CGFloat = .infinity
     @State private var dragStart: Double?
     @State private var targeted = false
 
@@ -860,7 +862,7 @@ struct VoiceLane: View {
                         session.clock.time = max(voice.offset - 0.3, 0)
                         session.clock.playing = true
                     }
-                    Button("Cut the Moves to the Voice") { session.cutToVoice() }
+                    Button("Time the Moves to the Voice") { session.cutToVoice() }
                         .disabled(voice.words?.isEmpty ?? true)
                     Divider()
                     Button("Record Again…") { session.toggleRecording() }
@@ -870,6 +872,17 @@ struct VoiceLane: View {
                     Button("Remove Voiceover", role: .destructive) { session.removeVoice() }
                 }
                 .help("\(voice.name), \(secondsLabel(voice.duration)). Drag to slide the voice under the picture; right-click for more.")
+            } else if session.mode == .live {
+                // In Live your voice comes with the take; there is nothing to press here.
+                HStack(spacing: 8) {
+                    Image(systemName: "mic").foregroundStyle(.secondary)
+                    Text("Your voice records with the take.").textStyle(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 10)
+                .frame(maxWidth: emptyWidth)
+                .frame(height: TimelineView.voice)
+                .padding(.horizontal, TimeScale.pad)
             } else {
                 HStack(spacing: 8) {
                     Image(systemName: "waveform").foregroundStyle(.secondary)
@@ -888,6 +901,7 @@ struct VoiceLane: View {
                     Spacer(minLength: 0)
                 }
                 .padding(.horizontal, 10)
+                .frame(maxWidth: emptyWidth)
                 .frame(height: TimelineView.voice)
                 .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
@@ -896,12 +910,14 @@ struct VoiceLane: View {
             }
         }
         .onDrop(of: [.fileURL], isTargeted: $targeted) { providers in
-            loadDropped(providers) { urls in
-                if let url = urls.first { session.importVoice(url) }
-            }
+            // A recording becomes the voice; a slide dropped here still goes where slides go.
+            guard !session.isTaking else { return false }
+            loadDropped(providers) { urls in session.importDropped(urls) }
             return true
         }
     }
+
+    private var emptyWidth: CGFloat { max(min(visible, scale.width) - TimeScale.pad * 2, 1) }
 
     private var drag: some Gesture {
         DragGesture(minimumDistance: 2, coordinateSpace: .global)

@@ -2,7 +2,7 @@ import OOOStudio
 import SwiftUI
 import Updates
 
-/// OOO: Obsess Over One. One slide, one camera, all the love.
+/// OOO: Obsess Over One. Every slide. Every detail.
 @main
 struct ObsessOverOne: App {
     @StateObject private var updates: AppUpdates

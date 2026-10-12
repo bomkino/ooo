@@ -116,6 +116,15 @@ public final class GPU: @unchecked Sendable {
         let cacheKey = key.cacheKey + "#" + String(ObjectIdentifier(library).hashValue)
         lock.lock()
         if let cached = renderPipelines[cacheKey] { lock.unlock(); return cached }
+        // One compile per pipeline, as for libraries: the warm-up and the
+        // first frame never build the same one twice.
+        let gate = compiling["pipeline|" + cacheKey] ?? NSLock()
+        compiling["pipeline|" + cacheKey] = gate
+        lock.unlock()
+        gate.lock()
+        defer { gate.unlock() }
+        lock.lock()
+        if let cached = renderPipelines[cacheKey] { lock.unlock(); return cached }
         lock.unlock()
 
         guard let vfn = library.makeFunction(name: key.vertex) else {

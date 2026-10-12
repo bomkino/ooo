@@ -32,6 +32,8 @@ public struct SlideScene: @unchecked Sendable {
 
     /// The words over the opening, when there are some.
     public private(set) var title: TitleOverlay?
+    /// The voiceover's words as captions, phrase by phrase; none when they are off.
+    public let captions: [CaptionPhrase]
     /// Whether the words were set for the stage risen above a Lift's room.
     let titleLifted: Bool
 
@@ -52,11 +54,12 @@ public struct SlideScene: @unchecked Sendable {
         }
         let c = choreography ?? project.choreography()
         self.choreography = c
+        captions = project.captionPhrases
         title = nil
         titleLifted = Self.liftedWhileTitled(c)
         if let words = project.title, !words.isEmpty, let first = c.beats.first {
             let opening = titleLifted ? c.lifted?.first?.pose ?? first.pose : first.pose
-            let A = project.slideAspect, safe = project.format.safeArea, C = project.canvasAspect
+            let A = project.slideAspect, safe = project.framingSafe, C = project.canvasAspect
             // The ink that stands out most from the backdrop behind the words,
             // as it shows while they are read.
             let shown = first.land + 0.6
@@ -636,11 +639,13 @@ public final class SlideStage: @unchecked Sendable {
     public let renderer: StageRenderer
     private let titles: TitleCompositor
     private let faces: FaceCompositor
+    private let captions: CaptionCompositor
 
     public init(renderer: StageRenderer? = nil) throws {
         self.renderer = try renderer ?? StageRenderer()
         titles = try TitleCompositor()
         faces = try FaceCompositor()
+        captions = try CaptionCompositor()
     }
 
     /// Lets go of the camera recordings `gone` picks, which the stage no longer shows.
@@ -659,11 +664,12 @@ public final class SlideStage: @unchecked Sendable {
     ///
     /// `samples` is the most the frame may take. With `adaptive`, it takes
     /// only as many as the motion across its shutter needs: one while the
-    /// camera holds, the most in a fast move.
+    /// camera holds, the most in a fast move. Without `withCaptions` the
+    /// frame is the picture alone, as stills and the cover frame want it.
     @discardableResult
     public func encode(_ cb: MTLCommandBuffer, scene: SlideScene, at t: Double, output: MTLTexture, samples: Int,
                        frameIndex: UInt32, waitForDetail: Bool, backdropScale: Float = 1, transparent: Bool = false,
-                       adaptive: Bool = true) throws -> Int {
+                       adaptive: Bool = true, withCaptions: Bool = true) throws -> Int {
         let C = Float(output.width) / Float(max(output.height, 1))
         var patch: DetailCache.Patch?, oldPatch: DetailCache.Patch?
         if let details = scene.details[scene.page(at: t)], let fp = footprint(scene, at: t, width: output.width, height: output.height) {
@@ -716,6 +722,13 @@ public final class SlideStage: @unchecked Sendable {
                              alpha: shown.alpha, grain: 0.035 * look.finish.grain / 0.14, frameIndex: frameIndex, output: output,
                              wait: waitForDetail)
         }
+        if withCaptions, let style = scene.project.captions, let m = Captions.moment(scene.captions, at: t) {
+            let safe = scene.project.format.safeArea
+            let rise = Captions.rise(scene.choreography.liftAmount(at: t), room: scene.faceRoom,
+                                     canvasAspect: Float(output.width) / Float(max(output.height, 1)), safe: safe)
+            try captions.encode(cb, phrase: scene.captions[m.phrase], moment: m, style: style, face: scene.project.title?.face ?? .modern,
+                                safe: safe, rise: rise, output: output)
+        }
         return request.samples
     }
 
@@ -736,15 +749,16 @@ public final class SlideStage: @unchecked Sendable {
     }
 
     /// One frame as a picture: the video's frame nearest `t`, exactly as the
-    /// export draws it.
-    public func still(_ scene: SlideScene, at t: Double, width: Int, height: Int, samples: Int = 8, adaptive: Bool = true) throws -> CGImage {
+    /// export draws it (without its captions, unless `withCaptions`).
+    public func still(_ scene: SlideScene, at t: Double, width: Int, height: Int, samples: Int = 8, adaptive: Bool = true,
+                      withCaptions: Bool = false) throws -> CGImage {
         let gpu = GPU.shared
         let out = gpu.makeTexture(width: width, height: height, format: .bgra8Unorm, usage: [.renderTarget, .shaderRead])
         guard let cb = gpu.queue.makeCommandBuffer() else { throw RenderError.io("GPU unavailable.") }
         let fps = Double(max(scene.project.fps, 1))
         let index = max(0, (t * fps).rounded())
         try encode(cb, scene: scene, at: index / fps, output: out, samples: samples, frameIndex: UInt32(index),
-                   waitForDetail: true, adaptive: adaptive)
+                   waitForDetail: true, adaptive: adaptive, withCaptions: withCaptions)
         cb.commit()
         cb.waitUntilCompleted()
         if let e = cb.error { throw RenderError.io("GPU error: \(e.localizedDescription)") }
@@ -781,6 +795,12 @@ public final class InkCache: @unchecked Sendable {
     /// instant), by the mark: a mark redrawn at every stroke keeps two
     /// textures, not one for every stroke it ever had.
     private var made: [UUID: [(key: Int, texture: MTLTexture)]] = [:]
+    /// The marks drawn, the one used least lately first.
+    private var order: [UUID] = []
+    /// How much the marks drawn may hold on the GPU: a long talk's worth of
+    /// circles and underlines, in every window, kept small on a small Mac
+    /// (about 170 MB on 8 GB).
+    static let budget = min(max(Int(ProcessInfo.processInfo.physicalMemory / 48), 160 << 20), 512 << 20)
     private var grounds: [Int: Float] = [:]
 
     public init() {}
@@ -852,6 +872,10 @@ public final class InkCache: @unchecked Sendable {
         let key = h.finalize()
         lock.lock()
         if let hit = made[mark.id]?.first(where: { $0.key == key }) {
+            if order.last != mark.id {
+                order.removeAll { $0 == mark.id }
+                order.append(mark.id)
+            }
             lock.unlock()
             return hit.texture
         }
@@ -862,8 +886,16 @@ public final class InkCache: @unchecked Sendable {
         versions.removeAll { $0.key == key }
         versions.append((key, texture))
         if versions.count > 2 { versions.removeFirst(versions.count - 2) }
-        if made[mark.id] == nil, made.count >= 64 { made.removeAll() }
         made[mark.id] = versions
+        order.removeAll { $0 == mark.id }
+        order.append(mark.id)
+        // Marks drawn least lately go first; the ones on screen stay.
+        var held = made.values.reduce(0) { $0 + $1.reduce(0) { $0 + $1.texture.allocatedSize } }
+        while held > Self.budget, order.count > 1, let oldest = order.first {
+            order.removeFirst()
+            held -= made[oldest]?.reduce(0) { $0 + $1.texture.allocatedSize } ?? 0
+            made[oldest] = nil
+        }
         lock.unlock()
         return texture
     }
@@ -878,28 +910,47 @@ public final class InkCache: @unchecked Sendable {
         d.usage = [.shaderRead]
         guard let texture = GPU.shared.device.makeTexture(descriptor: d) else { return nil }
         var w = r.width, h = r.height
-        let amount = zip(r.cover, r.halo).map { $0 + $1 }
-        var planes = [zip(r.when, amount).map { $0 * $1 }, r.cover, r.halo, zip(r.depth, r.cover).map { $0 * $1 }]
+        let n = w * h
+        // Straight through the buffers, in the same order as ever: the same texels, a third of the time.
+        let carried = [Float](unsafeUninitializedCapacity: n) { b, count in
+            for i in 0..<n { b[i] = r.when[i] * (r.cover[i] + r.halo[i]) }
+            count = n
+        }
+        let body = [Float](unsafeUninitializedCapacity: n) { b, count in
+            for i in 0..<n { b[i] = r.depth[i] * r.cover[i] }
+            count = n
+        }
+        var planes = [carried, r.cover, r.halo, body]
         for level in 0..<texture.mipmapLevelCount {
-            var texels = [UInt16](repeating: 0, count: w * h * 4)
-            for i in 0..<(w * h) {
-                for c in 0..<4 { texels[4 * i + c] = UInt16((min(max(planes[c][i], 0), 1) * 65535).rounded()) }
+            let m = w * h
+            var texels = [UInt16](repeating: 0, count: m * 4)
+            texels.withUnsafeMutableBufferPointer { t in
+                for c in 0..<4 {
+                    planes[c].withUnsafeBufferPointer { p in
+                        for i in 0..<m { t[4 * i + c] = UInt16((min(max(p[i], 0), 1) * 65535).rounded()) }
+                    }
+                }
             }
             texels.withUnsafeBytes { bytes in
                 texture.replace(region: MTLRegionMake2D(0, 0, w, h), mipmapLevel: level, withBytes: bytes.baseAddress!, bytesPerRow: w * 8)
             }
             guard level + 1 < texture.mipmapLevelCount else { break }
             let nw = max(w / 2, 1), nh = max(h / 2, 1)
-            var next = [[Float]](repeating: [Float](repeating: 0, count: nw * nh), count: 4)
-            for y in 0..<nh {
-                for x in 0..<nw {
-                    for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-                        let i = min(2 * y + dy, h - 1) * w + min(2 * x + dx, w - 1)
-                        for c in 0..<4 { next[c][y * nw + x] += planes[c][i] / 4 }
+            let (pw, ph) = (w, h)
+            planes = planes.map { plane in
+                plane.withUnsafeBufferPointer { p in
+                    [Float](unsafeUninitializedCapacity: nw * nh) { b, count in
+                        for y in 0..<nh {
+                            let y0 = min(2 * y, ph - 1) * pw, y1 = min(2 * y + 1, ph - 1) * pw
+                            for x in 0..<nw {
+                                let x0 = min(2 * x, pw - 1), x1 = min(2 * x + 1, pw - 1)
+                                b[y * nw + x] = p[y0 + x0] / 4 + p[y0 + x1] / 4 + p[y1 + x0] / 4 + p[y1 + x1] / 4
+                            }
+                        }
+                        count = nw * nh
                     }
                 }
             }
-            planes = next
             w = nw
             h = nh
         }

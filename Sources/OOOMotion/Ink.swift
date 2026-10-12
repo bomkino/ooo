@@ -442,8 +442,10 @@ public struct InkRaster: Sendable {
         for y in 0..<height {
             for x in 0..<width {
                 let k = y * width + x
-                let fx = Float(x), fy = Float(y)
                 let c = cover[k]
+                // No ink and no fringe: nothing to lay, as it starts (most of the box).
+                if c == 0 && fringe[k] == 0 { continue }
+                let fx = Float(x), fy = Float(y)
                 let rim = middle[k].isFinite ? smoothstep(0.3, 1.0, middle[k]) : 0
                 let mottle = 0.16 * (coarse.at(fx, fy) - 0.5) + 0.07 * (fine.at(fx, fy) - 0.5)
                 depth[k] = c > 0 ? clamp01(0.42 + 0.36 * rim + 0.28 * linger[k] + mottle) : 0

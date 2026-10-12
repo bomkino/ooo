@@ -11,7 +11,7 @@ final class LiveCoreTests: XCTestCase {
         filmed.face = FaceClip(file: "you.mov", duration: 20, aspect: 16.0 / 9.0, mirrored: true)
         let j = try XCTUnwrap(JSONSerialization.jsonObject(with: ProjectPackage.encode(filmed)) as? [String: Any])
         XCTAssertEqual(j["minimumReaderVersion"] as? Int, 4)
-        XCTAssertEqual(OOOProject.readerVersion, 5)
+        XCTAssertEqual(OOOProject.readerVersion, 6)
         XCTAssertEqual(try ProjectPackage.decode(ProjectPackage.encode(filmed)), filmed)
     }
 
