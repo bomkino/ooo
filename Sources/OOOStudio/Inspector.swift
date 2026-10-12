@@ -318,6 +318,8 @@ extension ArriveKind {
 
 struct OverviewInspector: View {
     let session: OOOSession
+    /// The opening framing, the camera's temperament and the length, for when the tour is nearly right.
+    @AppStorage("video.fineTune") private var fineTune = false
 
     var body: some View {
         let p = session.project
@@ -368,43 +370,47 @@ struct OverviewInspector: View {
                     .textStyle(.caption).foregroundStyle(.secondary)
             }
             Hairline()
-            RoomSection(session: session)
-            Hairline()
-            InspectorSection("Opening framing") {
-                // Defaults follow the slide's shape in the canvas: a wide slide in a tall frame turns further.
-                let d = Shot.overview(slideAspect: p.slideAspect, canvasAspect: p.canvasAspect)
-                Dial(session: session, label: "Angle", value: session.bind(\.overview.yaw), range: -45...45, defaultValue: d.yaw, format: degreesLabel)
-                Dial(session: session, label: "Tilt", value: session.bind(\.overview.pitch), range: -20...20, defaultValue: d.pitch, format: degreesLabel)
-                Dial(session: session, label: "Margin", value: overviewRoom, range: 0...0.6, defaultValue: d.frame.size.y - 1, format: percent)
-                Dial(session: session, label: "Drift in", value: session.bind(\.overview.breathe), defaultValue: 0.45)
-            }
-            Hairline()
             InspectorSection("Ending") {
                 ChoiceRow(Ending.allCases.map { ($0, $0.title) }, selection: session.choice(\.ending, "Ending"))
             }
             Hairline()
-            InspectorSection("The camera's temperament") {
-                Dial(session: session, label: "Lift", value: session.bind(\.style.flight), defaultValue: 0.5)
-                Dial(session: session, label: "Lean", value: session.bind(\.style.swing), defaultValue: 0.5)
-                Dial(session: session, label: "Handheld", value: session.bind(\.style.drift), defaultValue: 0.35)
-                Dial(session: session, label: "Pace", value: session.bind(\.style.pace), defaultValue: 0.5)
-                Text("Lift is how far the camera rises to fly between distant details; Lean, how much it leans into its own momentum; Handheld, a slow breath in the camera.")
-                    .textStyle(.caption).foregroundStyle(.secondary)
-            }
+            RoomSection(session: session)
             Hairline()
-            InspectorSection("Length", accessory: {
-                Text(secondsLabel(session.choreography.duration)).textStyle(.data).foregroundStyle(.secondary)
-            }) {
-                Toggle("Fit the moves and the voice", isOn: Binding(
-                    get: { session.project.length == nil },
-                    set: { fit in session.update("Length") { $0.length = fit ? nil : $0.duration } }))
-                    .toggleStyle(.checkbox)
-                    .textStyle(.bodyCompact)
-                if p.length != nil {
-                    Dial(session: session, label: "Seconds", value: Binding(
-                        get: { Float(session.project.length ?? 10) },
-                        set: { v in session.live { $0.length = Double(v) } }),
-                         range: 3...120, format: secondsValue, undo: "Length")
+            FineTune(open: $fineTune, detail: "Opening framing, temperament, length")
+            if fineTune {
+                Hairline()
+                InspectorSection("Opening framing") {
+                    // Defaults follow the slide's shape in the canvas: a wide slide in a tall frame turns further.
+                    let d = Shot.overview(slideAspect: p.slideAspect, canvasAspect: p.canvasAspect)
+                    Dial(session: session, label: "Angle", value: session.bind(\.overview.yaw), range: -45...45, defaultValue: d.yaw, format: degreesLabel)
+                    Dial(session: session, label: "Tilt", value: session.bind(\.overview.pitch), range: -20...20, defaultValue: d.pitch, format: degreesLabel)
+                    Dial(session: session, label: "Margin", value: overviewRoom, range: 0...0.6, defaultValue: d.frame.size.y - 1, format: percent)
+                    Dial(session: session, label: "Drift in", value: session.bind(\.overview.breathe), defaultValue: 0.45)
+                }
+                Hairline()
+                InspectorSection("The camera's temperament") {
+                    Dial(session: session, label: "Lift", value: session.bind(\.style.flight), defaultValue: 0.5)
+                    Dial(session: session, label: "Lean", value: session.bind(\.style.swing), defaultValue: 0.5)
+                    Dial(session: session, label: "Handheld", value: session.bind(\.style.drift), defaultValue: 0.35)
+                    Dial(session: session, label: "Pace", value: session.bind(\.style.pace), defaultValue: 0.5)
+                    Text("Lift is how far the camera rises to fly between distant details; Lean, how much it leans into its own momentum; Handheld, a slow breath in the camera.")
+                        .textStyle(.caption).foregroundStyle(.secondary)
+                }
+                Hairline()
+                InspectorSection("Length", accessory: {
+                    Text(secondsLabel(session.choreography.duration)).textStyle(.data).foregroundStyle(.secondary)
+                }) {
+                    Toggle("Fit the moves and the voice", isOn: Binding(
+                        get: { session.project.length == nil },
+                        set: { fit in session.update("Length") { $0.length = fit ? nil : $0.duration } }))
+                        .toggleStyle(.checkbox)
+                        .textStyle(.bodyCompact)
+                    if p.length != nil {
+                        Dial(session: session, label: "Seconds", value: Binding(
+                            get: { Float(session.project.length ?? 10) },
+                            set: { v in session.live { $0.length = Double(v) } }),
+                             range: 3...120, format: secondsValue, undo: "Length")
+                    }
                 }
             }
         }
@@ -535,23 +541,7 @@ struct LookInspector: View {
                     .textStyle(.caption).foregroundStyle(.secondary)
             }
             Hairline()
-            Button {
-                withAnimation(Theme.settle) { fineTune.toggle() }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .bold))
-                        .rotationEffect(.degrees(fineTune ? 90 : 0))
-                    Text("Fine-tune").textStyle(.label)
-                    Text("Light, lens and finish").textStyle(.caption).foregroundStyle(.secondary)
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, Theme.Space.l)
-                .frame(height: 40)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(fineTune ? "Fold the light, lens and finish away" : "The light, the lens and the finish")
+            FineTune(open: $fineTune, detail: "Light, lens and finish")
             if fineTune {
                 Hairline()
                 InspectorSection("Light") {
@@ -582,6 +572,33 @@ struct LookInspector: View {
                 }
             }
         }
+    }
+}
+
+/// A fold for the settings you reach for once the rest is right.
+struct FineTune: View {
+    @Binding var open: Bool
+    let detail: String
+
+    var body: some View {
+        Button {
+            withAnimation(Theme.settle) { open.toggle() }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .bold))
+                    .rotationEffect(.degrees(open ? 90 : 0))
+                Text("Fine-tune").textStyle(.label)
+                Text(detail).textStyle(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, Theme.Space.l)
+            .frame(height: 40)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(open ? "Fold these away" : "\(detail), for when the rest is right")
+        .accessibilityAddTraits(open ? .isSelected : [])
     }
 }
 

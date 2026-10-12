@@ -59,7 +59,7 @@ struct TimelineView: View {
                             RoomLane(session: session, scale: scale)
                                 .frame(height: Self.room)
                                 .padding(.top, 4)
-                            VoiceLane(session: session, scale: scale)
+                            VoiceLane(session: session, scale: scale, visible: visible)
                                 .frame(height: Self.voice)
                                 .padding(.top, 6)
                             Spacer(minLength: 0)
@@ -828,6 +828,8 @@ struct TravelRamp: View {
 struct VoiceLane: View {
     @Bindable var session: OOOSession
     let scale: TimeScale
+    /// The width on screen: with no voice yet, the row keeps to it, so zooming never moves its buttons.
+    var visible: CGFloat = .infinity
     @State private var dragStart: Double?
     @State private var targeted = false
 
@@ -878,6 +880,7 @@ struct VoiceLane: View {
                     Spacer(minLength: 0)
                 }
                 .padding(.horizontal, 10)
+                .frame(maxWidth: emptyWidth)
                 .frame(height: TimelineView.voice)
                 .padding(.horizontal, TimeScale.pad)
             } else {
@@ -898,6 +901,7 @@ struct VoiceLane: View {
                     Spacer(minLength: 0)
                 }
                 .padding(.horizontal, 10)
+                .frame(maxWidth: emptyWidth)
                 .frame(height: TimelineView.voice)
                 .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
@@ -912,6 +916,8 @@ struct VoiceLane: View {
             return true
         }
     }
+
+    private var emptyWidth: CGFloat { max(min(visible, scale.width) - TimeScale.pad * 2, 1) }
 
     private var drag: some Gesture {
         DragGesture(minimumDistance: 2, coordinateSpace: .global)

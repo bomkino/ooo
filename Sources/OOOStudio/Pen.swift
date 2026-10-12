@@ -682,9 +682,10 @@ struct PenTray: View {
     private var stay: some View {
         if compact {
             Button { session.pen.fades.toggle() } label: {
-                Image(systemName: session.pen.fades ? "hourglass.bottomhalf.filled" : "pin.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                    .frame(width: 22, height: 22)
+                Text(session.pen.fades ? "Fades" : "Stays")
+                    .textStyle(.caption).foregroundStyle(.primary)
+                    .padding(.horizontal, 4)
+                    .frame(height: 22)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)

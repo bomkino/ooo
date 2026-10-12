@@ -199,7 +199,7 @@ struct SlidesSection: View {
                 Text("The card turns over in your hand to the next slide, or the next melts in where you're looking and whatever both slides share holds still. Drag a change on the timeline to time it to your words.")
                     .textStyle(.caption).foregroundStyle(.secondary)
             } else {
-                Text("Go on to more slides with the same card in your hand: open on your deck's cover and turn it over to this one, or follow a number from one slide to the next.")
+                Text("Add more slides and the card turns over to each one, or melts from one to the next. Your deck's cover can open the video.")
                     .textStyle(.caption).foregroundStyle(.secondary)
             }
         }
@@ -231,19 +231,14 @@ struct SlideRow: View {
                 Text(ref.kind == .pdf ? "\(ref.name), page \(ref.page + 1)" : ref.name)
                     .textStyle(.bodyCompact).lineLimit(1).truncationMode(.middle)
                 if k > 0 {
-                    Picker("Change", selection: Binding(
+                    ChoiceRow(PageChange.allCases.map { ($0, $0.title) }, selection: Binding(
                         get: { () -> PageChange in
                             // Asked once more as the slide goes away, there may be none.
                             let pages = session.project.morePages
                             return pages.indices.contains(k - 1) ? pages[k - 1].change : .turn
                         },
-                        set: { session.setChange(k, $0) })) {
-                        ForEach(PageChange.allCases) { c in Text(c.title).tag(c) }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .controlSize(.mini)
-                    .fixedSize()
+                        set: { session.setChange(k, $0) }))
+                    .frame(width: 150)
                     .help("Turn: \(PageChange.turn.summary) Melt: \(PageChange.melt.summary)")
                 } else {
                     Text(p.slideCount > 1 ? "Opens the video" : "The slide").textStyle(.caption).foregroundStyle(.secondary)

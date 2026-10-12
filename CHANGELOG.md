@@ -14,6 +14,8 @@ OOO 2.0 leads you from a slide to a posted video, step by step, and adds caption
 - Plan Again asks first when it would replace framings you set yourself.
 - The words are the same everywhere: the boxes on the slide map are framings, in the inspector, the menus and Undo too, and Cut to Voice is now Time Moves to My Voice.
 - Esc with a framing picked goes back to the whole video.
+- The Video tab follows the journey: opening, slides, title, ending, then space for you. The Look tab opens on the backdrop. Settings you reach for once the rest is right (the opening framing, the camera's temperament, the length, light, lens and finish) fold under Fine-tune.
+- With no voice yet, the voice row keeps its buttons in view however far the timeline is zoomed. The pen's Stays or Fades reads as a word in a narrow window, and a slide's Turn Over or Melt is easier to hit.
 - About Obsess Over One says what the name means: every slide, every detail.
 
 **Captions**
@@ -41,6 +43,7 @@ OOO 2.0 leads you from a slide to a posted video, step by step, and adds caption
 - The slide map and the time under the video update when they change, not every frame.
 - The stage is built and its shaders compiled off the main thread at launch, what the first frame needs first.
 - Drawn marks keep to a memory budget sized to the Mac, letting go of the least recently used first, instead of clearing every mark at once.
+- Close-ups of every slide share one memory budget sized to the Mac (about 256 MB on 8 GB), letting go of the one seen longest ago first, and halving it when the Mac runs short of memory.
 - The voice's waveform is drawn in the background.
 
 **Fixes**
