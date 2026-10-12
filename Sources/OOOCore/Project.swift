@@ -351,6 +351,16 @@ public struct OOOProject: Codable, Hashable, Sendable {
     /// What you want to say about the `k`th slide (0 is the first).
     public func notes(_ k: Int) -> String? { k > 0 && k <= morePages.count ? morePages[k - 1].notes : notes }
 
+    /// Sets what you want to say about the `k`th slide (0 is the first).
+    public mutating func setNotes(_ text: String?, page k: Int) {
+        if k == 0 { notes = text } else if k > 0 && k <= morePages.count { morePages[k - 1].notes = text }
+    }
+
+    /// Whether any slide has something written to say over it.
+    public var hasNotes: Bool {
+        (0...morePages.count).contains { !(notes($0)?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) }
+    }
+
     public static let defaultFloor: FloorKind = .soft
     public var floorKind: FloorKind { floor ?? Self.defaultFloor }
 
@@ -609,6 +619,19 @@ public struct OOOProject: Codable, Hashable, Sendable {
             for (i, s) in zip(mine, again) { out[i] = s }
         }
         shots = out
+    }
+
+    /// The same video on another canvas: the opening follows its shape, and
+    /// the framings Direct for Me planned are framed again for it (the ones
+    /// you set stay as they are).
+    public func refitted(to f: CanvasFormat) -> OOOProject {
+        guard f != format else { return self }
+        var p = self
+        let (A, C) = (p.slideAspect, p.canvasAspect)
+        p.format = f
+        p.adaptOverview(fromSlideAspect: A, canvasAspect: C)
+        p.reframePlanned()
+        return p
     }
 
     /// Follows a new slide or canvas shape with the opening, unless someone

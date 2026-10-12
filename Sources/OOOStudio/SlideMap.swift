@@ -44,7 +44,7 @@ struct MapHost: View {
     @Bindable var clock: PlaybackClock
 
     var body: some View {
-        SlideMap(session: session, page: session.mapPage(at: clock.time))
+        SlideMap(session: session, page: session.mapPage)
     }
 }
 
@@ -365,7 +365,7 @@ struct SlideMap: View {
         }
         let shots = session.project.shots
         if let hit = handle(at: p, layout: layout), let shot = shots.first(where: { $0.id == hit.id }) {
-            session.beginEdit("Frame Shot")
+            session.beginEdit("Reframe")
             gesture = .resize(hit.id, shot.frame, hit.handle, hit.rect)
         } else if let id = tab(at: p, layout: layout) ?? insideSelected(p, layout: layout), let shot = shots.first(where: { $0.id == id }) {
             if session.selection != .shot(id) { session.select(.shot(id), show: false) }
@@ -453,7 +453,7 @@ struct SlideMap: View {
             NSCursor.openHand.set()
             if !moved { click(id, twice: twice) }
         case .resize:
-            session.commitEdit("Frame Shot")
+            session.commitEdit("Reframe")
         case .tilt(let id, _, _):
             session.commitEdit("Turn Camera")
             if !moved { click(id, twice: twice) }
@@ -608,7 +608,7 @@ struct MapPane: View {
     let foot: CGFloat
 
     var body: some View {
-        let page = session.mapPage(at: clock.time)
+        let page = session.mapPage
         let a = MapLayout.aspect(slideAspect: CGFloat(session.project.slide(page).aspect))
         VStack(spacing: 0) {
             MapHeading(session: session, page: page)

@@ -658,7 +658,7 @@ extension OOOSession {
         clock.playing = false
         clock.time = openingRest
         touch()
-        startCapture()
+        askOrStart()
     }
 
     /// Shows the project as a take in the room would play it.
@@ -671,6 +671,23 @@ extension OOOSession {
     var openingRest: Double {
         guard let first = choreography.beats.first else { return 0 }
         return min(first.land + 0.2, max(first.leave - 0.05, first.land))
+    }
+
+    /// Before macOS first asks for the camera and microphone, the room says
+    /// why and waits for Continue; after that it starts them at once.
+    func askOrStart() {
+        if !OOOSnapshot.isRequested, Self.captureUnasked(filming: roomFilming) {
+            liveAsking = true
+        } else {
+            liveAsking = false
+            startCapture()
+        }
+    }
+
+    /// Continue, in the room that asked: now macOS asks.
+    public func allowCapture() {
+        liveAsking = false
+        startCapture()
     }
 
     /// Starts the microphone (and camera) in the room, so you see and hear
@@ -713,6 +730,7 @@ extension OOOSession {
         liveCapture.cancel()
         previewUntil = nil
         liveKept = false
+        liveAsking = false
         keptBefore = nil
         liveNote = nil
         if staged != nil {
@@ -727,7 +745,11 @@ extension OOOSession {
     /// microphone stop, and a take under way goes with it. One being kept
     /// finishes, and its capture stops once it has.
     func windowClosed() {
-        guard !liveKeeping else { return }
+        guard !liveKeeping else {
+            // Its document is saved as it was and goes: the take goes to Movies › OOO.
+            windowGone = true
+            return
+        }
         liveCapture.cancel()
         clock.playing = false
     }
@@ -766,7 +788,7 @@ extension OOOSession {
         liveCapture.cancel()
         roomFilming = on
         restageRoom()
-        startCapture()
+        askOrStart()
     }
 
     /// Plays the opening in the room, as the take will start.
@@ -966,6 +988,7 @@ extension OOOSession {
         var picture: (duration: Double, aspect: Float)?
         if run.filming { picture = try await LiveTakeFile.picture(movie) }
         let store = document.media
+        if windowGone { throw CocoaError(.userCancelled) }
         // Into the document's folder away from the window's thread: the camera's
         // recording can run to gigabytes. The voice goes first, so a failure
         // leaves the recording itself where it was.
@@ -981,6 +1004,11 @@ extension OOOSession {
             // Mirrored, as you saw yourself while you talked.
             face = FaceClip(file: faceFile, offset: 0, duration: picture.duration, aspect: picture.aspect,
                             mirrored: true, greenScreen: Self.liveGreenScreen ? true : nil)
+        }
+        if windowGone {
+            // Closed while it moved in: out of the folder that goes with the window, to Movies › OOO.
+            _ = Self.rescue(store.url(for: faceFile ?? voiceFile))
+            return
         }
         guard take === run else { return }
         let when = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .short)
@@ -1090,14 +1118,15 @@ extension OOOSession {
 
     // MARK: Keys
 
-    /// The keys in the room: Return starts, 1 to 9 show a position, 0 the
-    /// whole slide, Space plays. Once a take is kept, Return is Done.
+    /// The keys in the room: Return starts (or, before macOS has asked,
+    /// continues to its question), 1 to 9 show a position, 0 the whole
+    /// slide, Space plays. Once a take is kept, Return exports it.
     func roomKey(_ event: NSEvent) -> Bool {
         guard take == nil, event.modifierFlags.intersection([.command, .option, .control]).isEmpty else { return false }
         switch event.keyCode {
         case 36, 76:
             if !event.isARepeat {
-                if liveKept { liveDone() } else { startTake() }
+                if liveKept { exportKept() } else if liveAsking { allowCapture() } else { startTake() }
             }
             return true
         case 49:
@@ -1291,7 +1320,14 @@ struct LiveBar: View {
         case .room:
             let ready = capture.phase == .ready || OOOSnapshot.isRequested
             LiveDevicesMenu(session: session, capture: capture, compact: width < 360)
-            if ready || capture.phase == .preparing {
+            if session.liveAsking {
+                Image(systemName: "lock.shield").foregroundStyle(.secondary)
+                Text("Your camera and microphone stay on this Mac.").textStyle(.caption).foregroundStyle(.secondary)
+                    .lineLimit(2).layoutPriority(-1)
+                Button("Continue") { session.allowCapture() }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .help("macOS asks next whether OOO may use them (Return)")
+            } else if ready || capture.phase == .preparing {
                 if capture.phase == .preparing {
                     ProgressView().controlSize(.small)
                     Text("Getting your camera ready").textStyle(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -1313,8 +1349,19 @@ struct LiveBar: View {
                 Image(systemName: "exclamationmark.triangle").foregroundStyle(.secondary)
                 Text(session.liveNote ?? "The microphone isn't on.").textStyle(.caption).foregroundStyle(.secondary)
                     .lineLimit(2).layoutPriority(-1)
-                Button("Try Again") { session.startCapture() }
-                    .buttonStyle(QuietButtonStyle())
+                if OOOSession.captureRefused(filming: OOOSession.liveCamera) {
+                    let mic = AVCaptureDevice.authorizationStatus(for: .audio)
+                    Button("Open Privacy Settings") {
+                        OOOSession.openPrivacySettings(camera: mic == .authorized)
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .help("Allow OOO in System Settings › Privacy & Security, then come back")
+                    Button("Try Again") { session.startCapture() }
+                        .buttonStyle(QuietButtonStyle())
+                } else {
+                    Button("Try Again") { session.startCapture() }
+                        .buttonStyle(QuietButtonStyle())
+                }
             }
         case .counting:
             Text("Get ready").textStyle(.label)
@@ -1354,9 +1401,14 @@ struct LiveBar: View {
             Button("Retake") { session.retake() }
                 .buttonStyle(QuietButtonStyle())
                 .help("Back to the room to try again; this take is undone (⌥⌘L)")
-            Button("Done") { session.liveDone() }
+            if width >= 300 {
+                Button("Done") { session.liveDone() }
+                    .buttonStyle(QuietButtonStyle())
+                    .help("Keep this take and go back to Frame to change anything")
+            }
+            Button("Export…") { session.exportKept() }
                 .buttonStyle(PrimaryButtonStyle())
-                .help("Keep this take and go back to Frame (Return)")
+                .help("Keep this take and export the video (Return)")
         }
     }
 
@@ -1541,6 +1593,7 @@ struct PositionChip: View {
 struct LiveInspector: View {
     @Bindable var session: OOOSession
     @AppStorage("live.camera") private var filmMe = true
+    @AppStorage("live.prompter") private var prompter = true
 
     var body: some View {
         let p = session.project
@@ -1568,6 +1621,19 @@ struct LiveInspector: View {
                 PositionList(session: session)
                 Text("During the take, press a position's number or click it to fly there, → for the next and ← for the one before, 0 for the whole slide. Draw more framings on the slide map in Frame.")
                     .textStyle(.caption).foregroundStyle(.tertiary)
+            }
+            Hairline()
+            InspectorSection(p.slideCount > 1 ? "Notes for slide \(session.mapPage + 1)" : "Notes", accessory: {
+                Toggle("Prompter", isOn: $prompter)
+                    .toggleStyle(.checkbox)
+                    .textStyle(.bodyCompact)
+                    .help("Show your notes at the top of the stage, under the Mac's camera, while you talk. Never in the video.")
+            }) {
+                NotesField(session: session, page: session.mapPage)
+                    .id(session.mapPage)
+                Text(prompter ? "Shown under the camera as you talk, so your eyes stay near it. Never in the video."
+                              : "Kept with the slide, for you; the prompter is off.")
+                    .textStyle(.caption).foregroundStyle(.secondary)
             }
             Hairline()
             InspectorSection("Closing", accessory: {
@@ -1614,6 +1680,44 @@ struct LiveInspector: View {
                 KeyLine(key: "⌘.", what: "Give the take up")
             }
         }
+    }
+}
+
+/// What you want to say over a slide: the prompter shows it under the
+/// camera as you talk. Typing is one undo step, and never in the video.
+struct NotesField: View {
+    let session: OOOSession
+    let page: Int
+    @FocusState private var focused: Bool
+    @State private var editing = false
+
+    var body: some View {
+        TextField("What you want to say over this slide…", text: Binding(
+            get: { session.project.notes(page) ?? "" },
+            set: { v in session.live { $0.setNotes(v.isEmpty ? nil : v, page: page) } }), axis: .vertical)
+            .textFieldStyle(.plain)
+            .font(.system(size: 13))
+            .lineLimit(3...8)
+            .padding(8)
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.well.opacity(0.7)))
+            .focused($focused)
+            .onChange(of: focused) { _, on in
+                guard on != editing else { return }
+                editing = on
+                if on {
+                    session.clock.beganTyping()
+                    session.beginEdit("Notes")
+                } else {
+                    session.clock.stoppedTyping()
+                    session.commitEdit("Notes")
+                }
+            }
+            .onDisappear {
+                guard editing else { return }
+                editing = false
+                session.clock.stoppedTyping()
+                session.commitEdit("Notes")
+            }
     }
 }
 

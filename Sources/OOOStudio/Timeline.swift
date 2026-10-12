@@ -406,7 +406,7 @@ struct ClipView: View {
     private var title: String {
         switch clip.kind {
         case .opening: return several ? "Slide 1" : "Whole slide"
-        case .shot: return beat.flatMap { Director.spokenLabel($0.shot.label) } ?? "Shot \(number ?? 0)"
+        case .shot: return beat.flatMap { Director.spokenLabel($0.shot.label) } ?? "Framing \(number ?? 0)"
         case .change(let to): return "Slide \(to + 1)"
         case .home: return "Slide 1"
         case .ending: return "Ending"
@@ -549,7 +549,7 @@ struct ClipView: View {
         switch z {
         case .end: name = clip.kind == .ending ? "Video Length" : "Hold"
         case .seam: name = clip.kind == .opening ? "Opening Length" : "Move Length"
-        case .body: name = "Move Shot"
+        case .body: name = "Move Framing"
         }
         // A landing stays between its neighbours' landings.
         let lo = (index > 0 ? clips[index - 1].land : 0) + 0.4
@@ -621,7 +621,7 @@ struct ClipView: View {
     private func clipTitle(_ c: TimelineClip) -> String {
         guard let id = c.shotID else { return "it" }
         let shot = session.project.shots.first { $0.id == id }
-        return Director.spokenLabel(shot?.label) ?? "shot \((session.index(of: id) ?? 0) + 1)"
+        return Director.spokenLabel(shot?.label) ?? "framing \((session.index(of: id) ?? 0) + 1)"
     }
 }
 

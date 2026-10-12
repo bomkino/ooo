@@ -174,10 +174,13 @@ public struct OOOMenuCommands: Commands {
                 .disabled(session == nil || taking)
             Button("Save Cover Frame…") { if let session { OOOCommands.saveCoverFrame(session) } }
                 .keyboardShortcut("e", modifiers: [.command, .option])
-                .disabled(session == nil || session?.hasSlide == false)
+                .disabled(session == nil || session?.hasSlide == false || taking)
             Button("Save Stills…") { if let session { OOOCommands.saveStills(session) } }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
-                .disabled(session == nil || session?.hasSlide == false)
+                .disabled(session == nil || session?.hasSlide == false || taking)
+        }
+        CommandGroup(replacing: .appInfo) {
+            Button("About Obsess Over One") { OOOAbout.show() }
         }
         CommandMenu("Camera") {
             Button((session?.pen.on ?? false) ? "Put the Pen Away" : "Draw on the Slide") { session?.togglePen() }
@@ -187,50 +190,50 @@ public struct OOOMenuCommands: Commands {
             Button("Direct for Me") { session?.autoDirect() }
                 .keyboardShortcut("d", modifiers: [.command, .shift])
                 .disabled(session == nil || session?.busy != nil || taking)
-            Button("Cut Moves to Voice") { session?.cutToVoice() }
+            Button("Time Moves to My Voice") { session?.cutToVoice() }
                 .keyboardShortcut("v", modifiers: [.command, .option])
                 .disabled(session?.project.voice?.words?.isEmpty ?? true || taking)
             Divider()
-            Button("New Shot at Playhead") { session?.addShot() }
+            Button("New Framing at Playhead") { session?.addShot() }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
                 .disabled(session == nil || taking)
             Button("New Framing From This View") { session?.addShotFromView() }
                 .disabled(session == nil || session?.hasSlide == false || taking)
-            Button("Duplicate Shot") { session?.duplicateSelectedShot() }
+            Button("Duplicate Framing") { session?.duplicateSelectedShot() }
                 .keyboardShortcut("d", modifiers: .command)
                 .disabled(session?.selectedShot == nil || taking)
-            Button("Delete Shot") { session?.deleteSelectedShot() }
+            Button("Delete Framing") { session?.deleteSelectedShot() }
                 .disabled(session?.selectedShot == nil || taking)
-            Button("Move Shot Earlier") { if let id = session?.selectedShot?.id { session?.moveShot(id, by: -1) } }
+            Button("Move Framing Earlier") { if let id = session?.selectedShot?.id { session?.moveShot(id, by: -1) } }
                 .disabled(!canMoveShot(-1) || taking)
-            Button("Move Shot Later") { if let id = session?.selectedShot?.id { session?.moveShot(id, by: 1) } }
+            Button("Move Framing Later") { if let id = session?.selectedShot?.id { session?.moveShot(id, by: 1) } }
                 .disabled(!canMoveShot(1) || taking)
             Divider()
             // Every drag on the map and the timeline has a key; a run of presses is one undo step.
             Button("Move Framing Left") { session?.nudgeFraming(-1, 0) }
                 .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
-                .disabled(session == nil)
+                .disabled(session == nil || taking)
             Button("Move Framing Right") { session?.nudgeFraming(1, 0) }
                 .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
-                .disabled(session == nil)
+                .disabled(session == nil || taking)
             Button("Move Framing Up") { session?.nudgeFraming(0, -1) }
                 .keyboardShortcut(.upArrow, modifiers: [.command, .option])
-                .disabled(session == nil)
+                .disabled(session == nil || taking)
             Button("Move Framing Down") { session?.nudgeFraming(0, 1) }
                 .keyboardShortcut(.downArrow, modifiers: [.command, .option])
-                .disabled(session == nil)
+                .disabled(session == nil || taking)
             Button("Closer") { session?.nudgeZoom(closer: true) }
                 .keyboardShortcut("=", modifiers: [.command, .option])
-                .disabled(session == nil)
+                .disabled(session == nil || taking)
             Button("Wider") { session?.nudgeZoom(closer: false) }
                 .keyboardShortcut("-", modifiers: [.command, .option])
-                .disabled(session == nil)
+                .disabled(session == nil || taking)
             Button("Land Earlier") { session?.nudgeTime(-1) }
                 .keyboardShortcut("[", modifiers: [.command, .option])
-                .disabled(session?.selectedShot == nil)
+                .disabled(session?.selectedShot == nil || taking)
             Button("Land Later") { session?.nudgeTime(1) }
                 .keyboardShortcut("]", modifiers: [.command, .option])
-                .disabled(session?.selectedShot == nil)
+                .disabled(session?.selectedShot == nil || taking)
         }
         CommandMenu("Playback") {
             Button((session?.clock.playing ?? false) ? "Pause" : "Play") {
@@ -315,7 +318,8 @@ public struct OOORoot: View {
 public struct OOOWindow: View {
     @Bindable var session: OOOSession
     @State private var showInspector = true
-    @AppStorage("showSlideMap") private var showSlideMap = true
+    /// What a drag over the window would do, in words, while one is over it.
+    @State private var dropping: String?
 
     public init(session: OOOSession) {
         self.session = session
@@ -327,18 +331,18 @@ public struct OOOWindow: View {
                 .background(Theme.surround)
             TimelineView(session: session)
         }
+        // A slide or a recording dropped anywhere in the window.
+        .onDrop(of: [.fileURL], delegate: WindowDrop(session: session, words: $dropping))
+        .overlay { if let dropping { DropLabel(words: dropping) } }
         .inspector(isPresented: $showInspector) {
             InspectorPanel(session: session)
                 .inspectorColumnWidth(min: 300, ideal: 330, max: 440)
         }
         .navigationSubtitle(subtitle)
+        // Few enough to fit the narrowest window: the shape, the modes, and
+        // the way out (Export) always in view. The rest is in the menus and
+        // right where you work.
         .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Button { withAnimation(Theme.settle) { showSlideMap.toggle() } } label: {
-                    Label("Slide Map", systemImage: "sidebar.left")
-                }
-                .help(showSlideMap ? "Keep the slide map in the inspector (⇧⌘M)" : "Show the slide map beside the video, when the window has room (⇧⌘M)")
-            }
             ToolbarItem(placement: .navigation) {
                 FormatPicker(current: session.project.format) { session.setFormat($0) }
                     .disabled(session.isTaking)
@@ -349,30 +353,7 @@ public struct OOOWindow: View {
             ToolbarItemGroup(placement: .primaryAction) {
                 DirectButton(session: session)
                     .disabled(session.isTaking)
-                Button { session.addShot() } label: {
-                    Label("New Shot", systemImage: "plus.viewfinder")
-                }
-                .help("A new framing at the playhead (⇧⌘N)")
-                .disabled(session.isTaking)
-                Button { OOOCommands.chooseSlide(session) } label: {
-                    Label("Slide", systemImage: "rectangle.on.rectangle.angled")
-                }
-                .help("Choose the slide: a PDF or a picture (⌘I). Or copy a slide in Keynote, Figma or Preview and paste it (⇧⌘V).")
-                .disabled(session.isTaking)
-                Button { OOOCommands.chooseVoice(session) } label: {
-                    Label("Voiceover", systemImage: "waveform.badge.plus")
-                }
-                .help("Choose your voiceover (⌥⌘I)")
-                .disabled(session.isTaking)
-                Button { session.showExport = true } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "square.and.arrow.up").font(.system(size: 12, weight: .semibold))
-                        Text("Export")
-                    }
-                }
-                .buttonStyle(PrimaryButtonStyle())
-                .help("Export the video (⌘E)")
-                .disabled(session.isTaking)
+                ExportButton(session: session)
                 Button { showInspector.toggle() } label: {
                     Label("Inspector", systemImage: "sidebar.right")
                 }
@@ -384,17 +365,128 @@ public struct OOOWindow: View {
         .sheet(isPresented: $session.showExport) {
             ExportSheet(session: session)
         }
-        .alert("OOO", isPresented: Binding(get: { session.message != nil }, set: { if !$0 { session.message = nil } })) {
+        .alert(alert.title, isPresented: Binding(get: { session.message != nil }, set: { if !$0 { session.message = nil } })) {
             Button("OK") { session.message = nil }
         } message: {
-            Text(session.message ?? "")
+            Text(alert.body)
         }
         .frame(minWidth: 960, minHeight: 640)
     }
 
+    /// The video's shape and length, as people say them.
     private var subtitle: String {
-        let p = session.project
-        return "\(p.format.width) × \(p.format.height) · \(p.fps) fps · \(secondsLabel(session.choreography.duration))"
+        "\(session.project.format.name) · \(secondsLabel(session.choreography.duration))"
+    }
+
+    /// A notice titled by what happened: "Couldn't read the recording", then why.
+    private var alert: (title: String, body: String) {
+        let m = session.message ?? ""
+        if m.hasPrefix("Couldn't "), let colon = m.range(of: ": ") {
+            return (String(m[..<colon.lowerBound]), String(m[colon.upperBound...]))
+        }
+        return ("OOO", m)
+    }
+}
+
+/// Takes a slide or a recording dropped anywhere in the window, and says
+/// what it will do while it is held over it.
+struct WindowDrop: DropDelegate {
+    let session: OOOSession
+    @Binding var words: String?
+
+    func validateDrop(info: DropInfo) -> Bool {
+        !session.isTaking && info.hasItemsConforming(to: [.fileURL])
+    }
+
+    func dropEntered(info: DropInfo) {
+        guard validateDrop(info: info) else { return }
+        withAnimation(Theme.quick) { words = Self.words(info.itemProviders(for: [.fileURL]), sample: session.project.slide.kind == .sample) }
+    }
+
+    func dropExited(info: DropInfo) {
+        withAnimation(Theme.quick) { words = nil }
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        words = nil
+        guard !session.isTaking else { return false }
+        let session = session
+        loadDropped(info.itemProviders(for: [.fileURL])) { session.importDropped($0) }
+        return true
+    }
+
+    /// What the drop will do, from what is held: a recording, a slide, or several.
+    static func words(_ items: [NSItemProvider], sample: Bool) -> String {
+        let sounds = items.filter { $0.hasItemConformingToTypeIdentifier(UTType.audio.identifier) }.count
+        let slides = items.count - sounds
+        if slides == 0 && sounds > 0 { return "Drop to make it your voiceover" }
+        if slides > 1 { return "Drop \(slides) slides to make one video of them" }
+        return sample ? "Drop to make it your slide" : "Drop to make it the slide"
+    }
+}
+
+/// Over the window while a file is held over it: what letting go will do.
+struct DropLabel: View {
+    let words: String
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.32)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Theme.camera, style: StrokeStyle(lineWidth: 2, dash: [8, 6]))
+                .padding(14)
+            HStack(spacing: 10) {
+                Image(systemName: "arrow.down.circle.fill").font(.system(size: 20, weight: .semibold)).foregroundStyle(Theme.camera)
+                Text(words).textStyle(.title).foregroundStyle(.primary)
+            }
+            .padding(.horizontal, 22)
+            .frame(height: 52)
+            .background(Capsule().fill(Theme.raised))
+            .shadow(color: .black.opacity(0.3), radius: 18, y: 6)
+        }
+        .allowsHitTesting(false)
+        .transition(.opacity)
+    }
+}
+
+/// Export, in the toolbar, always in view. It glows softly once the video
+/// is ready to post and hasn't been exported as it is.
+struct ExportButton: View {
+    @Bindable var session: OOOSession
+
+    var body: some View {
+        Button { session.showExport = true } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "square.and.arrow.up").font(.system(size: 12, weight: .semibold))
+                Text("Export")
+            }
+        }
+        .buttonStyle(PrimaryButtonStyle())
+        .help("Export the video (⌘E)")
+        .disabled(session.isTaking)
+        .modifier(Glow(on: session.readyToPost && !session.isTaking))
+    }
+}
+
+/// A soft ember glow that breathes while `on` (steadily, with Reduce Motion
+/// on); nothing animates while it is off.
+struct Glow: ViewModifier {
+    let on: Bool
+    @State private var pulse = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .shadow(color: Theme.camera.opacity(on && pulse ? 0.8 : 0), radius: 6)
+            .onChange(of: on, initial: true) { _, on in
+                if on && reduceMotion {
+                    pulse = true
+                } else if on {
+                    withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) { pulse = true }
+                } else {
+                    withTransaction(Transaction(animation: nil)) { pulse = false }
+                }
+            }
     }
 }
 
@@ -451,37 +543,34 @@ struct WindowReader: NSViewRepresentable {
     }
 }
 
-/// Plans a tour of the slide. It glows softly while the slide has no shots
-/// (steadily, with Reduce Motion on).
+/// Plans a tour of the slide. It glows softly while the slide has no shots.
+/// Once you have set a shot yourself it plans again only when you say so.
 struct DirectButton: View {
     @Bindable var session: OOOSession
-    @State private var pulse = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var asking = false
 
     private var glow: Bool { session.project.shots.isEmpty && session.hasSlide && session.busy == nil }
+    /// Shots you set by hand, which a new plan would replace.
+    private var yours: Int { session.project.shots.filter { !$0.isPlanned }.count }
 
     var body: some View {
-        Button { session.autoDirect() } label: {
-            Label("Direct for Me", systemImage: "wand.and.stars")
+        Button { if yours > 0 { asking = true } else { session.autoDirect() } } label: {
+            Label(yours > 0 ? "Plan Again" : "Direct for Me", systemImage: "wand.and.stars")
                 .labelStyle(.titleAndIcon)
         }
         .help("Read the slide and plan the camera's tour: the headline, the details worth a look, the small print last (⇧⌘D)")
         .disabled(session.busy != nil || !session.hasSlide)
-        .shadow(color: Theme.camera.opacity(glow && pulse ? 0.8 : 0), radius: 6)
-        // The pulse runs only while the glow shows; otherwise nothing animates.
-        .onChange(of: glow, initial: true) { _, on in
-            if on && reduceMotion {
-                pulse = true
-            } else if on {
-                withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) { pulse = true }
-            } else {
-                withTransaction(Transaction(animation: nil)) { pulse = false }
-            }
+        .modifier(Glow(on: glow))
+        .confirmationDialog("Plan the tour again?", isPresented: $asking) {
+            Button("Plan Again") { session.autoDirect() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("OOO plans every framing afresh, and the \(yours == 1 ? "framing" : "\(yours) framings") you set yourself \(yours == 1 ? "is" : "are") replaced. ⌘Z brings \(yours == 1 ? "it" : "them") back.")
         }
     }
 }
 
-/// The canvas shapes most videos go to, one click apart, with the rest in a menu.
+/// The video's shape, named, in one menu: the four most posts go to, then 4K.
 public struct FormatPicker: View {
     let current: CanvasFormat
     let choose: (CanvasFormat) -> Void
@@ -493,37 +582,56 @@ public struct FormatPicker: View {
     }
 
     public var body: some View {
-        HStack(spacing: 6) {
-            Picker("Canvas", selection: Binding(
-                get: { Self.common.contains(current) ? current.id : "" },
+        Menu {
+            Picker("Shape", selection: Binding(
+                get: { current.id },
                 set: { id in
-                    if let f = Self.common.first(where: { $0.id == id }), f != current { choose(f) }
+                    if let f = CanvasFormat.presets.first(where: { $0.id == id }), f != current { choose(f) }
                 })) {
-                ForEach(Self.common) { f in
-                    Text(f.ratioLabel).tag(f.id).help("\(f.name): \(f.detail)")
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-            .help("Canvas shape")
-            Menu {
                 ForEach(CanvasFormat.presets) { f in
-                    Button { if f != current { choose(f) } } label: {
-                        Text("\(f.name)  \(f.ratioLabel)  ·  \(f.width) × \(f.height)  ·  \(f.detail)")
-                    }
+                    Text("\(f.ratioLabel)  \(f.name)  ·  \(f.detail)").tag(f.id)
                 }
-            } label: {
-                Image(systemName: "aspectratio")
             }
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("All canvas shapes")
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "aspectratio").font(.system(size: 11.5, weight: .semibold))
+                Text("\(current.ratioLabel) \(current.name)").font(.system(size: 12.5, weight: .semibold))
+            }
         }
+        .menuIndicator(.visible)
+        .fixedSize()
+        .help("The video's shape: \(current.name), \(current.width) × \(current.height), for \(current.detail)")
     }
 }
 
 // MARK: - App bootstrap
+
+/// The About panel: the name, what it means, and where it comes from.
+@MainActor
+enum OOOAbout {
+    static func show() {
+        let body = NSMutableAttributedString()
+        let centred = NSMutableParagraphStyle()
+        centred.alignment = .center
+        centred.paragraphSpacing = 4
+        func line(_ s: String, _ font: NSFont, _ colour: NSColor = .labelColor, link: URL? = nil) {
+            var a: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: colour, .paragraphStyle: centred]
+            if let link { a[.link] = link }
+            body.append(NSAttributedString(string: s + "\n", attributes: a))
+        }
+        line("Every slide. Every detail.", .systemFont(ofSize: 12, weight: .semibold))
+        line("Made with love by pitch.dog.", .systemFont(ofSize: 11), .secondaryLabelColor)
+        line("Free and open source, under the AGPL 3.0.", .systemFont(ofSize: 11), .secondaryLabelColor)
+        line("github.com/bomkino/ooo", .systemFont(ofSize: 11), .linkColor, link: URL(string: "https://github.com/bomkino/ooo"))
+        NSApp.activate()
+        NSApp.orderFrontStandardAboutPanel(options: [
+            .applicationName: "Obsess Over One",
+            .credits: body,
+        ])
+    }
+}
 
 public enum OOOLaunch {
     /// Call once from the app's `init()`.
@@ -541,8 +649,10 @@ public enum OOOLaunch {
             $0.processIdentifier != getpid() && ($0.bundleIdentifier?.hasPrefix("dog.pitch.ooo") ?? false)
         }
         MediaStore.sweep(earlierToo: !others)
-        DispatchQueue.global(qos: .utility).async {
-            // Compile every shader before the first frame needs it.
+        DispatchQueue.global(qos: .userInitiated).async {
+            // The shared stage, built off main before the first frame asks for it;
+            // then every shader, what the first frame needs before every look's.
+            _ = OOOShared.stage
             if let r = try? StageRenderer() { r.warmUp() }
         }
     }

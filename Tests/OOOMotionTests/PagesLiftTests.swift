@@ -356,4 +356,23 @@ final class PagesLiftTests: XCTestCase {
         let none = choreography([], pages: [PageTiming(id: second, aspect: A)]).duration
         XCTAssertGreaterThan(none, Arrive().end + 1.6 + PageChange.turn.length + 2)
     }
+
+    func testTheTurnHomeWaitsForAMeltToFinish() {
+        let shots = [Shot(time: 5, frame: ShotFrame(center: Vec2(0.3, 0.3), size: Vec2(0.3, 0.3))),
+                     Shot(time: 8, frame: ShotFrame(center: Vec2(0.7, 0.6), size: Vec2(0.25, 0.25)))]
+        var input = ChoreographyInput(overview: .overview(slideAspect: A, canvasAspect: C), shots: shots, arrive: Arrive(), ending: .hold,
+                                      duration: 0, slideAspect: A, canvasAspect: C, style: MotionStyle(), safe: .reel,
+                                      pages: [PageTiming(id: second, aspect: A, change: .melt)], home: HomeTiming())
+        let natural = Choreography.naturalDuration(input)
+        for (length, at) in [(11.0, nil), (natural, 9.0), (natural, nil)] as [(Double, Double?)] {
+            input.duration = length
+            input.home = HomeTiming(at: at)
+            let c = Choreography(input)
+            XCTAssertEqual(c.changes.count, 2)
+            for k in 1..<c.changes.count {
+                XCTAssertGreaterThanOrEqual(c.changes[k].start, c.changes[k - 1].end - 1e-6,
+                                            "length \(length), at \(String(describing: at)): \(c.changes)")
+            }
+        }
+    }
 }

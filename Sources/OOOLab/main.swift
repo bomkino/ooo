@@ -25,6 +25,8 @@ import StageKit
 //                                           melting, at six moments (across)
 //   ooo-lab marks --out grid.png            each mark drawn on the card, drawing on and after;
 //                                           --close c.png: each up close; --ink flat: 1.0.1's ink
+//   ooo-lab sizes --out grid.png            the video in every size Export writes at once, each
+//                                           framed again for its shape: the opening, then landings
 //   ooo-lab lifts --out grid.png            the stage rising to leave room for you, and a
 //                                           close-up while it is up, the room marked
 //   ooo-lab stills --out dir                the stills Save Stills writes: the opening, then
@@ -965,6 +967,47 @@ case "lifts":
             .joined(separator: ", "))
     } catch {
         fail("lifts failed: \(error)")
+    }
+
+case "sizes":
+    // Every size Export can write at once, each framed again for its shape:
+    // one size a row; across, the opening at rest, then the first landings.
+    let formats: [CanvasFormat] = [.reel, .portrait, .square, .landscape]
+    let out = URL(fileURLWithPath: value("--out") ?? "sizes.png")
+    let ch = 480
+    do {
+        let stage = try SlideStage()
+        var rows: [(images: [CGImage], width: Int)] = []
+        for f in formats {
+            let p = project.refitted(to: f)
+            let scene = try SlideLoader.scene(for: p, media: media)
+            let beats = scene.choreography.beats
+            var moments = [beats.first.map { min($0.land + 0.2, max($0.leave - 0.05, $0.land)) } ?? 0]
+            moments += beats.filter { !$0.isOverview }.prefix(3).map { min($0.land + min(0.7, $0.hold * 0.45), scene.duration - 0.05) }
+            let cw = max(2, Int((Double(ch) * Double(f.aspect)).rounded()))
+            let images = try moments.map { try stage.still(scene, at: $0, width: cw, height: ch, samples: 6, withCaptions: p.showsCaptions) }
+            rows.append((images, cw))
+            print("sizes \(f.ratioLabel) \(f.name): \(p.shots.count) framings, \(String(format: "%.1f", scene.duration)) s, "
+                + moments.map { String(format: "%.2f", $0) }.joined(separator: " "))
+        }
+        let gap = 8
+        let width = rows.map { $0.images.count * ($0.width + gap) }.max() ?? 1
+        let height = rows.count * (ch + gap)
+        guard let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { fail("no context") }
+        ctx.setFillColor(CGColor(srgbRed: 0.08, green: 0.08, blue: 0.09, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        for (r, row) in rows.enumerated() {
+            let y = height - (r + 1) * (ch + gap)
+            for (c, img) in row.images.enumerated() {
+                ctx.draw(img, in: CGRect(x: c * (row.width + gap), y: y, width: row.width, height: ch))
+            }
+        }
+        try ImageOutput.writePNG(ctx.makeImage()!, to: out)
+        print("sizes \(out.path)")
+    } catch {
+        fail("sizes failed: \(error)")
     }
 
 case "live":

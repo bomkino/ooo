@@ -5,7 +5,9 @@
 # with a shot selected, a title, the safe areas and the export sheet, three
 # slides that turn and melt, marks drawn on the card with the pen out, the
 # slide map beside the video (with the inspector closed, and kept in the
-# inspector instead), and the stage up with room for you. Last, a soak: a
+# inspector instead), the stage up with room for you, the first-run welcome,
+# captions in the Voice tab and the export sheet, notes under the camera in
+# Live, and a narrow window. Last, a soak: a
 # live take kept and played back in Frame on the running stage, failed if
 # it would freeze the window or swamp the Mac's memory.
 #
@@ -63,7 +65,9 @@ shot() {
   fi
 }
 
+SAID="We grew three times in nine months. Every customer stayed, and the small print says why."
 echo "== The editor"
+shot welcome --welcome --time 3
 shot editor-dark --shot 2
 shot editor-light --scheme light --shot 2
 shot arriving --time 1.0
@@ -71,6 +75,12 @@ shot look --tab look --size 1440x1500
 shot look-light --scheme light --tab look --size 1440x1500
 shot voice --tab voice
 shot export --show-export
+shot narrow --size 960x700
+echo "== Captions, notes and every size"
+shot captions --slide "$WIDE" --say "$SAID" --tab voice --time 7 --size 1440x1500
+shot captions-ink --scheme light --slide "$WIDE" --say "$SAID" --captions ink --time 9
+shot export-captions --slide "$WIDE" --say "$SAID" --show-export
+shot live-notes --slide "$WIDE" --mode live --notes "Start with the growth: three times in nine months. Then the retention, then the ask." --size 1440x1500
 shot landscape --format landscape --shot 1
 shot map-wide --slide "$WIDE" --shot 2 --no-inspector
 shot map-in-inspector --slide "$WIDE" --shot 2 --no-map

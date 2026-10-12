@@ -104,6 +104,11 @@ SAID="So this is the slide we spent a week on. Revenue grew three point one time
 "$LAB" render --slide "$WIDE" --say "$SAID" --captions card --quality draft --scale 0.5 --out "$OUT/captions/draft.mp4"
 "$LAB" live "${LIVE[@]}" --say "$SAID" --captions clean --out "$OUT/captions/live" > "$OUT/captions/live.txt"
 
+echo "== Every size at once: each framed again for its shape"
+mkdir -p "$OUT/sizes"
+"$LAB" sizes --slide "$WIDE" --out "$OUT/sizes/wide.png" | tee "$OUT/sizes/sizes.txt"
+"$LAB" sizes --out "$OUT/sizes/sample.png" >> "$OUT/sizes/sizes.txt"
+
 echo "== Replace Slide: the wide tour, moved onto the corrected slide"
 mkdir -p "$OUT/replace"
 "$LAB" plan --slide "$OUT/fixtures/wide-2576x1080.png" | tee "$OUT/replace/before.txt"

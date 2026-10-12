@@ -21,6 +21,8 @@ public final class SlideSource: @unchecked Sendable {
 
     /// Longest side of the texture that holds the whole slide.
     public static let baseSide = 4096
+    /// The longest texture side every Mac's GPU takes.
+    public static let maxTextureSide = 16384
     /// How far past its own pixels a picture is drawn: with a Lanczos
     /// resample and a light unsharp mask, text drawn at twice a picture's
     /// size stays crisp where the GPU's bilinear magnification goes soft.
@@ -149,7 +151,8 @@ public final class SlideSource: @unchecked Sendable {
     public var wholeSide: Int {
         guard let image else { return Self.baseSide }
         let long = Float(max(image.width, image.height))
-        return Int(min(long * Self.pictureUpscale, max(long, 6144)).rounded())
+        // No larger than the GPU takes: past that, close-ups come from the picture itself.
+        return min(Int(min(long * Self.pictureUpscale, max(long, 6144)).rounded()), Self.maxTextureSide)
     }
 
     /// The region grown outwards to whole pixels of a picture, so a detail cut

@@ -24,8 +24,11 @@ public enum SlideAnalysis {
             let lock = NSLock()
             DispatchQueue.concurrentPerform(iterations: tiles.count) { i in
                 let r = tiles[i]
-                let h = max(1, Int((Float(side) * (r.w - r.y) / ((r.z - r.x) * source.aspect)).rounded()))
-                guard let image = source.render(region: r, width: side, height: h),
+                // Its longest side `side`, however tall or wide the slide.
+                let ratio = (r.w - r.y) / ((r.z - r.x) * source.aspect)
+                let w = ratio > 1 ? max(1, Int((Float(side) / ratio).rounded())) : side
+                let h = ratio > 1 ? side : max(1, Int((Float(side) * ratio).rounded()))
+                guard let image = source.render(region: r, width: w, height: h),
                       let read = try? lines(in: image) else { return }
                 let mapped = read.map { d -> SlideDetail in
                     var d = d

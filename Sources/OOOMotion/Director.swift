@@ -750,7 +750,7 @@ public enum Director {
     public static func spokenLabel(_ label: String?) -> String? {
         guard let label else { return nil }
         let parts = label.split(separator: " ")
-        if parts.count == 2, parts[0] == "Shot", Int(parts[1]) != nil { return nil }
+        if parts.count == 2, parts[0] == "Shot" || parts[0] == "Framing", Int(parts[1]) != nil { return nil }
         return label
     }
 

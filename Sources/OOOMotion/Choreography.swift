@@ -411,6 +411,8 @@ public struct Choreography: Sendable {
         let onShot = !current.overview
         if let home = input.home, n > 1 {
             // Back to the whole slide, settled, before it turns back to the first.
+            // After a melt, not before the melt has finished.
+            let last = max(last, settled)
             let auto = duration - (backLead + PageChange.turn.length + coverRest + endingTail(input.ending))
             var land = max(last + (onShot ? 1.6 : 0.25), home.at.map { $0 - backLead } ?? auto)
             land = max(min(land, duration - backLead - PageChange.turn.length - 0.2), last + 0.25)

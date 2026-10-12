@@ -203,6 +203,29 @@ final class LiveTests: XCTestCase {
         let whole = c.beats.first { $0.role == .whole }
         XCTAssertGreaterThanOrEqual(whole?.depart ?? 0, 14)
     }
+
+    func testGoingOnToASlideAfterTheLastStopKeepsTheLengthNearClose() {
+        // Slide 2 has no stops of its own: you go on to it and talk over it, then Close.
+        for change in [PageChange.turn, .melt] {
+            for ending in [Ending.hold, .pullBack] {
+                var base = input(Array(stops().prefix(2)), pages: [PageTiming(id: second, aspect: A, change: change)])
+                base.ending = ending
+                base.duration = Choreography.naturalDuration(base)
+                var take = LiveTake(base)
+                take.step(.next, at: 3)
+                take.step(.next, at: 7)
+                take.step(.next, at: 11)
+                let end = 31.0
+                let (shots, changes) = take.finished(at: end)
+                var done = base
+                done.shots = shots
+                done.pages = done.pages.enumerated().map { k, p in var p = p; p.at = k < changes.count ? changes[k] : p.at; return p }
+                let length = LiveTake.length(done, end: end)
+                XCTAssertGreaterThan(length, end, "\(change) \(ending)")
+                XCTAssertLessThan(length, end + 6, "\(change) \(ending): \(length) s")
+            }
+        }
+    }
 }
 
 /// Clicking the slide during a take, and how long the video runs on after it.

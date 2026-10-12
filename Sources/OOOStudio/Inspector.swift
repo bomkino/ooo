@@ -156,20 +156,20 @@ struct ShotInspector: View {
         let p = session.project
         let number = (session.index(of: id) ?? 0) + 1
         VStack(alignment: .leading, spacing: 0) {
-            InspectorSection("Shot \(number)", accessory: {
+            InspectorSection("Framing \(number)", accessory: {
                 Text("lands at \(secondsLabel(shot.time))").textStyle(.data).foregroundStyle(.secondary)
             }) {
                 LiveField(session: session, placeholder: "Name",
                           text: Binding(get: { session.project.shots.first { $0.id == id }?.label ?? "" },
                                         set: { v in session.liveShot(id) { $0.label = v.isEmpty ? nil : v } }),
-                          undo: "Rename Shot")
+                          undo: "Rename Framing")
                 LiveField(session: session, placeholder: "Lands on the words…",
                           text: Binding(get: { session.project.shots.first { $0.id == id }?.cue ?? "" },
                                         set: { v in session.liveShot(id) { $0.cue = v.isEmpty ? nil : v } }),
                           undo: "Cue")
                 Text(p.voice?.words == nil
                      ? "With a voiceover, the camera lands just before you say these words."
-                     : "Cut to Voice lands the camera just before you say these words.")
+                     : "Time Moves to My Voice lands the camera just before you say these words.")
                     .textStyle(.caption).foregroundStyle(.tertiary)
             }
             Hairline()
@@ -207,7 +207,7 @@ struct ShotInspector: View {
             Hairline()
             InspectorSection("Framing") {
                 Dial(session: session, label: "Zoom", value: zoom(id), range: 0...4.5, defaultValue: 1,
-                     format: { String(format: "%.1f×", powf(2, $0)) }, undo: "Frame Shot")
+                     format: { String(format: "%.1f×", powf(2, $0)) }, undo: "Reframe")
                 Dial(session: session, label: "Turn", value: session.bindShot(id, \.yaw, fallback: 0), range: -25...25,
                      defaultValue: 0, format: degreesLabel)
                 Dial(session: session, label: "Tilt", value: session.bindShot(id, \.pitch, fallback: 0), range: -20...20,
@@ -246,7 +246,7 @@ struct ShotInspector: View {
                 Button("Duplicate") { session.duplicateSelectedShot() }
                     .buttonStyle(QuietButtonStyle())
                 Spacer()
-                Button(role: .destructive) { session.deleteSelectedShot() } label: { Text("Delete Shot") }
+                Button(role: .destructive) { session.deleteSelectedShot() } label: { Text("Delete Framing") }
                     .buttonStyle(QuietButtonStyle())
             }
             .padding(.horizontal, 10)
@@ -586,19 +586,25 @@ struct VoiceInspector: View {
                 }
                 Hairline()
                 InspectorSection("Words", accessory: {
-                    if let words = voice.words { Badge("\(words.count) heard") }
+                    if session.listening {
+                        ProgressView().controlSize(.mini)
+                    } else if let words = voice.words {
+                        Badge("\(words.count) heard")
+                    }
                 }) {
                     if let words = voice.words, !words.isEmpty {
                         Transcript(words: words, landings: session.choreography.landings)
                         Button {
                             session.cutToVoice()
                         } label: {
-                            Label("Cut Moves to Voice", systemImage: "waveform.path")
+                            Label("Time Moves to My Voice", systemImage: "waveform.path")
                         }
                         .buttonStyle(PrimaryButtonStyle())
-                        .help("Keeps every framing and lands each one just before you say its words")
-                        Text("Each shot lands just before its cue words, or its name, are said. Shots the voice never names are fitted in between.")
-                            .textStyle(.caption).foregroundStyle(.tertiary)
+                        .help("Keeps every framing and lands each one just before you say its words (⌥⌘V)")
+                        Text("Each framing lands just before you say its cue words, or its name. Framings you never name are fitted in between.")
+                            .textStyle(.caption).foregroundStyle(.secondary)
+                    } else if session.listening {
+                        Text("Listening for your words, on this Mac…").textStyle(.caption).foregroundStyle(.secondary)
                     } else {
                         Text("OOO listens on this Mac for the words and when you say them. Nothing leaves your computer.")
                             .textStyle(.caption).foregroundStyle(.secondary)
@@ -607,45 +613,148 @@ struct VoiceInspector: View {
                         .buttonStyle(QuietButtonStyle())
                         .disabled(session.busy != nil)
                 }
+                if let words = voice.words, !words.isEmpty {
+                    Hairline()
+                    CaptionsSection(session: session)
+                }
                 Hairline()
                 HStack {
                     Button("Replace…") { OOOCommands.chooseVoice(session) }
                         .buttonStyle(QuietButtonStyle())
                     RecordButton(session: session, again: true)
                     Spacer()
-                    Button("Remove Voiceover", role: .destructive) { session.removeVoice() }
+                    Button("Remove", role: .destructive) { session.removeVoice() }
                         .buttonStyle(QuietButtonStyle())
+                        .help("Take the voiceover out of the video (⌘Z brings it back)")
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 10)
+                Hairline()
+                ChoiceCard(symbol: "person.crop.square", title: "Go Live",
+                           detail: "Film yourself too, and lead the camera with the keys as you talk.", keys: "⌥⌘L") {
+                    session.enter(.live)
+                }
+                .disabled(!session.canEnter(.live))
+                .padding(8)
             } else {
-                VStack(spacing: 14) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
-                            .foregroundStyle(targeted ? Theme.camera : Color.secondary.opacity(0.5))
-                        Image(systemName: "waveform")
-                            .font(.system(size: 26, weight: .light))
-                            .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Talk about your slide").textStyle(.title)
+                        Text("OOO hears your words on this Mac and lands each move just before you say them.")
+                            .textStyle(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    .frame(height: 96)
-                    Text("Talk about your slide").textStyle(.title)
-                    Text("Record a scratch take here, talking along as the video plays, or drop in a recording from any app. OOO hears the words on this Mac and lands each move just before you say them.")
-                        .textStyle(.caption).foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                    HStack(spacing: 8) {
-                        RecordButton(session: session, again: false)
-                        Button("Choose Voiceover…") { OOOCommands.chooseVoice(session) }
-                            .buttonStyle(QuietButtonStyle())
+                    .padding(.horizontal, 10)
+                    VStack(alignment: .leading, spacing: 2) {
+                        ChoiceCard(symbol: "record.circle", title: "Record over it",
+                                   detail: "Talk as the video plays. Each move lands on your words.", keys: "⌥⌘R") {
+                            session.startRecording()
+                        }
+                        ChoiceCard(symbol: "person.crop.square", title: "Go Live",
+                                   detail: "It films you too, and you lead the camera as you talk.", keys: "⌥⌘L") {
+                            session.enter(.live)
+                        }
+                        .disabled(!session.canEnter(.live))
+                        ChoiceCard(symbol: "waveform.badge.plus", title: "Use a recording…",
+                                   detail: "A voiceover from any app: M4A, MP3, WAV or AIFF. Or drop it here.", keys: "⌥⌘I") {
+                            OOOCommands.chooseVoice(session)
+                        }
                     }
                 }
-                .padding(Theme.Space.l)
+                .padding(.vertical, 14)
+                .padding(.horizontal, 4)
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
+                    .foregroundStyle(targeted ? Theme.camera : .clear))
+                .padding(10)
                 .onDrop(of: [.fileURL], isTargeted: $targeted) { providers in
                     loadDropped(providers) { urls in if let url = urls.first { session.importVoice(url) } }
                     return true
                 }
             }
         }
+    }
+}
+
+/// Your words on screen as you say them: on or off, their look, and each
+/// phrase as it reads, to put a misheard word right.
+struct CaptionsSection: View {
+    @Bindable var session: OOOSession
+
+    var body: some View {
+        let on = session.project.showsCaptions
+        InspectorSection("Captions", accessory: {
+            Toggle("", isOn: Binding(get: { session.project.showsCaptions }, set: { session.setCaptions($0) }))
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .labelsHidden()
+                .help(on ? "Hide the captions" : "Show your words on screen as you say them")
+        }) {
+            if on {
+                ChoiceRow(CaptionStyle.Look.allCases.map { ($0, $0.title) },
+                          selection: Binding(get: { session.project.captions?.look ?? .card }, set: { session.setCaptionLook($0) }))
+                Text(session.project.captions?.look.summary ?? "").textStyle(.caption).foregroundStyle(.secondary)
+                let phrases = session.project.captionPhrases
+                if !phrases.isEmpty {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(Array(phrases.enumerated()), id: \.offset) { k, phrase in
+                                PhraseRow(session: session, k: k, phrase: phrase)
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 220)
+                    Text("Click a phrase to put a word right. Its moment stays.").textStyle(.caption).foregroundStyle(.secondary)
+                }
+            } else {
+                Text("Your words on screen as you say them, for everyone watching with the sound off. They keep clear of every framing.")
+                    .textStyle(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+/// One phrase of the captions: when it shows, and its words, to edit.
+struct PhraseRow: View {
+    let session: OOOSession
+    let k: Int
+    let phrase: CaptionPhrase
+    @State private var text = ""
+    @FocusState private var focused: Bool
+    @State private var holdsKeys = false
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Button {
+                session.clock.playing = false
+                session.clock.time = phrase.shown
+                session.touch()
+            } label: {
+                Text(TransportBar.clockLabel(phrase.shown)).textStyle(.data).foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Show this moment")
+            TextField("", text: $text, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .lineLimit(1...3)
+                .focused($focused)
+                .onSubmit { focused = false }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.well.opacity(focused ? 0.9 : 0.4)))
+        .onAppear { text = phrase.text }
+        .onChange(of: phrase.text) { _, now in if !focused { text = now } }
+        .onChange(of: focused) { _, on in
+            if on != holdsKeys {
+                holdsKeys = on
+                if on { session.clock.beganTyping() } else { session.clock.stoppedTyping() }
+            }
+            if !on { session.editCaption(k, to: text) }
+        }
+        .onDisappear { if holdsKeys { holdsKeys = false; session.clock.stoppedTyping() } }
     }
 }
 

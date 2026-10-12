@@ -130,7 +130,7 @@ extension OOOSession {
 
     /// The shots on one slide played in `order`.
     public func reorderShots(_ order: [UUID]) {
-        update("Reorder Shots") { $0 = $0.reordered(order) }
+        update("Reorder Framings") { $0 = $0.reordered(order) }
     }
 
     /// Whether shot `id` can go a place earlier (−1) or later (1) on its slide.

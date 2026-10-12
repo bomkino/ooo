@@ -353,10 +353,17 @@ public struct LiveTake: Sendable {
             var need = d
             // The ending's first move sets off once you have finished.
             let last = c.beats.lastIndex { own.contains($0.shot.id) } ?? 0
-            if last + 1 < c.beats.count {
+            // The ending's own first beat: the pull back, or the flight back
+            // before the turn home. A slide change you made sits before it
+            // and never moves with the length.
+            let ending = c.beats.indices.first { j in
+                j > last && (c.beats[j].role == .pullBack || c.beats[j].role == .home
+                    || (c.beats[j].role == .whole && j + 1 < c.beats.count && c.beats[j + 1].role == .home))
+            }
+            if let ending {
                 // Once a lit emphasis has faded and a read-along has finished, too.
-                let ready = max(end + 0.15, readyToLeave(c.beats[last], at: end))
-                need += max(ready - c.beats[last + 1].depart, 0)
+                let ready = max(end + 0.15, readyToLeave(c.beats[ending - 1], at: end))
+                need += max(ready - c.beats[ending].depart, 0)
             }
             // Each of its moves takes the time it wants, however late your last press.
             for j in c.beats.indices where j > max(last, 0) && c.beats[j].wanted > 0 {

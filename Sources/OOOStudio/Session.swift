@@ -12,10 +12,26 @@ import StageKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Playback position. The transport and the slide map observe it every frame.
+/// Playback position. What moves with it (the playhead, the camera's
+/// footprint) observes `time` every frame; what only shows the tenths or the
+/// slide face up observes `tenths` or `page`, which change far less often.
 @Observable
 public final class PlaybackClock {
-    public var time: Double = 0
+    public var time: Double = 0 { didSet { follow() } }
+    /// Tenths of a second at the playhead: ten changes a second, not sixty.
+    public private(set) var tenths = 0
+    /// The slide face up at the playhead (0 is the first).
+    public private(set) var page = 0
+    /// Which slide is face up at a time, as the video plays now.
+    @ObservationIgnored var pageAt: ((Double) -> Int)? { didSet { follow() } }
+
+    /// Brings `tenths` and `page` up to the playhead, touching each only when it changes.
+    func follow() {
+        let k = Int((max(time, 0) * 10).rounded(.down))
+        if k != tenths { tenths = k }
+        let p = pageAt?(time) ?? 0
+        if p != page { page = p }
+    }
     public var playing = true
     public var duration: Double = 10
     /// True while the person types in a text field; single-key shortcuts stand down.
@@ -58,7 +74,7 @@ public enum InspectorTab: String, CaseIterable, Identifiable {
     public var id: String { rawValue }
     public var title: String {
         switch self {
-        case .shot: return "Camera"
+        case .shot: return "Video"
         case .look: return "Look"
         case .voice: return "Voice"
         }
@@ -113,7 +129,7 @@ public final class OOOSession {
     @ObservationIgnored public weak var undoManager: UndoManager?
 
     public private(set) var project: OOOProject
-    public internal(set) var choreography: Choreography
+    public internal(set) var choreography: Choreography { didSet { clock.follow() } }
     /// Increments whenever anything visible changes; the stage redraws on change.
     public private(set) var version = 0
     public let clock = PlaybackClock()
@@ -211,6 +227,21 @@ public final class OOOSession {
     public var mapHint: String?
     /// How far the timeline is zoomed in: 1 fits the whole video.
     public var timelineZoom: Double = 1
+    /// The moves were just timed to the voice's words, by themselves: the
+    /// line above the video says so until the next edit.
+    public internal(set) var justTimed = false
+    /// The video last exported, and the project it was exported from: the
+    /// line above the video offers to share it while nothing has changed.
+    public internal(set) var lastExport: (urls: [URL], project: OOOProject)?
+    /// A passing word for the line above the video, about what just
+    /// happened (nothing worth filming found, say); the next edit clears it.
+    public var notice: String?
+    /// In Live, the room is open and waiting for you to say the Mac may
+    /// use its camera and microphone, before macOS asks.
+    public internal(set) var liveAsking = false
+    /// The window closed while its take was being kept: the recording goes
+    /// to Movies › OOO instead of a document no one will save.
+    @ObservationIgnored var windowGone = false
 
     @ObservationIgnored private var slideBase: SlideBase?
     @ObservationIgnored private var slideToken = 0
@@ -243,6 +274,7 @@ public final class OOOSession {
         project = document.project
         choreography = document.project.choreography()
         clock.duration = choreography.duration
+        clock.pageAt = { [weak self] t in MainActor.assumeIsolated { self?.choreography.page(at: t) ?? 0 } }
     }
 
     /// Loads the slide and voiceover when the window appears (SwiftUI may build
@@ -257,8 +289,13 @@ public final class OOOSession {
 
     /// Applies a change as one undoable step. A gesture still open is closed first.
     public func update(_ actionName: String, _ change: (inout OOOProject) -> Void) {
+        // During a take the stage is the take's own: a change to it (the pen
+        // clearing a mark) is part of the take, never a step of its own to undo.
+        guard take == nil else { live(change); return }
         finishDrop()
         editCancelled = false
+        justTimed = false
+        notice = nil
         let openGesture = pendingEditStart != nil ? pendingEditName : nil
         let wasOpen = pendingEditStart != nil
         if wasOpen { commitEdit(pendingEditName ?? "Edit") }
@@ -282,6 +319,7 @@ public final class OOOSession {
     public func beginEdit(_ name: String? = nil) {
         finishDrop()
         editCancelled = false
+        justTimed = false
         if pendingEditStart != nil, pendingEditName != name { commitEdit(pendingEditName ?? "Edit") }
         if pendingEditStart == nil {
             pendingEditStart = project
@@ -328,6 +366,7 @@ public final class OOOSession {
     /// One press of a nudge key. A run of presses is one undo step, closed
     /// once the keys have rested for a moment.
     public func nudge(_ name: String, _ change: (inout OOOProject) -> Void) {
+        guard take == nil else { return }
         beginEdit(name)
         live(change)
         nudgeRest?.cancel()
@@ -358,7 +397,10 @@ public final class OOOSession {
             switch mode {
             case .draw: finishDrawing()
             case .live: enter(.frame)
-            case .frame: return false
+            case .frame:
+                // Back from a shot to the whole video.
+                guard selection != .overview else { return false }
+                select(.overview, show: false)
             }
             return true
         }
@@ -374,29 +416,47 @@ public final class OOOSession {
         return true
     }
 
-    /// Closes a drop as one undo step: the slide, and its tour if it has one by now.
+    /// Closes a drop: its tour, if it has one by now, is in its undo step.
     private func finishDrop() {
-        guard let drop = pendingDrop else { return }
         pendingDrop = nil
-        if drop.before != project { registerUndo(from: drop.before, name: drop.name) }
     }
 
-    /// A new slide (or page) and its tour, undone together.
+    /// A new slide (or page) and its tour, undone together. Its undo step is
+    /// there at once, and takes back the tour too when it has landed.
     func drop(_ name: String, _ change: (inout OOOProject) -> Void) {
+        guard take == nil else { return }
         if pendingEditStart != nil { commitEdit(pendingEditName ?? "Edit") }
         finishDrop()
+        justTimed = false
+        notice = nil
         let before = project
         var after = project
         change(&after)
         guard after != before else { return }
         set(after)
         pendingDrop = (before, name)
+        guard let um = undoManager else { return }
+        um.registerUndo(withTarget: document) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                // What is there as it is undone: the slide, and its tour if it came.
+                self.pendingDrop = nil
+                let now = self.project
+                self.set(before)
+                if self.pendingEditStart != nil { self.pendingEditStart = before }
+                if self.timingBase != nil { self.timingBase = before }
+                self.registerUndo(from: now, name: name)
+            }
+        }
+        um.setActionName(name)
     }
 
     /// Closes whatever gesture or drop is still open, as its own undo step.
     func settleEdits() {
         finishDrop()
         if pendingEditStart != nil { commitEdit(pendingEditName ?? "Edit") }
+        // An Esc that ended a run of nudges has no gesture still to finish.
+        editCancelled = false
     }
 
     /// Shows `c` as the camera's path without changing the project: a live take's path as you lead it.
@@ -485,16 +545,25 @@ public final class OOOSession {
 
     /// A scene with its own detail caches, so an export never fights the
     /// live stage; nil until every slide is drawn.
-    public func exportScene() -> SlideScene? {
-        guard let b = slideBase, pagesReady else { return nil }
+    /// On another canvas (`format`), the same video framed again for its shape.
+    public func exportScene(format: CanvasFormat? = nil) -> SlideScene? {
+        guard let b = slideBase, b.ref == project.slide, pagesReady else { return nil }
         let pages = project.morePages.compactMap { pageBases[$0.id] }
+        let shown = format.map { project.refitted(to: $0) } ?? project
         // In the Live room the stage plays the take to come; the video is the project's own.
-        var s = SlideScene(project: project, bases: [b.texture] + pages.map(\.texture),
+        let own = staged == nil && shown.format == project.format
+        var s = SlideScene(project: shown, bases: [b.texture] + pages.map(\.texture),
                            details: ([b] + pages).map { DetailCache(source: $0.source, baseDensity: $0.density) },
-                           inks: InkCache.shared.textures(for: project),
-                           choreography: staged == nil ? choreography : project.choreography())
-        s.faceURL = project.face.map { document.media.url(for: $0.file) }
+                           inks: InkCache.shared.textures(for: shown),
+                           choreography: own ? choreography : shown.choreography())
+        s.faceURL = shown.face.map { document.media.url(for: $0.file) }
         return s
+    }
+
+    /// Whether OOO is still listening for the voice's words (and so the
+    /// captions and the timing to them are still to come).
+    public var listening: Bool {
+        jobs.contains { $0.label == "Listening to the voiceover" || $0.label == "Reading the recording" }
     }
 
     /// Whether every slide after the first is drawn and ready.
@@ -506,11 +575,15 @@ public final class OOOSession {
     /// Why there's nothing to export or save yet; nil once every slide is drawn.
     public var notReady: String? {
         _ = drawn
-        if slideBase != nil && pagesReady { return nil }
-        return slideBase == nil || !pagesDrawing.isEmpty
-            ? "The slides are still being drawn. Try again in a moment."
+        let drawnNow = slideBase?.ref == project.slide
+        if drawnNow && pagesReady { return nil }
+        return !drawnNow && slideDrawing || !pagesDrawing.isEmpty || slideBase == nil
+            ? "The slides are still being drawn. Export opens up as soon as they are."
             : "A slide couldn't be drawn. Replace it, then try again."
     }
+
+    /// Whether the slide is being drawn onto the GPU now.
+    private var slideDrawing: Bool { jobs.contains { $0.label == "Drawing the slide" } }
 
     /// Whether the slide is drawn and on the stage. Observed: the slide is
     /// drawn after the window first shows, and every button that waits for
@@ -624,6 +697,7 @@ public final class OOOSession {
 
     /// Takes a picture or the first page of a PDF as the slide, and plans a tour of it.
     public func importSlide(_ url: URL) {
+        guard take == nil else { return }
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         guard var ref = SlideSource.inspect(url) else {
@@ -841,7 +915,7 @@ public final class OOOSession {
                                 self.clock.time = 0
                                 self.clock.autoplay()
                             }
-                            self.message = "OOO found nothing to read on this slide. Draw framings on the slide map to choose what the camera visits."
+                            self.notice = "OOO found nothing it could read here. Draw a box on the slide map to choose what the camera visits."
                             return
                         }
                         if self.pendingDrop != nil {
@@ -878,8 +952,42 @@ public final class OOOSession {
     /// Keeps every framing and lands each one just before the voice says its words.
     public func cutToVoice() {
         guard let words = project.voice?.words, !words.isEmpty else { return }
-        update("Cut to Voice") { p in
+        update("Time Moves to Voice") { p in
             p.shots = p.retimed(to: words)
+        }
+    }
+
+    // MARK: Captions
+
+    /// Captions on or off.
+    public func setCaptions(_ on: Bool) {
+        update(on ? "Show Captions" : "Hide Captions") { p in
+            var style = p.captions ?? CaptionStyle()
+            style.on = on
+            p.captions = style
+        }
+    }
+
+    /// How the captions look.
+    public func setCaptionLook(_ look: CaptionStyle.Look) {
+        update("Caption Look") { p in
+            var style = p.captions ?? CaptionStyle()
+            style.look = look
+            style.on = true
+            p.captions = style
+        }
+    }
+
+    /// Phrase `k` of the captions as typed: a word heard wrong put right
+    /// keeps its moment; more or fewer words share the phrase's time. Empty,
+    /// the phrase's words are gone (from the captions and the cues alike).
+    public func editCaption(_ k: Int, to text: String) {
+        let phrases = project.captionPhrases
+        guard phrases.indices.contains(k), let words = project.voice?.words else { return }
+        let phrase = phrases[k]
+        guard text.split(whereSeparator: \.isWhitespace).joined(separator: " ") != phrase.text else { return }
+        update("Edit Caption") { p in
+            p.voice?.words = Captions.corrected(words, phrase: phrase, to: text)
         }
     }
 
@@ -931,7 +1039,7 @@ public final class OOOSession {
 
     /// Takes the selected framing closer (`closer`) or wider by a step.
     public func nudgeZoom(closer: Bool) {
-        nudgeSelected("Frame Shot") { s in
+        nudgeSelected("Reframe") { s in
             s.frame.size = s.frame.size * (closer ? 0.95 : 1 / 0.95)
         }
     }
@@ -939,7 +1047,7 @@ public final class OOOSession {
     /// Lands the selected shot a tenth of a second earlier (-1) or later (1).
     public func nudgeTime(_ direction: Double) {
         guard case .shot(let id) = selection else { return }
-        nudge("Move Shot") { p in
+        nudge("Move Framing") { p in
             let start = p.tourStart + 0.3
             if let i = p.shots.firstIndex(where: { $0.id == id }) { p.shots[i].time = max(start, p.shots[i].time + 0.1 * direction) }
         }
@@ -993,6 +1101,13 @@ public final class OOOSession {
         return choreography.page(at: t)
     }
 
+    /// The slide the map is about, from the clock's page: it changes as the
+    /// slide does, not every frame.
+    public var mapPage: Int {
+        if let s = selectedShot { return project.pageIndex(s.page) }
+        return clock.page
+    }
+
     /// A new framing at the playhead, or after the last shot: by default a
     /// closer look at the middle of what the camera sees now. Drawn on
     /// another slide's map (`page`), it goes after that slide's last shot.
@@ -1008,7 +1123,11 @@ public final class OOOSession {
             t = (mine.max().map { $0 + 2.6 }) ?? arrives
         }
         let taken = p.shots.contains { abs($0.time - t) < 0.9 }
-        if t < start || taken { t = max(start, (p.shots.map(\.time).max() ?? start - 2.6) + 2.6) }
+        if t < start || taken {
+            // After this slide's own last shot, never past the slides after it.
+            let mine = p.shots.filter { p.pageIndex($0.page) == k }.map(\.time)
+            t = max(start, (mine.max() ?? start - 2.6) + 2.6)
+        }
         var f: ShotFrame
         if let frame {
             f = frame
@@ -1021,7 +1140,7 @@ public final class OOOSession {
         let pitch = clamp((0.5 - f.center.y) * 12, -7, 7)
         var shot = Shot(time: t, frame: f, yaw: yaw, pitch: pitch, lens: 28, aperture: 0.45, label: nil)
         shot.page = p.pageID(k)
-        update("Add Shot") { $0.shots.append(shot) }
+        update("Add Framing") { $0.shots.append(shot) }
         select(.shot(shot.id))
     }
 
@@ -1029,7 +1148,7 @@ public final class OOOSession {
         guard case .shot(let id) = selection else { return }
         let after = selectedShot?.time ?? 0
         let next = orderedShots.first(where: { $0.time > after && $0.id != id })
-        update("Delete Shot") { $0.shots.removeAll { $0.id == id } }
+        update("Delete Framing") { $0.shots.removeAll { $0.id == id } }
         selection = next.map { .shot($0.id) } ?? .overview
     }
 
@@ -1039,7 +1158,7 @@ public final class OOOSession {
         shot.time += 2
         shot.frame.size *= 0.7
         let s = shot
-        update("Duplicate Shot") { $0.shots.append(s) }
+        update("Duplicate Framing") { $0.shots.append(s) }
         select(.shot(s.id))
     }
 
@@ -1076,7 +1195,8 @@ public final class OOOSession {
 
     /// A recording as the voiceover, starting `offset` seconds in; its words
     /// are heard and the moves cut to them.
-    public func importVoice(_ url: URL, name given: String? = nil, offset: Double = 0.5) {
+    public func importVoice(_ url: URL, name given: String? = nil, offset: Double = 0.5, discardingOriginal: Bool = false) {
+        guard take == nil else { return }
         let store = document.media
         let job = begin("Reading the recording")
         let name = given ?? url.deletingPathExtension().lastPathComponent
@@ -1084,7 +1204,14 @@ public final class OOOSession {
         // disk takes a while.
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let copied = Result { try store.importFile(url) }
-            let result = copied.flatMap { file in Result { try (file, VoiceLoader.decode(store.url(for: file))) } }
+            // A recording made here is in the document now; its scratch file goes.
+            if discardingOriginal, (try? copied.get()) != nil { try? FileManager.default.removeItem(at: url) }
+            let result = copied.flatMap { file in
+                Result { () throws -> (String, AudioTrack, Waveform) in
+                    let track = try VoiceLoader.decode(store.url(for: file))
+                    return (file, track, Waveform(track))
+                }
+            }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard let self else { return }
@@ -1092,10 +1219,10 @@ public final class OOOSession {
                     switch result {
                     case .failure(let error) where (try? copied.get()) == nil:
                         self.message = "Couldn't copy the recording: \(error.localizedDescription)"
-                    case .success(let (file, track)):
+                    case .success(let (file, track, wave)):
                         self.voiceTrack = track
                         self.voiceFile = file
-                        self.waveform = Waveform(track)
+                        self.waveform = wave
                         self.update("Add Voiceover") { p in
                             p.voice = Voiceover(file: file, name: name, offset: offset, duration: track.duration)
                         }
@@ -1122,12 +1249,13 @@ public final class OOOSession {
         let file = v.file
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let track = try? VoiceLoader.decode(url)
+            let wave = track.map { Waveform($0) }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard let self, self.project.voice?.file == file, let track else { return }
                     self.voiceTrack = track
                     self.voiceFile = file
-                    self.waveform = Waveform(track)
+                    self.waveform = wave
                     self.touch()
                 }
             }
@@ -1156,6 +1284,9 @@ public final class OOOSession {
                         SpokenWord(text: $0.text, start: $0.start + offset, end: $0.end + offset, confidence: $0.confidence)
                     }
                     p.voice?.language = Locale.current.identifier
+                    // Most people watch a post with the sound off: the first
+                    // words heard come with captions, until they are turned off.
+                    if p.captions == nil, !words.isEmpty { p.captions = CaptionStyle() }
                 }
                 if undoable {
                     self.update("Transcribe", heard)
@@ -1172,7 +1303,10 @@ public final class OOOSession {
                         }
                     }
                 }
-                if cut { self.cutToVoice() }
+                if cut, !words.isEmpty {
+                    self.cutToVoice()
+                    self.justTimed = true
+                }
             } catch {
                 self?.end(job)
                 self?.message = readable(error)
@@ -1270,6 +1404,11 @@ final class VoicePlayer {
     private var format: AVAudioFormat?
     private(set) var signature: Int?
     private var startTime: Double = 0
+    /// How long the sound takes to reach your ears, asked of the Mac as the
+    /// voice starts and every two seconds after: asking every frame cost a
+    /// seventh of the main thread.
+    private var latency: Double = 0
+    private var latencyAsked: TimeInterval = -.infinity
 
     var isPlaying: Bool { node?.isPlaying ?? false }
 
@@ -1302,6 +1441,7 @@ final class VoicePlayer {
         }
         node.scheduleBuffer(buffer, at: nil, options: [])
         node.play()
+        askLatency()
         self.signature = signature
         startTime = time
         let rest = start + first
@@ -1359,8 +1499,13 @@ final class VoicePlayer {
     func position() -> Double? {
         guard let node, node.isPlaying, let last = node.lastRenderTime,
               let t = node.playerTime(forNodeTime: last), t.sampleRate > 0 else { return nil }
-        let late = engine?.outputNode.presentationLatency ?? 0
-        return max(startTime, startTime + Double(t.sampleTime) / t.sampleRate - late)
+        if ProcessInfo.processInfo.systemUptime - latencyAsked > 2 { askLatency() }
+        return max(startTime, startTime + Double(t.sampleTime) / t.sampleRate - latency)
+    }
+
+    private func askLatency() {
+        latency = engine?.outputNode.presentationLatency ?? 0
+        latencyAsked = ProcessInfo.processInfo.systemUptime
     }
 
     func stop() {
