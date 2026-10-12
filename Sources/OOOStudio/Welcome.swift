@@ -49,7 +49,11 @@ struct Welcome: View {
     private var card: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Obsess Over One").textStyle(.badge).foregroundStyle(Theme.camera)
+                HStack(spacing: 6) {
+                    Text("Obsess Over One").foregroundStyle(Theme.camera)
+                    Text("Every slide. Every detail.").foregroundStyle(.secondary)
+                }
+                .textStyle(.badge)
                 Text("Your slide, made into a film.").textStyle(.display).foregroundStyle(.primary)
                     .fixedSize(horizontal: false, vertical: true)
                 Text("Drop in a slide and OOO films it: it arrives, the camera visits every detail worth seeing, and you post the video. This one's a sample.")
