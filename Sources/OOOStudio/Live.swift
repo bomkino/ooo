@@ -1015,6 +1015,7 @@ extension OOOSession {
         let voice = Voiceover(file: voiceFile, name: "Live take, \(when)", offset: 0, duration: sound.duration)
         let kept = project.taken(run.take, end: end, voice: voice, face: face, recorded: recorded)
         take = nil
+        forgetOpenEdit()
         liveKeeping = false
         liveClosingAt = nil
         set(kept)
@@ -1061,6 +1062,7 @@ extension OOOSession {
     private func giveUp(_ run: LiveRun) {
         guard take === run else { return }
         take = nil
+        forgetOpenEdit()
         liveKeeping = false
         liveClosingAt = nil
         if pen.on { pen.on = false }
@@ -1630,6 +1632,7 @@ struct LiveInspector: View {
                     .help("Show your notes at the top of the stage, under the Mac's camera, while you talk. Never in the video.")
             }) {
                 NotesField(session: session, page: session.mapPage)
+                    .disabled(!open)
                     .id(session.mapPage)
                 Text(prompter ? "Shown under the camera as you talk, so your eyes stay near it. Never in the video."
                               : "Kept with the slide, for you; the prompter is off.")

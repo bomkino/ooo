@@ -348,6 +348,15 @@ public final class OOOSession {
         if start != project { registerUndo(from: start, name: actionName) }
     }
 
+    /// A gesture still open as a take ends is let go: it began on the take's
+    /// stage, and closing it later would leave an Undo step back to that stage.
+    func forgetOpenEdit() {
+        nudgeRest?.cancel()
+        nudgeRest = nil
+        pendingEditStart = nil
+        pendingEditName = nil
+    }
+
     /// Esc during a drag: everything goes back to how it was when the drag
     /// began, and the rest of the drag changes nothing. False when nothing
     /// was being dragged.
